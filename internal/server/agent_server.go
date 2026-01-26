@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
@@ -46,7 +47,7 @@ func NewAgentServer(agnt AgentInterface, cfg *config.Config) *AgentServer {
 func (s *AgentServer) registerRoutes() {
 	// Public endpoints (no authentication)
 	s.mux.HandleFunc("/health", HealthCheckHandler("knowledge-agent", ""))
-	s.mux.HandleFunc("/metrics", s.handleMetrics)
+	s.mux.Handle("/metrics", promhttp.Handler()) // Prometheus metrics
 
 	// Create rate limiter (10 requests/second, burst of 20)
 	s.rateLimiter = NewRateLimiter(10.0, 20)
@@ -176,8 +177,9 @@ func (s *AgentServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleMetrics returns application metrics
-func (s *AgentServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+// handleMetricsJSON returns application metrics in JSON format (legacy endpoint)
+// Deprecated: Use /metrics for Prometheus format
+func (s *AgentServer) handleMetricsJSON(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

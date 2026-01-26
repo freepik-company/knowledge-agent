@@ -106,28 +106,45 @@ curl http://localhost:8081/health
 
 ### GET /metrics
 
-Application metrics endpoint.
+Prometheus metrics endpoint in text exposition format.
 
 **Authentication**: None (public)
 
-**Response**: `200 OK`
+**Response**: `200 OK` (text/plain)
 
-```json
-{
-  "queries_total": 1234,
-  "queries_success": 1200,
-  "queries_error": 34,
-  "ingests_total": 567,
-  "ingests_success": 560,
-  "ingests_error": 7,
-  "uptime_seconds": 86400
-}
+**Format**: Prometheus text format
+
+**Example response**:
+```
+# HELP knowledge_agent_queries_total Total number of queries processed
+# TYPE knowledge_agent_queries_total counter
+knowledge_agent_queries_total 1234
+
+# HELP knowledge_agent_query_errors_total Total number of query errors
+# TYPE knowledge_agent_query_errors_total counter
+knowledge_agent_query_errors_total 34
+
+# HELP knowledge_agent_query_latency_seconds Query latency in seconds
+# TYPE knowledge_agent_query_latency_seconds histogram
+knowledge_agent_query_latency_seconds_bucket{le="0.005"} 120
+knowledge_agent_query_latency_seconds_bucket{le="0.01"} 450
+...
+
+# HELP knowledge_agent_memory_saves_total Total number of memory save operations
+# TYPE knowledge_agent_memory_saves_total counter
+knowledge_agent_memory_saves_total 567
+
+# HELP knowledge_agent_tokens_used_total Total number of LLM tokens used
+# TYPE knowledge_agent_tokens_used_total counter
+knowledge_agent_tokens_used_total 1500000
 ```
 
 **Example**:
 ```bash
 curl http://localhost:8081/metrics
 ```
+
+**See**: [PROMETHEUS_METRICS.md](PROMETHEUS_METRICS.md) for complete metrics documentation
 
 ---
 

@@ -1,0 +1,52 @@
+---
+# ServiceMonitor for Slack Bridge
+# This resource configures Prometheus to scrape metrics from the Slack Bridge service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: knowledge-agent-slack-bridge
+  namespace: cluster-control-system
+  labels:
+    app: knowledge-agent
+    component: slack-bridge
+    # Add this label if your Prometheus operator uses label selectors
+    prometheus: kube-prometheus
+spec:
+  # Namespace where the target service is deployed
+  namespaceSelector:
+    matchNames:
+      - default  # Change to your namespace
+
+  # Selector to match the Slack Bridge service
+  selector:
+    matchLabels:
+      app: knowledge-agent
+      component: slack-bridge
+
+  # Endpoints to scrape
+  endpoints:
+    - port: http  # Service port name (or use targetPort: 8080)
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
+      # Optional: relabeling rules
+      relabelings:
+        # Add namespace as a label
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+
+        # Add pod name as a label
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+
+        # Add service name as a label
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+
+      # Optional: metric relabeling (applied after scraping)
+      metricRelabelings:
+        # Drop metrics you don't need (example)
+        # - sourceLabels: [__name__]
+        #   regex: 'go_.*'
+        #   action: drop

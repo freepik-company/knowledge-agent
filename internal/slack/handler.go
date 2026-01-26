@@ -15,6 +15,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/metrics"
 )
 
 // Handler handles Slack events and bridges them to the Knowledge Agent
@@ -99,9 +100,11 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 				"channel", ev.Channel,
 				"text", ev.Text,
 			)
+			metrics.RecordSlackEvent("app_mention", true)
 			go h.handleAppMention(ev)
 		default:
 			log.Debugw("Unhandled event type", "type", innerEvent.Type)
+			metrics.RecordSlackEvent(innerEvent.Type, true)
 		}
 	}
 
@@ -153,6 +156,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"user_id", event.User,
 			"error", err,
 		)
+		metrics.RecordSlackAPICall("users.info", false)
 	} else {
 		userName = userInfo.Name         // @username
 		userRealName = userInfo.RealName // John Doe
@@ -161,6 +165,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"name", userName,
 			"real_name", userRealName,
 		)
+		metrics.RecordSlackAPICall("users.info", true)
 	}
 
 	// 2. Fetch current thread for context
@@ -168,10 +173,12 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	messages, err := h.client.FetchThreadMessages(event.Channel, threadTS)
 	if err != nil {
 		log.Errorw("Failed to fetch thread", "error", err, "channel", event.Channel, "thread_ts", threadTS)
+		metrics.RecordSlackAPICall("conversations.replies", false)
 		h.client.PostMessage(event.Channel, threadTS,
 			fmt.Sprintf("Error: Could not fetch thread messages: %v", err))
 		return
 	}
+	metrics.RecordSlackAPICall("conversations.replies", true)
 
 	log.Debugw("Fetched thread messages", "count", len(messages))
 
@@ -292,11 +299,19 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 
 	if err != nil {
 		log.Errorw("Failed to call Knowledge Agent", "error", err)
+		metrics.RecordAgentForward(false)
 		h.client.PostMessage(event.Channel, threadTS,
 			fmt.Sprintf("Error: Could not reach Knowledge Agent: %v", err))
 		return
 	}
 	defer resp.Body.Close()
+
+	// Record successful forward (will record error later if status != 200)
+	if resp.StatusCode == http.StatusOK {
+		metrics.RecordAgentForward(true)
+	} else {
+		metrics.RecordAgentForward(false)
+	}
 
 	// Log response status
 	log.Debugw("Agent response received",

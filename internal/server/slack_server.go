@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"knowledge-agent/internal/slack"
 )
 
@@ -29,6 +30,9 @@ func NewSlackServer(handler *slack.Handler) *SlackServer {
 func (s *SlackServer) registerRoutes() {
 	// Health check
 	s.mux.HandleFunc("/health", HealthCheckHandler("slack-bot", "webhook"))
+
+	// Prometheus metrics
+	s.mux.Handle("/metrics", promhttp.Handler())
 
 	// Slack events endpoint
 	s.mux.HandleFunc("/slack/events", s.handler.HandleEvents)

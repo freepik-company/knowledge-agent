@@ -54,6 +54,9 @@ func (m *Metrics) RecordQuery(duration time.Duration, err error) {
 	if err != nil {
 		m.queryErrorCount.Add(1)
 	}
+
+	// Record to Prometheus
+	m.recordQueryPrometheus(duration, err)
 }
 
 // RecordMemorySave records a memory save operation
@@ -62,6 +65,9 @@ func (m *Metrics) RecordMemorySave(success bool) {
 	if !success {
 		m.memoryErrorCount.Add(1)
 	}
+
+	// Record to Prometheus
+	m.recordMemorySavePrometheus(success)
 }
 
 // RecordMemorySearch records a memory search operation
@@ -70,6 +76,9 @@ func (m *Metrics) RecordMemorySearch(success bool) {
 	if !success {
 		m.memoryErrorCount.Add(1)
 	}
+
+	// Record to Prometheus
+	m.recordMemorySearchPrometheus(success)
 }
 
 // RecordURLFetch records a URL fetch operation
@@ -78,11 +87,17 @@ func (m *Metrics) RecordURLFetch(success bool) {
 	if !success {
 		m.urlFetchErrorCount.Add(1)
 	}
+
+	// Record to Prometheus
+	m.recordURLFetchPrometheus(success)
 }
 
 // RecordTokensUsed records tokens used by the LLM
 func (m *Metrics) RecordTokensUsed(tokens int64) {
 	m.tokensUsed.Add(tokens)
+
+	// Record to Prometheus
+	m.recordTokensPrometheus(tokens)
 }
 
 // GetStats returns a snapshot of current metrics
@@ -150,4 +165,30 @@ func (m *Metrics) Reset() {
 	m.mu.Lock()
 	m.startTime = time.Now()
 	m.mu.Unlock()
+}
+
+// Slack Bridge metrics (no internal storage, only Prometheus)
+
+// RecordSlackEvent records a Slack event received
+func RecordSlackEvent(eventType string, success bool) {
+	slackEventsTotal.WithLabelValues(eventType).Inc()
+	if !success {
+		slackEventsErrors.Inc()
+	}
+}
+
+// RecordSlackAPICall records a Slack API call
+func RecordSlackAPICall(method string, success bool) {
+	slackAPICallsTotal.WithLabelValues(method).Inc()
+	if !success {
+		slackAPIErrors.WithLabelValues(method).Inc()
+	}
+}
+
+// RecordAgentForward records a request forwarded to the agent
+func RecordAgentForward(success bool) {
+	agentForwardsTotal.Inc()
+	if !success {
+		agentForwardErrors.Inc()
+	}
 }
