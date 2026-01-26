@@ -82,7 +82,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1
 
 # Use entrypoint script for flexible startup
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/deployments/docker-entrypoint.sh"]
 
 # Stage 3: Agent-only (for separate scaling)
 FROM runtime AS agent
