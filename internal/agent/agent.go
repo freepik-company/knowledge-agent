@@ -98,7 +98,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 	log.Infow("Connecting to Redis for session management", "addr", cfg.Redis.Addr)
 	sessionService, err := sessionredis.NewRedisSessionService(sessionredis.RedisSessionServiceConfig{
 		Addr:     cfg.Redis.Addr,
-		Password: "", // Add to config if needed
+		Password: cfg.Redis.Password,
 		DB:       0,
 		TTL:      cfg.Redis.TTL,
 	})

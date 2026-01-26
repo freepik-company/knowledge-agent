@@ -110,8 +110,9 @@ type PostgresConfig struct {
 
 // RedisConfig holds Redis configuration
 type RedisConfig struct {
-	Addr string        `yaml:"addr" mapstructure:"addr" envconfig:"REDIS_ADDR" default:"localhost:6379"`
-	TTL  time.Duration `yaml:"ttl" mapstructure:"ttl" envconfig:"REDIS_TTL" default:"24h"`
+	Addr     string        `yaml:"addr" mapstructure:"addr" envconfig:"REDIS_ADDR" default:"localhost:6379"`
+	Password string        `yaml:"password" mapstructure:"password" envconfig:"REDIS_PASSWORD"`
+	TTL      time.Duration `yaml:"ttl" mapstructure:"ttl" envconfig:"REDIS_TTL" default:"24h"`
 }
 
 // OllamaConfig holds Ollama configuration
