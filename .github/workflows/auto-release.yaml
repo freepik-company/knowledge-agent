@@ -52,8 +52,15 @@ jobs:
       - name: Determine version bump
         id: version_bump
         run: |
-          # Get commit messages since last tag
-          commits=$(git log ${{ steps.get_latest_tag.outputs.latest_tag }}..HEAD --pretty=format:"%s")
+          # Get commit messages since last tag (or all commits if no tag exists)
+          latest_tag="${{ steps.get_latest_tag.outputs.latest_tag }}"
+          if [ "$latest_tag" = "v0.0.0" ]; then
+            # No previous tags - get all commits
+            commits=$(git log --pretty=format:"%s")
+          else
+            # Compare against last tag
+            commits=$(git log ${latest_tag}..HEAD --pretty=format:"%s")
+          fi
 
           # Check for breaking changes (major bump)
           if echo "$commits" | grep -qiE "^(BREAKING|breaking|break)(\(|:)|!:"; then
