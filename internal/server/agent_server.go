@@ -22,9 +22,10 @@ type AgentInterface interface {
 
 // AgentServer handles HTTP requests for the Knowledge Agent service
 type AgentServer struct {
-	agent  AgentInterface
-	config *config.Config
-	mux    *http.ServeMux
+	agent       AgentInterface
+	config      *config.Config
+	mux         *http.ServeMux
+	rateLimiter *RateLimiter
 }
 
 // NewAgentServer creates a new HTTP server for the agent service
@@ -48,16 +49,24 @@ func (s *AgentServer) registerRoutes() {
 	s.mux.HandleFunc("/metrics", s.handleMetrics)
 
 	// Create rate limiter (10 requests/second, burst of 20)
-	rateLimiter := NewRateLimiter(10.0, 20)
+	s.rateLimiter = NewRateLimiter(10.0, 20)
 
 	// Create authentication middleware
 	authMiddleware := AuthMiddleware(s.config)
 
 	// API endpoints (protected with rate limiting and authentication)
 	s.mux.Handle("/api/ingest-thread",
-		rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleIngestThread))))
+		s.rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleIngestThread))))
 	s.mux.Handle("/api/query",
-		rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleQuery))))
+		s.rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleQuery))))
+}
+
+// Close stops the rate limiter cleanup routine
+func (s *AgentServer) Close() error {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+	return nil
 }
 
 // Handler returns the HTTP handler

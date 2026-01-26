@@ -413,11 +413,7 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
 		if err != nil {
 			log.Errorw("Runner error during ingestion", "error", err)
-			return &IngestResponse{
-				Success:       false,
-				Message:       fmt.Sprintf("Ingestion failed: %v", err),
-				MemoriesAdded: 0,
-			}, nil
+			return nil, fmt.Errorf("ingestion failed: %w", err)
 		}
 
 		eventCount++
@@ -432,11 +428,7 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 				"error_code", event.ErrorCode,
 				"error_message", event.ErrorMessage,
 			)
-			return &IngestResponse{
-				Success:       false,
-				Message:       fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage),
-				MemoriesAdded: 0,
-			}, nil
+			return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
 		}
 
 		// Process event content
@@ -669,7 +661,8 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	}
 
 	// Run agent to answer the question
-	var responseText string
+	var responseText string              // Accumulates full response for final answer
+	var generationOutput string          // Tracks current generation's output only
 	var currentGeneration *traces.Observation
 
 	log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
@@ -678,10 +671,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 		if err != nil {
 			log.Errorw("Runner error during query", "error", err)
 			trace.End(false, fmt.Sprintf("Query failed: %v", err))
-			return &QueryResponse{
-				Success: false,
-				Message: fmt.Sprintf("Query failed: %v", err),
-			}, nil
+			return nil, fmt.Errorf("query failed: %w", err)
 		}
 
 		eventCount++
@@ -705,10 +695,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				"error_message", event.ErrorMessage,
 			)
 			trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
-			return &QueryResponse{
-				Success: false,
-				Message: fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage),
-			}, nil
+			return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
 		}
 
 		// Process event content
@@ -721,6 +708,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 			// Start generation if we have token usage (indicates LLM call)
 			if usageTokens != nil && currentGeneration == nil {
 				currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
+				generationOutput = "" // Reset for new generation
 			}
 
 			for i, part := range event.Content.Parts {
@@ -732,8 +720,13 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 						"preview", truncateString(part.Text, 100),
 					)
 
-					// Collect response text
+					// Collect response text for final answer
 					responseText += part.Text
+
+					// Track this generation's output separately
+					if currentGeneration != nil {
+						generationOutput += part.Text
+					}
 				}
 
 				// Tool call
@@ -764,14 +757,16 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				promptTokens := int(usageTokens.PromptTokenCount)
 				completionTokens := int(usageTokens.CandidatesTokenCount)
 
+				// Pass only this generation's output, not accumulated text
 				trace.EndGeneration(
 					currentGeneration,
-					responseText,
+					generationOutput,
 					promptTokens,
 					completionTokens,
 				)
 
-				currentGeneration = nil // Reset for next generation
+				currentGeneration = nil    // Reset for next generation
+				generationOutput = ""      // Reset output tracker
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 
@@ -39,7 +40,8 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 			// Option 1: Internal token (Slack Bridge → Agent)
 			if cfg.Auth.InternalToken != "" {
 				if token := r.Header.Get("X-Internal-Token"); token != "" {
-					if token == cfg.Auth.InternalToken {
+					// Use constant-time comparison to prevent timing attacks
+					if subtle.ConstantTimeCompare([]byte(token), []byte(cfg.Auth.InternalToken)) == 1 {
 						ctx := context.WithValue(r.Context(), ctxutil.CallerIDKey, "slack-bridge")
 
 						// Capture Slack user ID if provided
@@ -65,7 +67,8 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 				if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
 					// Search for client_id that has this secret
 					for clientID, secret := range cfg.APIKeys {
-						if secret == apiKey {
+						// Use constant-time comparison to prevent timing attacks
+						if subtle.ConstantTimeCompare([]byte(secret), []byte(apiKey)) == 1 {
 							ctx := context.WithValue(r.Context(), ctxutil.CallerIDKey, clientID)
 							next.ServeHTTP(w, r.WithContext(ctx))
 							return

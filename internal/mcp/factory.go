@@ -98,6 +98,40 @@ func (f *commandTransportFactory) Connect(ctx context.Context) (mcp.Connection, 
 	return transport.Connect(ctx)
 }
 
+// getSafeEnvironmentVariables returns a filtered list of environment variables
+// that are safe to pass to MCP server processes. This prevents leaking secrets
+// like ANTHROPIC_API_KEY, POSTGRES_URL, etc. to potentially untrusted MCP servers.
+func getSafeEnvironmentVariables() []string {
+	// Allowlist of safe environment variables
+	safeVars := []string{
+		"PATH",
+		"HOME",
+		"USER",
+		"LANG",
+		"LC_ALL",
+		"LC_CTYPE",
+		"TMPDIR",
+		"TMP",
+		"TEMP",
+		"SHELL",
+		"TERM",
+		// Node.js related (for npx-based MCP servers)
+		"NODE_OPTIONS",
+		"NPM_CONFIG_PREFIX",
+		// Python related (for pip-based MCP servers)
+		"PYTHONPATH",
+		"VIRTUAL_ENV",
+	}
+
+	env := []string{}
+	for _, key := range safeVars {
+		if val, ok := os.LookupEnv(key); ok {
+			env = append(env, fmt.Sprintf("%s=%s", key, val))
+		}
+	}
+	return env
+}
+
 // createCommandTransport creates a command-based transport (stdio)
 func createCommandTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	if cfg.Command == nil {
@@ -110,13 +144,23 @@ func createCommandTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 		"path", cfg.Command.Path,
 		"args", cfg.Command.Args)
 
-	// Prepare environment variables
-	env := os.Environ()
+	// Start with safe environment variables (no secrets)
+	env := getSafeEnvironmentVariables()
+
+	// Add server-specific environment variables from config
+	// These are explicitly configured per-server, not inherited
 	if len(cfg.Command.Env) > 0 {
+		log.Infow("Adding server-specific environment variables",
+			"server", cfg.Name,
+			"count", len(cfg.Command.Env))
 		for key, value := range cfg.Command.Env {
 			env = append(env, fmt.Sprintf("%s=%s", key, value))
 		}
 	}
+
+	log.Debugw("MCP environment prepared",
+		"server", cfg.Name,
+		"total_vars", len(env))
 
 	// Create factory that generates fresh commands
 	factory := &commandTransportFactory{

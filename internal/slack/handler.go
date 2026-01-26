@@ -35,6 +35,14 @@ func NewHandler(cfg *config.Config, agentURL string) *Handler {
 	}
 }
 
+// Close releases resources held by the handler
+func (h *Handler) Close() error {
+	if h.client != nil {
+		return h.client.Close()
+	}
+	return nil
+}
+
 // HandleEvents handles incoming Slack events
 func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	log := logger.Get()

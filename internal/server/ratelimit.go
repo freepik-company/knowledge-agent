@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,12 +82,20 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 			}
 
 			// Check for forwarded IP (useful when behind proxy/load balancer)
+			// RFC 7239: Take the last (rightmost) IP in the list, which is the most trusted
+			// Format: "client, proxy1, proxy2"
 			if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-				// Take the first IP in the list
-				if forwardedIP, _, err := net.SplitHostPort(forwarded); err == nil {
-					ip = forwardedIP
-				} else {
-					ip = forwarded
+				// Split by comma to handle multiple proxies
+				ips := strings.Split(forwarded, ",")
+				if len(ips) > 0 {
+					// Take the last IP (rightmost = most recent proxy, closest to origin)
+					lastIP := strings.TrimSpace(ips[len(ips)-1])
+					// Remove port if present
+					if forwardedIP, _, err := net.SplitHostPort(lastIP); err == nil {
+						ip = forwardedIP
+					} else {
+						ip = lastIP
+					}
 				}
 			}
 

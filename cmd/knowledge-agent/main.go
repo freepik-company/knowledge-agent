@@ -144,7 +144,13 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 	}
 	log.Info("HTTP server stopped")
 
-	// 2. Close agent resources (with timeout for safety)
+	// 2. Close agent server resources (rate limiter cleanup)
+	log.Info("Closing agent server resources...")
+	if err := agentServer.Close(); err != nil {
+		log.Warnw("Error closing agent server", "error", err)
+	}
+
+	// 3. Close agent resources (with timeout for safety)
 	log.Info("Closing agent resources...")
 	closeDone := make(chan error, 1)
 	go func() {
@@ -203,6 +209,12 @@ func runSlackBotOnly(ctx context.Context, cfg *config.Config, done chan os.Signa
 
 		<-done
 		log.Info("Shutting down Socket Mode client...")
+
+		// Close handler resources (including cache cleanup)
+		if err := handler.Close(); err != nil {
+			log.Warnw("Error closing Slack handler", "error", err)
+		}
+
 		log.Info("Slack socket mode stopped")
 
 	} else {
@@ -242,6 +254,11 @@ func runSlackBotOnly(ctx context.Context, cfg *config.Config, done chan os.Signa
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			log.Fatalw("Server shutdown error", "error", err)
+		}
+
+		// Close handler resources (including cache cleanup)
+		if err := handler.Close(); err != nil {
+			log.Warnw("Error closing Slack handler", "error", err)
 		}
 
 		log.Info("Slack webhook bridge stopped")
@@ -373,6 +390,18 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 
 		wg.Wait()
 
+		// Close Slack handler resources (including cache cleanup)
+		log.Info("Closing Slack handler resources...")
+		if err := slackHandler.Close(); err != nil {
+			log.Warnw("Error closing Slack handler", "error", err)
+		}
+
+		// Close agent server resources (rate limiter cleanup)
+		log.Info("Closing agent server resources...")
+		if err := agentServer.Close(); err != nil {
+			log.Warnw("Error closing agent server", "error", err)
+		}
+
 		// Close agent resources (with timeout for safety)
 		log.Info("Closing agent resources...")
 		closeDone := make(chan error, 1)
@@ -429,6 +458,18 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 		log.Info("All goroutines finished")
 	case <-time.After(3 * time.Second):
 		log.Warn("Goroutine wait timeout - forcing shutdown")
+	}
+
+	// Close Slack handler resources (including cache cleanup)
+	log.Info("Closing Slack handler resources...")
+	if err := slackHandler.Close(); err != nil {
+		log.Warnw("Error closing Slack handler", "error", err)
+	}
+
+	// Close agent server resources (rate limiter cleanup)
+	log.Info("Closing agent server resources...")
+	if err := agentServer.Close(); err != nil {
+		log.Warnw("Error closing agent server", "error", err)
 	}
 
 	// Close agent resources (with timeout for safety)

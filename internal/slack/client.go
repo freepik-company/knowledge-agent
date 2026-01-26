@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"knowledge-agent/internal/logger"
@@ -12,11 +13,25 @@ import (
 	"github.com/slack-go/slack"
 )
 
+// threadCacheEntry stores cached thread messages with expiration
+type threadCacheEntry struct {
+	messages  []Message
+	timestamp time.Time
+}
+
 // Client wraps the Slack API client
 type Client struct {
 	api         *slack.Client
 	token       string
 	maxFileSize int64
+
+	// Thread message cache
+	threadCache   map[string]*threadCacheEntry
+	cacheMu       sync.RWMutex
+	cacheTTL      time.Duration
+	cacheMaxSize  int
+	cleanupTicker *time.Ticker
+	cleanupDone   chan struct{}
 }
 
 // Message represents a Slack message
@@ -46,17 +61,93 @@ type User struct {
 	RealName string `json:"real_name"`
 }
 
-// NewClient creates a new Slack client
+// NewClient creates a new Slack client with thread message caching
 func NewClient(token string, maxFileSize int64) *Client {
-	return &Client{
-		api:         slack.New(token),
-		token:       token,
-		maxFileSize: maxFileSize,
+	c := &Client{
+		api:           slack.New(token),
+		token:         token,
+		maxFileSize:   maxFileSize,
+		threadCache:   make(map[string]*threadCacheEntry),
+		cacheTTL:      5 * time.Minute,  // Cache thread messages for 5 minutes
+		cacheMaxSize:  100,               // Max 100 threads cached
+		cleanupTicker: time.NewTicker(1 * time.Minute),
+		cleanupDone:   make(chan struct{}),
+	}
+
+	// Start cache cleanup goroutine
+	go c.cacheCleanupRoutine()
+
+	return c
+}
+
+// Close stops the cache cleanup routine
+func (c *Client) Close() error {
+	if c.cleanupTicker != nil {
+		c.cleanupTicker.Stop()
+		close(c.cleanupDone)
+	}
+	return nil
+}
+
+// cacheCleanupRoutine periodically removes expired cache entries
+func (c *Client) cacheCleanupRoutine() {
+	for {
+		select {
+		case <-c.cleanupTicker.C:
+			c.cleanupExpiredCache()
+		case <-c.cleanupDone:
+			return
+		}
 	}
 }
 
-// FetchThreadMessages fetches all messages in a thread
+// cleanupExpiredCache removes expired entries from the cache
+func (c *Client) cleanupExpiredCache() {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	now := time.Now()
+	removed := 0
+
+	for key, entry := range c.threadCache {
+		if now.Sub(entry.timestamp) > c.cacheTTL {
+			delete(c.threadCache, key)
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		log := logger.Get()
+		log.Debugw("Cleaned up expired thread cache entries",
+			"removed", removed,
+			"remaining", len(c.threadCache))
+	}
+}
+
+// FetchThreadMessages fetches all messages in a thread with caching
 func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, error) {
+	log := logger.Get()
+	cacheKey := fmt.Sprintf("%s:%s", channelID, threadTS)
+
+	// Check cache first
+	c.cacheMu.RLock()
+	if entry, found := c.threadCache[cacheKey]; found {
+		if time.Since(entry.timestamp) <= c.cacheTTL {
+			c.cacheMu.RUnlock()
+			log.Debugw("Thread messages served from cache",
+				"channel_id", channelID,
+				"thread_ts", threadTS,
+				"message_count", len(entry.messages))
+			return entry.messages, nil
+		}
+	}
+	c.cacheMu.RUnlock()
+
+	// Cache miss or expired - fetch from Slack API
+	log.Debugw("Fetching thread messages from Slack API",
+		"channel_id", channelID,
+		"thread_ts", threadTS)
+
 	var allMessages []Message
 	cursor := ""
 
@@ -78,7 +169,7 @@ func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, err
 			// Parse timestamp
 			ts, err := parseSlackTimestamp(msg.Timestamp)
 			if err != nil {
-				logger.Get().Warnw("Failed to parse timestamp, using current time",
+				log.Warnw("Failed to parse timestamp, using current time",
 					"timestamp", msg.Timestamp,
 					"error", err,
 				)
@@ -114,6 +205,33 @@ func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, err
 
 		cursor = nextCursor
 	}
+
+	// Store in cache
+	c.cacheMu.Lock()
+	// Enforce max cache size (LRU-style: remove oldest if at limit)
+	if len(c.threadCache) >= c.cacheMaxSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for key, entry := range c.threadCache {
+			if oldestKey == "" || entry.timestamp.Before(oldestTime) {
+				oldestKey = key
+				oldestTime = entry.timestamp
+			}
+		}
+		delete(c.threadCache, oldestKey)
+		log.Debugw("Evicted oldest cache entry", "key", oldestKey)
+	}
+
+	c.threadCache[cacheKey] = &threadCacheEntry{
+		messages:  allMessages,
+		timestamp: time.Now(),
+	}
+	c.cacheMu.Unlock()
+
+	log.Debugw("Thread messages cached",
+		"channel_id", channelID,
+		"thread_ts", threadTS,
+		"message_count", len(allMessages))
 
 	return allMessages, nil
 }
