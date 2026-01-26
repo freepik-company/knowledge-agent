@@ -1,0 +1,34 @@
+# Example MCP configuration for filesystem access
+# This enables the Knowledge Agent to read, write, and list files via MCP
+
+# Enable MCP integration
+mcp:
+  enabled: true
+  servers:
+    # Filesystem MCP Server (local command-based)
+    - name: "filesystem"
+      description: "Local filesystem operations (read, write, list)"
+      enabled: true
+      transport_type: "command"
+      command:
+        path: "npx"
+        args:
+          - "-y"
+          - "@modelcontextprotocol/server-filesystem"
+          - "/workspace"  # Root directory for filesystem access
+      # Optional: Limit to specific tools
+      tool_filter:
+        - "read_file"
+        - "write_file"
+        - "list_directory"
+        - "create_directory"
+        - "move_file"
+        - "search_files"
+      timeout: 30
+
+# Example queries after enabling:
+# - "What files are in /workspace/docs?"
+# - "Read the contents of README.md"
+# - "Create a new file called notes.txt with the content 'Meeting notes'"
+# - "List all .md files recursively"
+# - "Read all markdown files and save important information to memory"

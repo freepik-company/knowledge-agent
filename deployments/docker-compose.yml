@@ -1,0 +1,163 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: knowledge-agent-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: knowledge_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - knowledge-agent-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: knowledge-agent-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - knowledge-agent-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: knowledge-agent-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - knowledge-agent-network
+    # Uncomment deploy section below if you have GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # Knowledge Agent (Unified Binary - runs both agent and slack bridge)
+  agent:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+      target: runtime  # Uses unified binary with MODE=all
+      # Optional: Pre-install npm packages at BUILD time
+      # args:
+      #   NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
+    container_name: knowledge-agent
+    environment:
+      # Mode: all (both services), agent (agent only), slack-bot (slack bridge only)
+      MODE: all
+      # Optional: path to config file inside container
+      # CONFIG_PATH: /app/config/config.yaml
+      # Database connections (use container names as hostnames)
+      POSTGRES_URL: postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable
+      REDIS_ADDR: redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      # Optional: Install npm packages at RUNTIME (useful for Kubernetes/Helm)
+      # MCP_NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
+    ports:
+      - "8080:8080"  # Slack Bridge
+      - "8081:8081"  # Agent API
+    volumes:
+      # Optional: mount config file
+      - ../config.yaml:/app/config/config.yaml:ro
+      # Optional: mount logs directory
+      # - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - knowledge-agent-network
+
+  # Optional: Separate agent service (for independent scaling)
+  # Uncomment if you want to run agent and slack-bot as separate containers
+  #
+  # agent-only:
+  #   build:
+  #     context: ..
+  #     dockerfile: deployments/Dockerfile
+  #     target: agent
+  #   container_name: knowledge-agent-only
+  #   environment:
+  #     MODE: agent
+  #     POSTGRES_URL: postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable
+  #     REDIS_ADDR: redis:6379
+  #     OLLAMA_BASE_URL: http://ollama:11434/v1
+  #   env_file:
+  #     - ../.env
+  #   ports:
+  #     - "8081:8081"
+  #   volumes:
+  #     - ../config.yaml:/app/config/config.yaml:ro
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     ollama:
+  #       condition: service_healthy
+  #   networks:
+  #     - knowledge-agent-network
+  #
+  # slack-bot-only:
+  #   build:
+  #     context: ..
+  #     dockerfile: deployments/Dockerfile
+  #     target: slack-bot
+  #   container_name: knowledge-agent-slack-bot
+  #   environment:
+  #     MODE: slack-bot
+  #     AGENT_URL: http://agent-only:8081
+  #   env_file:
+  #     - ../.env
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ../config.yaml:/app/config/config.yaml:ro
+  #   depends_on:
+  #     - agent-only
+  #   networks:
+  #     - knowledge-agent-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+
+networks:
+  knowledge-agent-network:
+    driver: bridge

@@ -1,0 +1,255 @@
+# Knowledge Agent Configuration Example
+# Copy this file to config.yaml and fill in your actual values
+# You can use environment variable references with ${VAR} syntax
+
+# ============================================================================
+# Agent Identity
+# ============================================================================
+# Give your agent a custom name to personalize it for your team
+# This name will be used in the agent's responses and identity
+# Examples: "Anton", "Ghost", "Cortex", "Sage", "Echo"
+# Default: "Knowledge Agent" (if not specified)
+agent_name: Knowledge Agent
+
+# ============================================================================
+# Anthropic Configuration
+# ============================================================================
+anthropic:
+  api_key: ${ANTHROPIC_API_KEY}  # Get from https://console.anthropic.com
+  model: claude-sonnet-4-5-20250929
+
+# Slack Configuration
+slack:
+  bot_token: ${SLACK_BOT_TOKEN}  # xoxb-... from https://api.slack.com/apps
+  signing_secret: ${SLACK_SIGNING_SECRET}  # For webhook mode verification
+  app_token: ${SLACK_APP_TOKEN}  # xapp-... for socket mode (optional)
+  mode: socket  # "socket" (local dev) or "webhook" (production)
+
+# PostgreSQL Configuration
+postgres:
+  url: ${POSTGRES_URL:-postgres://postgres:postgres@localhost:5432/knowledge_agent?sslmode=disable}
+
+# Redis Configuration
+redis:
+  addr: ${REDIS_ADDR:-localhost:6379}
+  ttl: 24h
+
+# Ollama Configuration (for embeddings)
+ollama:
+  base_url: ${OLLAMA_BASE_URL:-http://localhost:11434/v1}
+  embedding_model: nomic-embed-text
+
+# RAG Configuration
+rag:
+  chunk_size: 2000
+  chunk_overlap: 1
+  messages_per_chunk: 5
+  similarity_threshold: 0.7
+  max_results: 5
+
+  # Knowledge Scope: Controls how knowledge is shared/isolated
+  # - "shared": All knowledge is global (default) - everyone can search and access all saved information
+  #             ✅ Recommended for A2A (Agent-to-Agent) integrations and bulk ingestion
+  # - "channel": Knowledge isolated per Slack channel - each channel has its own knowledge base
+  #              ⚠️  A2A requests without channel_id will use a separate "shared-knowledge" namespace
+  #              ⚠️  Slack and A2A data will be isolated from each other
+  # - "user": Knowledge isolated per Slack user - each user has their own private knowledge base
+  #           ⚠️  A2A requests without slack_user_id will use a separate "shared-knowledge" namespace
+  #           ⚠️  Not recommended for A2A use cases
+  #
+  # 💡 For A2A integrations: Use "shared" to ensure all agents can access all knowledge
+  knowledge_scope: shared
+
+# Server Configuration
+server:
+  agent_port: 8081
+  slack_bot_port: 8080
+  # HTTP timeouts (in seconds)
+  read_timeout: 30        # Time to read request body
+  write_timeout: 180      # Time to write response (3 min for long searches)
+  request_timeout: 120    # Max time for agent operations (2 min)
+
+# Logging Configuration
+log:
+  level: info  # debug (verbose, shows tool calls/runner events), info (default), warn, error
+  format: console  # json (structured, for production), console (human-readable, for dev)
+  output_path: stdout  # stdout, stderr, or file path like /var/log/knowledge-agent.log
+
+# Authentication Configuration
+auth:
+  # Internal token for Slack Bridge → Agent communication
+  # This is a shared secret that only slack-bot and agent know
+  # Generate with: openssl rand -hex 32
+  internal_token: ${INTERNAL_AUTH_TOKEN}
+
+# Permissions Configuration
+permissions:
+  # List of Slack User IDs allowed to save to memory (empty = all allowed)
+  # Get user IDs from Slack: Profile → More → Copy member ID
+  allowed_slack_users: []
+    # - U01ABC123DE  # user1
+    # - U04EXAMPLE3  # user2
+
+  # List of caller IDs with admin permissions (can save without restrictions)
+  # These are typically A2A services that need to save information
+  admin_caller_ids: []
+    # - root-agent
+    # - monitoring
+    # - backup-service
+
+# Prompt Configuration
+# El system prompt define el comportamiento del agente. Aquí puedes personalizarlo
+# completamente para tu caso de uso específico (soporte técnico, gestión de conocimiento,
+# recetas, tareas, o cualquier otro dominio).
+#
+# Tres formas de configurar el prompt:
+# 1. base_prompt: Define el prompt directamente en este YAML (recomendado para producción)
+# 2. template_path: Carga el prompt desde un archivo externo (útil para prompts muy largos)
+# 3. Sin configurar: Usa el prompt por defecto (Knowledge Management para tecnología)
+prompt:
+  # Opción 1: Define tu system prompt directamente aquí
+  # Este es el prompt por defecto enfocado en gestión de conocimiento para equipos de tecnología
+  base_prompt: |
+    You are a Knowledge Management Assistant that helps teams build and maintain their institutional knowledge base.
+
+    ## Your Role
+
+    You help teams by:
+    1. **Answering questions** using information from past conversations
+    2. **Storing valuable information** from current conversations for future reference
+
+    ## Available Tools
+
+    You have access to these tools:
+    - **search_memory**: Search the knowledge base for relevant information
+    - **save_to_memory**: Store important information for future retrieval
+    - **fetch_url**: Fetch and analyze content from URLs (web pages, documentation, etc.)
+
+    ## How to Decide What to Do
+
+    Analyze the user's intent and the conversation context to decide:
+
+    ### When to SEARCH (use search_memory):
+    - User asks a question about past events, decisions, or solutions
+    - User needs information that might exist in previous conversations
+    - User references something that happened before
+    - Examples: "How did we...?", "What's our process for...?", "When did we decide...?"
+
+    ### When to SAVE (use save_to_memory):
+    - The current conversation contains valuable information worth preserving
+    - Important decisions, solutions, or insights are being discussed
+    - Technical details, configurations, or procedures are being shared
+    - User explicitly requests to remember/save something
+    - The discussion has reached a conclusion worth documenting
+    - You can save multiple times in a conversation - save important facts as they emerge
+    - When a problem is solved, save the solution with context about the problem and resolution
+
+    ### When to FETCH URLs (use fetch_url):
+    - User shares a link to documentation, blog post, or web page
+    - User asks about content in a specific URL
+    - User wants you to analyze or summarize web content
+    - Examples: "check this link", "what does this page say?", "analyze this URL"
+
+    ### When to ANALYZE IMAGES:
+    - User shares an image in the conversation (diagrams, screenshots, architectures, etc.)
+    - You can see images directly in the message
+    - Analyze the visual content and extract technical/business information
+    - **PRIMARY USE CASES** (technical/business context):
+      - **Architecture diagrams**: Analyze system designs, component relationships, data flows
+      - **Error screenshots**: Identify error messages, stack traces, problematic code
+      - **Infrastructure diagrams**: Document servers, networks, deployment configurations
+      - **Code screenshots**: Review code snippets, configurations, or terminal outputs
+      - **Workflow diagrams**: Document processes, decision trees, or business flows
+      - **Documentation screenshots**: Extract important information from docs, wikis, or slides
+
+    ### For Responses:
+    - **CRITICAL**: Always respond in the same language the user is using
+      - If they write in Spanish, respond in Spanish
+      - If they write in English, respond in English
+      - Match the user's language naturally
+    - **PERSONALIZATION**: If you know the user's name (provided in context), use it naturally
+      - Example: "Hi John, let me search for that..."
+      - Don't overuse - once at the beginning is enough
+    - **FORMATTING**: Use Slack-compatible formatting:
+      - Use *bold* for emphasis (single asterisks, NOT double)
+      - Use bullet points with • or numbers for lists
+      - Use single backticks for code formatting
+      - Do NOT use ## or # headers - use *Section Name* instead
+    - Be clear, concise, and helpful
+    - Base answers on knowledge base when available
+    - Be conversational and natural
+
+    ## Remember
+    - Let the conversation context guide your decisions
+    - Use tools when they add value, not by default
+    - Always respond in the user's language
+    - Focus on being helpful and natural
+
+  # Opción 2: Carga el prompt desde un archivo externo (anula base_prompt si está definido)
+  # Útil para mantener prompts muy largos o compartidos entre múltiples instancias
+  # template_path: /path/to/my_custom_prompt.txt
+
+  # Opción 3: Hot reload (solo para desarrollo, recarga el prompt cuando el archivo cambia)
+  # Solo funciona con template_path, no con base_prompt
+  enable_hot_reload: false
+
+# Langfuse Configuration (Observability for LLM interactions)
+# Langfuse provides tracing, logging, and analytics for LLM applications
+# Sign up at https://cloud.langfuse.com or self-host
+langfuse:
+  # Enable/disable Langfuse tracing (default: false)
+  enabled: false
+
+  # Langfuse API keys (get from https://cloud.langfuse.com settings)
+  public_key: ${LANGFUSE_PUBLIC_KEY}
+  secret_key: ${LANGFUSE_SECRET_KEY}
+
+  # Langfuse host URL (use https://cloud.langfuse.com for cloud or your self-hosted URL)
+  host: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+
+  # Model pricing configuration (for cost tracking)
+  # These values are used to calculate the total cost of LLM interactions
+  # Update these if you're using a different model or custom pricing
+  input_cost_per_1m: 3.0   # Cost per 1M input tokens in USD (default: Claude Sonnet 4.5 = $3)
+  output_cost_per_1m: 15.0  # Cost per 1M output tokens in USD (default: Claude Sonnet 4.5 = $15)
+
+# Agent-to-Agent (A2A) External Authentication
+# Maps client IDs to their secret tokens for external services
+# Format: client_id: secret_token
+# These are for direct API access, not for Slack Bridge
+# Generate tokens with: openssl rand -hex 16
+a2a_api_keys: {}
+  # Example:
+  # root-agent: ${A2A_ROOT_AGENT_TOKEN}
+  # analytics-agent: ${A2A_ANALYTICS_TOKEN}
+
+# MCP (Model Context Protocol) Integration
+# Prerequisites:
+# 1. Install MCP servers: npm install -g @modelcontextprotocol/server-filesystem
+# 2. Set environment variables if needed (e.g., GITHUB_PAT for GitHub MCP)
+mcp:
+  enabled: false
+  servers:
+    # Example 1: Filesystem access
+    # - name: "filesystem"
+    #   description: "Local filesystem operations"
+    #   enabled: true
+    #   transport_type: "command"
+    #   command:
+    #     path: "npx"
+    #     args:
+    #       - "-y"
+    #       - "@modelcontextprotocol/server-filesystem"
+    #       - "/tmp/mcp-workspace"
+    #   timeout: 30
+
+    # Example 2: GitHub integration (requires PAT)
+    # - name: "github"
+    #   description: "GitHub repository access"
+    #   enabled: false
+    #   transport_type: "sse"
+    #   endpoint: "https://api.github.com/mcp"
+    #   auth:
+    #     type: "bearer"
+    #     token_env: "GITHUB_PAT"
+    #   timeout: 30

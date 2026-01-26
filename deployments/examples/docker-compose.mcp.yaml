@@ -1,0 +1,104 @@
+# Example docker-compose.yml with MCP packages pre-installed
+# This demonstrates both build-time and runtime installation approaches
+
+services:
+  # Example 1: Build-time installation (faster startup, larger image)
+  agent-buildtime:
+    build:
+      context: ../..
+      dockerfile: deployments/Dockerfile
+      args:
+        # Install packages during image build
+        NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
+    environment:
+      MODE: all
+      POSTGRES_URL: postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable
+      REDIS_ADDR: redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+    env_file:
+      - ../../.env
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ../../config.yaml:/app/config/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  # Example 2: Runtime installation (flexible, smaller image)
+  agent-runtime:
+    build:
+      context: ../..
+      dockerfile: deployments/Dockerfile
+    environment:
+      MODE: all
+      POSTGRES_URL: postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable
+      REDIS_ADDR: redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      # Install packages at container startup
+      MCP_NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite @modelcontextprotocol/server-github"
+    env_file:
+      - ../../.env
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ../../config.yaml:/app/config/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  # Infrastructure services (same for both approaches)
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: knowledge_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:

@@ -1,0 +1,107 @@
+# Example Helm values.yaml for Knowledge Agent
+# This shows how to configure MCP npm packages installation
+
+knowledgeAgent:
+  # Docker image configuration
+  image:
+    repository: your-registry/knowledge-agent
+    tag: latest
+    pullPolicy: IfNotPresent
+
+    # Build-time npm package installation (optional)
+    # Uncomment to pre-install packages in the Docker image
+    # buildArgs:
+    #   NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
+
+  # Runtime configuration
+  env:
+    # Mode: all (both services), agent (agent only), slack-bot (slack bridge only)
+    - name: MODE
+      value: "all"
+
+    # Database connections
+    - name: POSTGRES_URL
+      value: "postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable"
+    - name: REDIS_ADDR
+      value: "redis:6379"
+    - name: OLLAMA_BASE_URL
+      value: "http://ollama:11434/v1"
+
+    # ==========================================================================
+    # MCP NPM Packages (Runtime Installation)
+    # ==========================================================================
+    # Install npm packages at container startup
+    # This is the preferred approach for Kubernetes/Helm as it allows
+    # dynamic configuration without rebuilding the image
+    # ==========================================================================
+    - name: MCP_NPM_PACKAGES
+      value: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
+
+    # Secrets from Kubernetes secrets
+    - name: ANTHROPIC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: knowledge-agent-secrets
+          key: anthropic-api-key
+
+    - name: SLACK_BOT_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: knowledge-agent-secrets
+          key: slack-bot-token
+
+    - name: INTERNAL_AUTH_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: knowledge-agent-secrets
+          key: internal-auth-token
+
+  # Resource limits
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+  # Probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 30
+    periodSeconds: 10
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+# PostgreSQL (can use external or subchart)
+postgresql:
+  enabled: true
+  auth:
+    username: postgres
+    password: postgres
+    database: knowledge_agent
+
+# Redis (can use external or subchart)
+redis:
+  enabled: true
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+
+# Ollama (requires custom chart or statefulset)
+ollama:
+  enabled: true
+  image:
+    repository: ollama/ollama
+    tag: latest
+  persistence:
+    enabled: true
+    size: 10Gi

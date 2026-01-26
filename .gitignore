@@ -1,0 +1,84 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+*.test
+*.out
+
+# Environment & Configuration (with secrets)
+.env
+.env.*
+!.env.example
+config.yaml
+config.yml
+config-local.yaml
+config-local.yml
+secrets/
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.fleet/
+.netbeans/
+nbproject/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Dependencies
+vendor/
+node_modules/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary
+tmp/
+temp/
+.cache/
+
+# Claude Code
+.claude/settings.local.json
+.claude/plans/
+.claude/projects/*/transcript*.jsonl
+
+# Docker
+.docker/
+
+# Testing
+coverage.out
+*.test
+.testcache/
+
+# Build artifacts
+*.tar.gz
+*.zip
+checksum*.txt
+*.md5
+*.sha256

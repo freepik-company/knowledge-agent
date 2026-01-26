@@ -1,0 +1,66 @@
+# Example MCP configuration with multiple servers
+# This demonstrates combining multiple MCP sources
+
+# Prerequisites:
+# 1. npm install -g @modelcontextprotocol/server-filesystem
+# 2. npm install -g @modelcontextprotocol/server-sqlite
+# 3. export GITHUB_PAT=ghp_your_token_here (if using GitHub)
+
+# Enable MCP integration
+mcp:
+  enabled: true
+  servers:
+    # 1. Filesystem access
+    - name: "filesystem"
+      description: "Local filesystem operations"
+      enabled: true
+      transport_type: "command"
+      command:
+        path: "npx"
+        args:
+          - "-y"
+          - "@modelcontextprotocol/server-filesystem"
+          - "/workspace"
+      timeout: 30
+
+    # 2. SQLite database access
+    - name: "sqlite"
+      description: "SQLite database operations"
+      enabled: true
+      transport_type: "command"
+      command:
+        path: "npx"
+        args:
+          - "-y"
+          - "@modelcontextprotocol/server-sqlite"
+          - "/data/analytics.db"
+      tool_filter:
+        - "read_query"
+        - "list_tables"
+        - "describe_table"
+      timeout: 30
+
+    # 3. GitHub integration (optional, requires PAT)
+    - name: "github"
+      description: "GitHub repository access"
+      enabled: false  # Set to true when ready
+      transport_type: "sse"
+      endpoint: "https://api.github.com/mcp"
+      auth:
+        type: "bearer"
+        token_env: "GITHUB_PAT"
+      timeout: 30
+
+# Example use cases:
+# 1. "Read the deployment guide from /workspace/docs and save key steps to memory"
+# 2. "Query the analytics database for last week's metrics"
+# 3. "Compare our deployment process with the one in GitHub repo xyz/abc"
+# 4. "List all markdown files and summarize their contents"
+# 5. "What tables are in the analytics database and what do they contain?"
+
+# Architecture notes:
+# - The agent receives ALL tools from ALL enabled servers
+# - Claude intelligently decides which tools to use based on context
+# - Tools can be combined in a single query (e.g., read file + save to memory)
+# - Each server runs independently with graceful degradation
+# - Failed servers don't prevent agent startup

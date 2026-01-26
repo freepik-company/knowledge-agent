@@ -1,0 +1,43 @@
+# Example MCP configuration for GitHub integration
+# This enables the Knowledge Agent to interact with GitHub repositories
+
+# Prerequisites:
+# 1. GitHub Personal Access Token (PAT) with repo permissions
+# 2. Set environment variable: export GITHUB_PAT=ghp_your_token_here
+# 3. Install GitHub MCP server: npm install -g @modelcontextprotocol/server-github
+
+# Enable MCP integration
+mcp:
+  enabled: true
+  servers:
+    # GitHub MCP Server (remote via SSE)
+    - name: "github"
+      description: "GitHub repository access (issues, PRs, files, commits)"
+      enabled: true
+      transport_type: "sse"
+      endpoint: "https://api.github.com/mcp"
+      auth:
+        type: "bearer"
+        token_env: "GITHUB_PAT"  # Environment variable containing PAT
+      # Optional: Limit to specific tools
+      tool_filter:
+        - "list_repositories"
+        - "get_file_contents"
+        - "search_repositories"
+        - "list_issues"
+        - "get_issue"
+        - "list_pull_requests"
+      timeout: 30
+
+# Example queries after enabling:
+# - "List all repositories in my account"
+# - "Show me open issues in myorg/myrepo"
+# - "Get the contents of README.md from myorg/myrepo"
+# - "Search for repositories containing 'knowledge agent'"
+# - "Read the implementation plan from GitHub and summarize it"
+
+# Security notes:
+# - Never commit your PAT to version control
+# - Use token_env to reference environment variables
+# - Limit tool_filter to only needed operations
+# - Set appropriate timeout values

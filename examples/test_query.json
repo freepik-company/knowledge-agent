@@ -1,0 +1,19 @@
+{
+  "question": "How do we handle Redis timeout issues?",
+  "channel_id": "C12345678",
+  "thread_ts": "1706025000.123456",
+  "messages": [
+    {
+      "user": "U123456",
+      "text": "@bot how do we handle Redis timeout issues?",
+      "ts": "1706025600.123456",
+      "type": "message"
+    },
+    {
+      "user": "U789012",
+      "text": "I think we had a similar issue last month",
+      "ts": "1706025610.123456",
+      "type": "message"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "thread_ts": "1706025600.123456",
+  "channel_id": "C01ABC123",
+  "messages": [
+    {
+      "user": "U01XYZ789",
+      "text": "Hey team, we're experiencing high latency on the API. Response times are over 2 seconds.",
+      "ts": "1706025600.123456",
+      "type": "message"
+    },
+    {
+      "user": "U02ABC456",
+      "text": "I checked the database. There are missing indexes on the users table. The user_id column doesn't have an index.",
+      "ts": "1706025650.123456",
+      "type": "message"
+    },
+    {
+      "user": "U03DEF012",
+      "text": "Good catch! Let me add the index. Running: CREATE INDEX idx_users_user_id ON users(user_id);",
+      "ts": "1706025700.123456",
+      "type": "message"
+    },
+    {
+      "user": "U03DEF012",
+      "text": "Index created successfully. Queries are now completing in under 100ms.",
+      "ts": "1706025750.123456",
+      "type": "message"
+    },
+    {
+      "user": "U01XYZ789",
+      "text": "Confirmed! API latency is back to normal. Thanks everyone!",
+      "ts": "1706025800.123456",
+      "type": "message"
+    },
+    {
+      "user": "U02ABC456",
+      "text": "We should document this. The pattern is: whenever we add user-related features, make sure we have proper indexes on foreign keys.",
+      "ts": "1706025850.123456",
+      "type": "message"
+    }
+  ]
+}
