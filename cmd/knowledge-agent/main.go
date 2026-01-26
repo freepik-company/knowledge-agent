@@ -229,9 +229,6 @@ func runSlackBotOnly(ctx context.Context, cfg *config.Config, done chan os.Signa
 				"events_endpoint", fmt.Sprintf("http://localhost%s/slack/events", addr),
 				"agent_url", agentURL,
 			)
-			log.Info("Configure Slack Event Subscriptions:")
-			log.Info("  Request URL: https://your-domain.com/slack/events")
-			log.Info("  Bot Events: app_mention")
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatalw("Server error", "error", err)
 			}
@@ -347,9 +344,6 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 				"events_endpoint", fmt.Sprintf("http://localhost%s/slack/events", slackAddr),
 				"agent_url", agentURL,
 			)
-			log.Info("Configure Slack Event Subscriptions:")
-			log.Info("  Request URL: https://your-domain.com/slack/events")
-			log.Info("  Bot Events: app_mention")
 			if err := slackHTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				errors <- fmt.Errorf("slack server error: %w", err)
 			}
