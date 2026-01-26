@@ -161,7 +161,7 @@ echo ""
 
 # Execute the main application
 if [ -n "$CONFIG_PATH" ] && [ -f "$CONFIG_PATH" ]; then
-    exec /bin/knowledge-agent --config "$CONFIG_PATH" --mode "${MODE:-all}"
+    exec /app/knowledge-agent --config "$CONFIG_PATH" --mode "${MODE:-all}"
 else
-    exec /bin/knowledge-agent --mode "${MODE:-all}"
+    exec /app/knowledge-agent --mode "${MODE:-all}"
 fi
