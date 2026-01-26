@@ -37,38 +37,18 @@ func personalizeAgentName(basePrompt string, agentName string) string {
 	return prompt
 }
 
-// BuildSystemPromptWithPermissions generates the system prompt with permission rules injected
-// It takes a base prompt (from prompt manager or default) and injects permission rules
+// BuildSystemPromptWithPermissions generates the system prompt
+// Note: Permissions are NOT injected into the prompt for security reasons
+// The agent should attempt save_to_memory and handle permission errors gracefully
 func BuildSystemPromptWithPermissions(basePrompt string, cfg *config.PermissionsConfig) string {
-	// If permissions are configured, add restrictions
-	if len(cfg.AllowedSlackUsers) > 0 || len(cfg.AdminCallerIDs) > 0 {
-		permissionSection := buildPermissionSection(cfg)
-		// Insert permission section after "When to SAVE" section
-		insertPoint := "### When to SAVE (use save_to_memory):"
-		basePrompt = strings.Replace(basePrompt, insertPoint, insertPoint+"\n"+permissionSection, 1)
-	}
-
+	// No longer inject permission lists into prompt
+	// Permissions are enforced at the tool wrapper level
+	// The agent will receive errors when permissions are denied
 	return basePrompt
 }
 
 func buildPermissionSection(cfg *config.PermissionsConfig) string {
-	var sb strings.Builder
-
-	sb.WriteString("\n**IMPORTANT - SAVE PERMISSIONS:**\n")
-	sb.WriteString("Before using save_to_memory, verify that the current user has permission:\n\n")
-
-	if len(cfg.AdminCallerIDs) > 0 {
-		sb.WriteString(fmt.Sprintf("- Admin caller IDs (always allowed): %s\n", strings.Join(cfg.AdminCallerIDs, ", ")))
-	}
-
-	if len(cfg.AllowedSlackUsers) > 0 {
-		sb.WriteString(fmt.Sprintf("- Allowed Slack users: %s\n", strings.Join(cfg.AllowedSlackUsers, ", ")))
-	}
-
-	sb.WriteString("\nIf the current request is NOT from an allowed user or admin caller:\n")
-	sb.WriteString("- DO NOT use save_to_memory\n")
-	sb.WriteString("- Respond politely: \"I'm sorry, but only authorized users can save information to the knowledge base.\"\n")
-	sb.WriteString("- You can still use search_memory and fetch_url tools for all users\n\n")
-
-	return sb.String()
+	// Deprecated - permissions are now enforced at tool wrapper level
+	// This function is kept for backward compatibility but returns empty string
+	return ""
 }
