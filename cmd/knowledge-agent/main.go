@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -478,13 +479,23 @@ func runMigrations(ctx context.Context, cfg *config.Config) error {
 // logAuthMode logs the authentication mode configuration
 func logAuthMode(cfg *config.Config) {
 	log := logger.Get()
-	if len(cfg.APIKeys) == 0 {
+	hasInternalToken := cfg.Auth.InternalToken != ""
+	hasAPIKeys := len(cfg.APIKeys) > 0
+
+	if !hasInternalToken && !hasAPIKeys {
 		log.Info("Authentication: Open mode (no authentication required)")
 	} else {
+		authMethods := []string{}
+		if hasInternalToken {
+			authMethods = append(authMethods, "internal_token")
+		}
+		if hasAPIKeys {
+			authMethods = append(authMethods, fmt.Sprintf("a2a_api_keys(%d)", len(cfg.APIKeys)))
+		}
+
 		log.Infow("Authentication: Secured mode",
-			"api_keys_count", len(cfg.APIKeys),
-			"slack_auth", "signing secret",
-			"a2a_auth", "API keys",
+			"methods", strings.Join(authMethods, ", "),
+			"slack_auth", "signing_secret",
 		)
 	}
 }

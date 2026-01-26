@@ -39,7 +39,17 @@ func LoadFromYAML(path string) (*Config, error) {
 	// Apply default values for empty fields
 	applyDefaults(&cfg)
 
-	// Parse A2A API keys if provided in config
+	// Parse A2A API keys if provided as JSON string
+	// This handles the case where a2a_api_keys: ${ENV:A2A_API_KEYS} expands to JSON
+	if apiKeysStr := v.GetString("a2a_api_keys"); apiKeysStr != "" && strings.HasPrefix(strings.TrimSpace(apiKeysStr), "{") {
+		var apiKeys map[string]string
+		if err := json.Unmarshal([]byte(apiKeysStr), &apiKeys); err != nil {
+			return nil, fmt.Errorf("failed to parse a2a_api_keys JSON: %w", err)
+		}
+		cfg.APIKeys = apiKeys
+	}
+
+	// Initialize empty map if not set
 	if cfg.APIKeys == nil {
 		cfg.APIKeys = make(map[string]string)
 	}
@@ -47,15 +57,48 @@ func LoadFromYAML(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// expandEnvVars recursively expands ${VAR} references in all string values
+// expandEnvVars recursively expands ${VAR} and ${ENV:VAR} references in all string values
 func expandEnvVars(v *viper.Viper) {
 	for _, key := range v.AllKeys() {
 		val := v.GetString(key)
 		if strings.Contains(val, "${") {
-			expanded := os.ExpandEnv(val)
+			expanded := expandEnvString(val)
 			v.Set(key, expanded)
 		}
 	}
+}
+
+// expandEnvString expands environment variable references in a string
+// Supports two formats:
+//   - ${VAR} - standard format (compatible with os.ExpandEnv)
+//   - ${ENV:VAR} - explicit format for clarity in config files
+func expandEnvString(s string) string {
+	// First handle ${ENV:VAR} format
+	result := s
+	for {
+		start := strings.Index(result, "${ENV:")
+		if start == -1 {
+			break
+		}
+
+		end := strings.Index(result[start:], "}")
+		if end == -1 {
+			break
+		}
+		end += start
+
+		// Extract variable name
+		varName := result[start+6 : end] // Skip "${ENV:"
+		varValue := os.Getenv(varName)
+
+		// Replace ${ENV:VAR} with value
+		result = result[:start] + varValue + result[end+1:]
+	}
+
+	// Then handle standard ${VAR} format
+	result = os.ExpandEnv(result)
+
+	return result
 }
 
 // applyDefaults applies default values to empty config fields
