@@ -4,15 +4,189 @@ This comprehensive guide covers all configuration aspects of Knowledge Agent, in
 
 ## Table of Contents
 
-1. [Configuration Methods](#configuration-methods)
-2. [Configuration File Format](#configuration-file-format)
-3. [Slack Configuration](#slack-configuration)
-4. [Agent-to-Agent (A2A) Authentication](#agent-to-agent-a2a-authentication)
-5. [Command Line Flags](#command-line-flags)
-6. [Multi-Environment Setup](#multi-environment-setup)
-7. [Docker & Kubernetes](#docker--kubernetes)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+1. [Unified Binary Architecture](#unified-binary-architecture)
+2. [Configuration Methods](#configuration-methods)
+3. [Configuration File Format](#configuration-file-format)
+4. [Slack Configuration](#slack-configuration)
+5. [Agent-to-Agent (A2A) Authentication](#agent-to-agent-a2a-authentication)
+6. [Command Line Flags](#command-line-flags)
+7. [Multi-Environment Setup](#multi-environment-setup)
+8. [Docker & Kubernetes](#docker--kubernetes)
+9. [Best Practices](#best-practices)
+10. [Troubleshooting](#troubleshooting)
+
+---
+
+## Unified Binary Architecture
+
+Knowledge Agent uses a **single unified binary** (`knowledge-agent`) that can run in three different modes via the `--mode` flag.
+
+### Available Modes
+
+#### 1. All-in-One Mode (default)
+
+Runs both services in a single process.
+
+```bash
+./bin/knowledge-agent --config config.yaml --mode all
+# or simply (default):
+./bin/knowledge-agent --config config.yaml
+```
+
+**When to use**:
+- Single-server deployments
+- Development and testing
+- Small-scale production
+- Simplified Docker deployments
+
+**Advantages**:
+- ✅ Single process to manage
+- ✅ Simpler deployment
+- ✅ Lower resource overhead
+- ✅ Automatic service coordination
+
+#### 2. Agent-Only Mode
+
+Runs only the Knowledge Agent service (port 8081).
+
+```bash
+./bin/knowledge-agent --config config.yaml --mode agent
+```
+
+**When to use**:
+- Microservices architecture
+- Independent scaling of agent logic
+- Multiple Slack bridges connecting to one agent
+- Testing agent without Slack integration
+
+**Exposes**:
+- `GET /health` - Health check
+- `GET /metrics` - Metrics
+- `POST /api/query` - Query endpoint
+- `POST /api/ingest-thread` - Ingestion endpoint
+
+#### 3. Slack Bridge Mode
+
+Runs only the Slack Bridge service (port 8080).
+
+```bash
+./bin/knowledge-agent --config config.yaml --mode slack-bot
+```
+
+**When to use**:
+- Microservices architecture
+- Independent scaling of Slack integration
+- Multiple Slack workspaces sharing one agent
+- Hot-reload Slack bridge without affecting agent
+
+**Exposes**:
+- `POST /slack/events` - Slack webhook endpoint
+
+### Architecture Comparison
+
+**Single Process (mode=all)**:
+```
+┌─────────────────────────────────┐
+│   knowledge-agent (unified)     │
+│                                 │
+│  ┌──────────┐   ┌────────────┐ │
+│  │  Slack   │──▶│   Agent    │ │
+│  │  Bridge  │   │   Logic    │ │
+│  │  :8080   │   │   :8081    │ │
+│  └──────────┘   └────────────┘ │
+└─────────────────────────────────┘
+```
+
+**Distributed (mode=agent + mode=slack-bot)**:
+```
+┌──────────────────┐       ┌──────────────────┐
+│  knowledge-agent │       │  knowledge-agent │
+│   (slack-bot)    │       │     (agent)      │
+│                  │       │                  │
+│  ┌────────────┐  │       │  ┌────────────┐  │
+│  │   Slack    │──┼──────▶│  │   Agent    │  │
+│  │   Bridge   │  │ HTTP  │  │   Logic    │  │
+│  │   :8080    │  │       │  │   :8081    │  │
+│  └────────────┘  │       │  └────────────┘  │
+└──────────────────┘       └──────────────────┘
+```
+
+### Configuration
+
+The `--mode` flag can be set via:
+
+1. **Command line** (highest priority):
+   ```bash
+   ./bin/knowledge-agent --mode agent
+   ```
+
+2. **Environment variable**:
+   ```bash
+   export MODE=slack-bot
+   ./bin/knowledge-agent
+   ```
+
+3. **Default**: `all` (if not specified)
+
+### Deployment Examples
+
+**Development (all-in-one)**:
+```bash
+make dev  # Runs with mode=all by default
+```
+
+**Production (distributed)**:
+```bash
+# Terminal 1: Agent
+./bin/knowledge-agent --config /etc/agent/config.yaml --mode agent
+
+# Terminal 2: Slack Bridge
+./bin/knowledge-agent --config /etc/agent/config.yaml --mode slack-bot
+```
+
+**Docker Compose (distributed)**:
+```yaml
+services:
+  agent:
+    image: knowledge-agent:latest
+    command: ["--config", "/config/config.yaml", "--mode", "agent"]
+
+  slack-bridge:
+    image: knowledge-agent:latest
+    command: ["--config", "/config/config.yaml", "--mode", "slack-bot"]
+```
+
+**Kubernetes (distributed with scaling)**:
+```yaml
+# Agent deployment (scale for heavy workload)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-agent
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: agent
+        image: knowledge-agent:latest
+        args: ["--config", "/config/config.yaml", "--mode", "agent"]
+
+---
+# Slack Bridge deployment (usually single instance)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slack-bridge
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: bridge
+        image: knowledge-agent:latest
+        args: ["--config", "/config/config.yaml", "--mode", "slack-bot"]
+```
 
 ---
 
@@ -31,17 +205,20 @@ Use the `--config` flag to specify a custom configuration file location.
 ### Examples
 
 ```bash
-# Development with custom config
-./bin/agent --config config.dev.yaml
-./bin/slack-bot --config config.dev.yaml
+# Development with custom config (all-in-one)
+./bin/knowledge-agent --config config.dev.yaml
 
-# Production with absolute path
-./bin/agent --config /etc/knowledge-agent/production.yaml
-./bin/slack-bot --config /etc/knowledge-agent/production.yaml
+# Production with absolute path (all-in-one)
+./bin/knowledge-agent --config /etc/knowledge-agent/production.yaml
 
-# Staging environment
-./bin/agent --config configs/staging.yaml
-./bin/slack-bot --config configs/staging.yaml
+# Staging environment (all-in-one)
+./bin/knowledge-agent --config configs/staging.yaml
+
+# Distributed deployment (agent only)
+./bin/knowledge-agent --config configs/production.yaml --mode agent
+
+# Distributed deployment (Slack bridge only)
+./bin/knowledge-agent --config configs/production.yaml --mode slack-bot
 ```
 
 ### Use Cases
@@ -64,9 +241,12 @@ cp config.yaml.example config.yaml
 # Edit with your values
 vim config.yaml
 
-# Start services (auto-detects config.yaml)
-./bin/agent
-./bin/slack-bot
+# Start service (auto-detects config.yaml, runs in all-in-one mode)
+./bin/knowledge-agent
+
+# Or with explicit mode
+./bin/knowledge-agent --mode agent      # Agent only
+./bin/knowledge-agent --mode slack-bot  # Slack bridge only
 ```
 
 ### Use Cases
@@ -90,8 +270,7 @@ vim .env
 
 # Load environment and start
 source .env
-./bin/agent
-./bin/slack-bot
+./bin/knowledge-agent  # Runs in all-in-one mode
 ```
 
 ### Use Cases
@@ -578,7 +757,7 @@ Choose the method that best fits your deployment needs!
 services:
   agent:
     image: knowledge-agent:latest
-    command: ["./agent", "--config", "/config/production.yaml"]
+    command: ["--config", "/config/production.yaml", "--mode", "agent"]
     volumes:
       - ./configs/production.yaml:/config/production.yaml:ro
     environment:
@@ -587,10 +766,21 @@ services:
 
   slack-bot:
     image: knowledge-agent:latest
-    command: ["./slack-bot", "--config", "/config/production.yaml"]
+    command: ["--config", "/config/production.yaml", "--mode", "slack-bot"]
     volumes:
       - ./configs/production.yaml:/config/production.yaml:ro
     environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+
+  # Alternative: Run both services in a single container
+  all-in-one:
+    image: knowledge-agent:latest
+    command: ["--config", "/config/production.yaml", "--mode", "all"]
+    volumes:
+      - ./configs/production.yaml:/config/production.yaml:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
 ```

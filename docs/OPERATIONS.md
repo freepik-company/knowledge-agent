@@ -1,51 +1,51 @@
 # Operations Guide
 
-Guía operacional completa para Knowledge Agent: logging, traceability y observabilidad.
+Complete operational guide for Knowledge Agent: logging, traceability, and observability.
 
 ## Logging
 
-El Knowledge Agent utiliza **Uber Zap** para logging estructurado con alto rendimiento.
+Knowledge Agent uses **Uber Zap** for high-performance structured logging.
 
-### Niveles de Log
+### Log Levels
 
 #### debug
-Logging muy detallado, incluye:
-- Eventos del runner ADK
-- Llamadas a herramientas (tool calls)
-- Respuestas de herramientas
-- Contenido de mensajes (truncado)
-- Conteo de eventos
-- Detalles de procesamiento
+Very detailed logging, includes:
+- ADK runner events
+- Tool calls
+- Tool responses
+- Message content (truncated)
+- Event counts
+- Processing details
 
-**Cuándo usar**: Debugging de problemas, desarrollo de features, investigación de comportamiento del agente.
+**When to use**: Debugging issues, feature development, investigating agent behavior.
 
 #### info (default)
-Logging operacional estándar:
-- Peticiones recibidas
-- Operaciones exitosas
-- Inicio/parada de servicios
-- Configuración cargada
-- Tool calls importantes (save_to_memory, search_memory)
+Standard operational logging:
+- Requests received
+- Successful operations
+- Service start/stop
+- Configuration loaded
+- Important tool calls (save_to_memory, search_memory)
 
-**Cuándo usar**: Producción, operaciones normales.
+**When to use**: Production, normal operations.
 
 #### warn
-Situaciones anormales pero recuperables:
-- Errores recuperables
+Abnormal but recoverable situations:
+- Recoverable errors
 - Fallbacks
-- Conexiones fallidas que se reintentarán
+- Failed connections that will be retried
 
-**Cuándo usar**: Producción con alerting.
+**When to use**: Production with alerting.
 
 #### error
-Errores no recuperables:
-- Fallos en peticiones
-- Errores de agente
-- Problemas de infraestructura
+Non-recoverable errors:
+- Request failures
+- Agent errors
+- Infrastructure problems
 
-**Cuándo usar**: Siempre en producción.
+**When to use**: Always in production.
 
-### Formatos de Output
+### Output Formats
 
 #### console (human-readable)
 ```
@@ -53,7 +53,7 @@ Errores no recuperables:
 2026-01-24T15:30:47.456+0100    INFO    agent/agent.go:420    Agent calling tool    {"tool": "search_memory", "args_count": 2}
 ```
 
-**Cuándo usar**: Desarrollo local, debugging.
+**When to use**: Local development, debugging.
 
 #### json (structured)
 ```json
@@ -61,19 +61,19 @@ Errores no recuperables:
 {"level":"info","ts":"2026-01-24T15:30:47.456+0100","caller":"agent/agent.go:420","msg":"Agent calling tool","tool":"search_memory","args_count":2}
 ```
 
-**Cuándo usar**: Producción, integración con sistemas de logging (ELK, Splunk, Datadog).
+**When to use**: Production, integration with logging systems (ELK, Splunk, Datadog).
 
-### Configuración
+### Configuration
 
-#### Variables de Entorno (.env)
+#### Environment Variables (.env)
 
 ```bash
-# Desarrollo con debugging
+# Development with debugging
 LOG_LEVEL=debug
 LOG_FORMAT=console
 LOG_OUTPUT=stdout
 
-# Producción
+# Production
 LOG_LEVEL=info
 LOG_FORMAT=json
 LOG_OUTPUT=/var/log/knowledge-agent.log
@@ -91,17 +91,17 @@ log:
 #### Runtime Override
 
 ```bash
-# Override temporalmente
+# Temporary override
 LOG_LEVEL=debug make dev
 
-# O con binarios directamente
+# Or with binaries directly
 LOG_LEVEL=debug ./bin/knowledge-agent
 ```
 
 ### Output Destinations
 
 #### stdout (default)
-Logs a consola estándar.
+Logs to standard output.
 
 ```yaml
 log:
@@ -109,7 +109,7 @@ log:
 ```
 
 #### stderr
-Logs a error estándar (útil para separar logs de output normal).
+Logs to standard error (useful for separating logs from normal output).
 
 ```yaml
 log:
@@ -117,16 +117,16 @@ log:
 ```
 
 #### File
-Logs a archivo (importante: rotación de logs NO incluida, usar logrotate o similar).
+Logs to file (important: log rotation NOT included, use logrotate or similar).
 
 ```yaml
 log:
   output_path: /var/log/knowledge-agent.log
 ```
 
-### Logs Importantes
+### Important Logs
 
-#### Durante Query (LOG_LEVEL=debug)
+#### During Query (LOG_LEVEL=debug)
 
 ```
 INFO    Running agent for query
@@ -137,7 +137,7 @@ DEBUG   Text part               {"length": 1234, "preview": "..."}
 INFO    Query completed         {"total_events": 5, "response_length": 1234}
 ```
 
-#### Durante Ingestion (LOG_LEVEL=debug)
+#### During Ingestion (LOG_LEVEL=debug)
 
 ```
 INFO    Running agent for thread ingestion
@@ -151,34 +151,34 @@ INFO    Thread ingestion completed    {"memories_saved": 3, "total_events": 8}
 1. **Development**: `LOG_LEVEL=debug LOG_FORMAT=console`
 2. **Staging**: `LOG_LEVEL=info LOG_FORMAT=json`
 3. **Production**: `LOG_LEVEL=info LOG_FORMAT=json LOG_OUTPUT=/var/log/...`
-4. **Debugging Issues**: Temporalmente aumentar a `debug` y hacer grep del problema
-5. **Log Rotation**: Usar logrotate para archivos de log
-6. **Monitoring**: Integrar logs JSON con tu sistema de observabilidad
+4. **Debugging Issues**: Temporarily increase to `debug` and grep for the problem
+5. **Log Rotation**: Use logrotate for log files
+6. **Monitoring**: Integrate JSON logs with your observability system
 
 ---
 
 ## Traceability
 
-El Knowledge Agent implementa traceability comprehensiva para rastrear quién hace requests y desde dónde.
+Knowledge Agent implements comprehensive traceability to track who makes requests and from where.
 
-### Niveles de Traceability
+### Traceability Levels
 
 #### 1. Caller ID (Authentication Source)
 
-**Purpose**: Identifica el servicio/fuente haciendo el request al agente.
+**Purpose**: Identifies the service/source making the request to the agent.
 
 **Values**:
-- `slack-bridge` - Requests desde Slack Bridge (autenticado con internal token)
-- `root-agent` - Requests directos desde root orchestration agent (A2A)
-- `monitoring` - Requests directos desde servicio de monitoring (A2A)
-- `external-service` - Requests directos desde otros servicios externos (A2A)
-- `slack-direct` - Legacy: Webhooks directos desde Slack (autenticado con Slack signature)
-- `unauthenticated` - Requests cuando autenticación está deshabilitada (dev mode)
+- `slack-bridge` - Requests from Slack Bridge (authenticated with internal token)
+- `root-agent` - Direct requests from root orchestration agent (A2A)
+- `monitoring` - Direct requests from monitoring service (A2A)
+- `external-service` - Direct requests from other external services (A2A)
+- `slack-direct` - Legacy: Direct webhooks from Slack (authenticated with Slack signature)
+- `unauthenticated` - Requests when authentication is disabled (dev mode)
 
 **How it works**:
-- Set por `AuthMiddleware` basado en método de autenticación usado
-- Almacenado en request context via `ctxutil.CallerIDKey`
-- Obtenido usando `ctxutil.CallerID(ctx)`
+- Set by `AuthMiddleware` based on authentication method used
+- Stored in request context via `ctxutil.CallerIDKey`
+- Retrieved using `ctxutil.CallerID(ctx)`
 
 **Logged in**:
 - Agent query processing
@@ -187,22 +187,22 @@ El Knowledge Agent implementa traceability comprehensiva para rastrear quién ha
 
 #### 2. Slack User ID (End User)
 
-**Purpose**: Identifica el usuario real de Slack que inició el request (cuando viene a través de Slack Bridge).
+**Purpose**: Identifies the actual Slack user who initiated the request (when coming through Slack Bridge).
 
 **Format**: Slack User ID (e.g., `U123ABC456`)
 
 **How it works**:
-1. Slack Bridge recibe evento de Slack con `event.User`
-2. Bridge agrega header `X-Slack-User-Id` al request al Agent
-3. `AuthMiddleware` captura header y almacena en context via `ctxutil.SlackUserIDKey`
-4. Obtenido usando `ctxutil.SlackUserID(ctx)`
+1. Slack Bridge receives event from Slack with `event.User`
+2. Bridge adds `X-Slack-User-Id` header to request to Agent
+3. `AuthMiddleware` captures header and stores in context via `ctxutil.SlackUserIDKey`
+4. Retrieved using `ctxutil.SlackUserID(ctx)`
 
 **Logged in**:
 - Slack Bridge event reception
-- Agent query processing (si presente)
-- Agent thread ingestion (si presente)
+- Agent query processing (if present)
+- Agent thread ingestion (if present)
 
-**Note**: Solo presente para requests viniendo a través de Slack Bridge. Vacío para requests A2A directos.
+**Note**: Only present for requests coming through Slack Bridge. Empty for direct A2A requests.
 
 ### Log Examples
 
@@ -213,12 +213,12 @@ INFO  slack/handler.go  Slack event received
       user=U123ABC456
       thread_ts=1234567890.123
       channel=C123XYZ
-      message="¿Cómo desplegamos?"
+      message="How do we deploy?"
 
 INFO  agent/agent.go  Processing query
       caller_id=slack-bridge
       slack_user_id=U123ABC456
-      question="¿Cómo desplegamos?"
+      question="How do we deploy?"
       channel_id=C123XYZ
 
 INFO  agent/agent.go  Query completed successfully
@@ -262,7 +262,7 @@ INFO  agent/agent.go  Query completed successfully
 
 **File**: `internal/ctxutil/context.go`
 
-Proporciona definiciones de context keys compartidas y funciones accessor:
+Provides shared context key definitions and accessor functions:
 
 ```go
 // Context keys
@@ -276,7 +276,7 @@ func CallerID(ctx context.Context) string
 func SlackUserID(ctx context.Context) string
 ```
 
-Este package previene import cycles proporcionando una ubicación compartida para context utilities.
+This package prevents import cycles by providing a shared location for context utilities.
 
 #### Data Flow
 
@@ -286,30 +286,30 @@ Slack User (U123ABC456)
 Slack API
   ↓
 Slack Bridge (handler.go)
-  - Recibe event.User
+  - Receives event.User
   - Logs: user=U123ABC456
-  - HTTP Request al Agent:
+  - HTTP Request to Agent:
     - X-Internal-Token: <internal_token>
     - X-Slack-User-Id: U123ABC456
   ↓
 Agent (middleware.go)
-  - Valida X-Internal-Token
-  - Captura X-Slack-User-Id
+  - Validates X-Internal-Token
+  - Captures X-Slack-User-Id
   - Sets context:
     - caller_id=slack-bridge
     - slack_user_id=U123ABC456
   ↓
 Agent (agent.go)
-  - Extrae de context usando ctxutil
-  - Logs ambos valores
-  - Procesa query
+  - Extracts from context using ctxutil
+  - Logs both values
+  - Processes query
 ```
 
 ### Best Practices
 
 #### 1. Always Check Both IDs
 
-Cuando logueas operaciones del agente, siempre incluir caller_id y slack_user_id (si presente):
+When logging agent operations, always include caller_id and slack_user_id (if present):
 
 ```go
 logFields := []interface{}{
@@ -324,7 +324,7 @@ log.Infow("Operation started", logFields...)
 
 #### 2. Use Structured Logging
 
-Siempre usar campos estructurados, no concatenación de strings:
+Always use structured fields, not string concatenation:
 
 ✅ **Good**:
 ```go
@@ -342,13 +342,13 @@ log.Infof("Query from %s (user %s): %s", callerID, slackUserID, question)
 
 #### 3. Consistent Field Names
 
-Siempre usar estos nombres de field exactos:
-- `caller_id` (no `caller`, `source`, `client_id`)
-- `slack_user_id` (no `user_id`, `slack_id`, `user`)
+Always use these exact field names:
+- `caller_id` (not `caller`, `source`, `client_id`)
+- `slack_user_id` (not `user_id`, `slack_id`, `user`)
 
 #### 4. Extract Once, Use Many
 
-Extraer context values una vez al inicio de la función:
+Extract context values once at the beginning of the function:
 
 ```go
 func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
@@ -365,7 +365,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 ---
 
-## Integración con Sistemas de Logging
+## Integration with Logging Systems
 
 ### ELK Stack
 
@@ -392,27 +392,27 @@ logs:
 
 ### CloudWatch
 
-Usar AWS CloudWatch agent con JSON parsing.
+Use AWS CloudWatch agent with JSON parsing.
 
 ---
 
 ## Troubleshooting
 
-### No veo logs de DEBUG
+### No DEBUG logs visible
 
-Verificar que `LOG_LEVEL=debug` esté configurado:
+Verify that `LOG_LEVEL=debug` is configured:
 
 ```bash
 # Check env var
 echo $LOG_LEVEL
 
-# Forzar debug
+# Force debug
 LOG_LEVEL=debug ./bin/knowledge-agent
 ```
 
-### Logs no aparecen en archivo
+### Logs not appearing in file
 
-Verificar permisos:
+Check permissions:
 
 ```bash
 # Check if file is writable
@@ -420,23 +420,23 @@ touch /var/log/knowledge-agent.log
 chmod 644 /var/log/knowledge-agent.log
 ```
 
-### Demasiados logs en producción
+### Too many logs in production
 
-Usar level más restrictivo:
+Use more restrictive level:
 
 ```bash
-LOG_LEVEL=warn  # Solo warnings y errors
-LOG_LEVEL=error # Solo errors
+LOG_LEVEL=warn  # Only warnings and errors
+LOG_LEVEL=error # Only errors
 ```
 
 ### Missing Slack User ID
 
-**Symptom**: Logs muestran `caller_id=slack-bridge` pero no `slack_user_id`
+**Symptom**: Logs show `caller_id=slack-bridge` but no `slack_user_id`
 
 **Possible Causes**:
-1. Slack Bridge no enviando header `X-Slack-User-Id`
-2. Slack event sin field `User`
-3. Middleware no capturando header
+1. Slack Bridge not sending `X-Slack-User-Id` header
+2. Slack event without `User` field
+3. Middleware not capturing header
 
 **Debug**:
 ```bash
@@ -446,12 +446,12 @@ grep "Slack event received" logs | grep -v "user="
 
 ### Wrong Caller ID
 
-**Symptom**: Esperabas `slack-bridge` pero ves `root-agent`
+**Symptom**: Expected `slack-bridge` but see `root-agent`
 
 **Possible Causes**:
-1. Request usando método de autenticación incorrecto (X-API-Key en vez de X-Internal-Token)
-2. Múltiples authentication headers presentes
-3. Configuración incorrecta
+1. Request using incorrect authentication method (X-API-Key instead of X-Internal-Token)
+2. Multiple authentication headers present
+3. Incorrect configuration
 
 **Debug**:
 ```bash
@@ -464,9 +464,9 @@ grep -A 5 "auth:" config.yaml
 
 ---
 
-## Ver También
+## See Also
 
-- [SECURITY.md](SECURITY.md) - Autenticación y autorización
-- [CONFIGURATION.md](CONFIGURATION.md) - Configuración del sistema
-- [TESTING.md](TESTING.md) - Testing y QA
-- [../CLAUDE.md](../CLAUDE.md) - Arquitectura del sistema
+- [SECURITY.md](SECURITY.md) - Authentication and authorization
+- [CONFIGURATION.md](CONFIGURATION.md) - System configuration
+- [TESTING.md](TESTING.md) - Testing and QA
+- [../CLAUDE.md](../CLAUDE.md) - System architecture

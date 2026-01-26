@@ -247,9 +247,8 @@ See `docs/MCP_INTEGRATION.md` for complete guide and examples.
 ### Advanced
 - 🔌 [MCP Integration](docs/MCP_INTEGRATION.md) - Extend with external data sources
 - 🔐 [Security](docs/SECURITY.md) - Authentication and permissions
-- 🤖 [A2A Integration](docs/A2A.md) - Agent-to-Agent API integration
+- 🤖 [A2A Integration](docs/CONFIGURATION.md#agent-to-agent-a2a-authentication) - Agent-to-Agent API integration
 - 📊 [Observability](docs/OPERATIONS.md) - Langfuse integration and monitoring
-- 📅 [Temporal Context](docs/TEMPORAL_CONTEXT.md) - How dates and time are handled
 
 ### Development
 - 🛠️ [Claude Code Guide](CLAUDE.md) - Development with Claude Code

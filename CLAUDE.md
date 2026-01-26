@@ -1450,8 +1450,7 @@ log:
 
 ## Important Files
 
-- `cmd/agent/main.go` - Knowledge Agent HTTP server, endpoints: /api/query, /api/ingest-thread
-- `cmd/slack-bot/main.go` - Slack Bridge HTTP server, endpoint: /slack/events
+- `cmd/knowledge-agent/main.go` - Unified binary (Agent + Slack Bridge), supports `--mode` flag (all/agent/slack-bot)
 - `internal/agent/agent.go` - Core agent implementation, ADK initialization, Query() and IngestThread() methods
 - `internal/agent/prompts.go` - **CRITICAL** System prompt defining agent behavior, language handling, and tool usage decisions
 - `internal/slack/handler.go` - Slack event handling, forwards all messages to Knowledge Agent with thread context
