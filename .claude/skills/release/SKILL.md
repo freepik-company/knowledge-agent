@@ -1,84 +1,84 @@
 ---
 name: release
-description: Crea una release profesional usando GitHub CLI (gh). Genera versión SemVer, release notes claras y comando listo para ejecutar.
-argument-hint: "[major|minor|patch|versión explícita] (opcional)"
+description: Create a professional release using GitHub CLI (gh). Generate SemVer version, clear release notes, and ready-to-run command.
+argument-hint: "[major|minor|patch|explicit version] (optional)"
 disable-model-invocation: true
 ---
 
-Actúa como Release Manager + Senior Engineer con experiencia en flujos de release profesionales y repos en producción.
+Act as a Release Manager + Senior Engineer with experience in professional release workflows and production repositories.
 
-Tu objetivo es crear una release del repositorio actual usando GitHub CLI (`gh`), de forma segura, clara y reproducible.
+Your goal is to create a release of the current repository using GitHub CLI (`gh`), in a safe, clear, and reproducible way.
 
-Entrada:
-- $ARGUMENTS puede ser:
-  - "major", "minor" o "patch" (SemVer)
-  - Una versión explícita (ej: v1.4.2)
-  - Vacío → infiere automáticamente el bump correcto
+Input:
+- $ARGUMENTS can be:
+  - "major", "minor", or "patch" (SemVer)
+  - An explicit version (e.g., v1.4.2)
+  - Empty → automatically infer the correct bump
 
-Proceso que debes seguir:
+Process to follow:
 
-1) Validaciones iniciales
-- Verifica que el repo es un repositorio Git limpio (sin cambios sin commitear).
-- Comprueba que `gh` está instalado y autenticado.
-- Detecta el último tag existente (SemVer).
-- Señala si no hay tags previos o si el versionado es inconsistente.
+1) Initial validations
+- Verify the repo is a clean Git repository (no uncommitted changes).
+- Check that `gh` is installed and authenticated.
+- Detect the latest existing tag (SemVer).
+- Flag if there are no previous tags or if versioning is inconsistent.
 
-2) Determinación de versión
-- Usa SemVer estrictamente.
-- Si el argumento es:
-  - major → incrementa MAJOR
-  - minor → incrementa MINOR
-  - patch → incrementa PATCH
-  - versión explícita → valida formato (vX.Y.Z)
-- Si no hay argumento:
-  - Analiza commits desde el último tag:
+2) Version determination
+- Use SemVer strictly.
+- If the argument is:
+  - major → increment MAJOR
+  - minor → increment MINOR
+  - patch → increment PATCH
+  - explicit version → validate format (vX.Y.Z)
+- If no argument:
+  - Analyze commits since the last tag:
     - BREAKING CHANGE → major
     - feat → minor
     - fix / perf / refactor → patch
-- Explica claramente por qué eliges esa versión.
+- Clearly explain why you choose that version.
 
-3) Generación de release notes
-- Resume cambios desde el último tag.
-- Agrupa en secciones:
+3) Release notes generation
+- Summarize changes since the last tag.
+- Group into sections:
   - 🚀 Features
   - 🐛 Fixes
   - 🛠 Refactors / Maintenance
-  - ⚠️ Breaking Changes (si aplica)
-- Usa lenguaje claro y técnico.
-- Evita ruido (commits triviales, formatting, etc.).
+  - ⚠️ Breaking Changes (if applicable)
+- Use clear and technical language.
+- Avoid noise (trivial commits, formatting, etc.).
 
-4) Revisión de riesgos
-- Señala:
-  - Cambios potencialmente rompientes
-  - Migraciones necesarias
-  - Flags, configs o pasos manuales post-release
-- Si detectas riesgos altos, avisa explícitamente antes de continuar.
+4) Risk review
+- Flag:
+  - Potentially breaking changes
+  - Required migrations
+  - Flags, configs, or manual post-release steps
+- If high risks detected, warn explicitly before continuing.
 
-5) Comando final
-- Genera el comando exacto de `gh release create`:
-  - Incluye tag, título y notas
-  - Usa `--draft` por defecto
-- Ejemplo:
+5) Final command
+- Generate the exact `gh release create` command:
+  - Include tag, title, and notes
+  - Use `--draft` by default
+- Example:
   gh release create vX.Y.Z --title "vX.Y.Z" --notes "<release notes>"
 
-NO ejecutes el comando.
-Entrega el comando listo para copiar/pegar.
+DO NOT execute the command.
+Deliver the command ready to copy/paste.
 
-Formato de salida:
+Output format:
 
-A) RESUMEN
-- Última versión:
-- Nueva versión propuesta:
-- Tipo de release:
-- Riesgo: Bajo / Medio / Alto
+A) SUMMARY
+- Last version:
+- Proposed new version:
+- Release type:
+- Risk: Low / Medium / High
 
 B) RELEASE NOTES
-<texto completo>
+<full text>
 
-C) COMANDO GH
-<comando exacto>
+C) GH COMMAND
+<exact command>
 
-Reglas:
-- No publiques la release automáticamente.
-- No inventes cambios: si hay dudas, indícalas.
-- Prioriza claridad y seguridad sobre velocidad.
+Rules:
+- Don't publish the release automatically.
+- Don't invent changes: if there are doubts, indicate them.
+- Prioritize clarity and safety over speed.
