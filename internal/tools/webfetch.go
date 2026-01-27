@@ -3,7 +3,9 @@ package tools
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -69,12 +71,127 @@ type FetchURLResult struct {
 	FinalURL string `json:"final_url,omitempty"`
 }
 
+// validateURL performs SSRF protection checks on the URL
+func validateURL(rawURL string) error {
+	// Parse URL
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL format: %w", err)
+	}
+
+	// 1. Validate scheme - only allow http and https
+	scheme := strings.ToLower(parsedURL.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme '%s': only http and https are allowed", parsedURL.Scheme)
+	}
+
+	// 2. Block empty or invalid hostnames
+	hostname := parsedURL.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("URL must have a valid hostname")
+	}
+
+	// 3. Block localhost and special hostnames
+	blockedHosts := []string{
+		"localhost",
+		"127.0.0.1",
+		"0.0.0.0",
+		"[::1]",
+		"metadata.google.internal", // GCP metadata service
+		"169.254.169.254",           // AWS/Azure metadata service
+	}
+	for _, blocked := range blockedHosts {
+		if strings.EqualFold(hostname, blocked) {
+			return fmt.Errorf("access to '%s' is not allowed (localhost/metadata service)", hostname)
+		}
+	}
+
+	// 4. Block Kubernetes internal DNS
+	if strings.HasSuffix(strings.ToLower(hostname), ".svc.cluster.local") {
+		return fmt.Errorf("access to Kubernetes internal services (*.svc.cluster.local) is not allowed")
+	}
+
+	// 5. Resolve hostname to IP addresses and validate
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		// If DNS resolution fails, allow it to fail naturally during HTTP request
+		// This prevents DNS errors from being used as a side channel
+		return nil
+	}
+
+	// 6. Check if any resolved IP is in a private range
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("access to private/internal IP addresses is not allowed (resolved to %s)", ip.String())
+		}
+	}
+
+	return nil
+}
+
+// isPrivateIP checks if an IP address is in a private/internal range
+func isPrivateIP(ip net.IP) bool {
+	// Private IPv4 ranges
+	privateIPv4Ranges := []string{
+		"10.0.0.0/8",        // Private network
+		"172.16.0.0/12",     // Private network
+		"192.168.0.0/16",    // Private network
+		"127.0.0.0/8",       // Loopback
+		"169.254.0.0/16",    // Link-local (AWS/Azure metadata)
+		"0.0.0.0/8",         // Current network
+		"100.64.0.0/10",     // Shared address space (Carrier-grade NAT)
+		"192.0.0.0/24",      // IETF Protocol Assignments
+		"192.0.2.0/24",      // Documentation (TEST-NET-1)
+		"198.18.0.0/15",     // Benchmarking
+		"198.51.100.0/24",   // Documentation (TEST-NET-2)
+		"203.0.113.0/24",    // Documentation (TEST-NET-3)
+		"224.0.0.0/4",       // Multicast
+		"240.0.0.0/4",       // Reserved
+		"255.255.255.255/32", // Broadcast
+	}
+
+	// Check IPv4 ranges
+	for _, cidr := range privateIPv4Ranges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
+	// Check IPv6 loopback and link-local
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	// Check IPv6 private ranges
+	if ip.To4() == nil { // IPv6
+		// fc00::/7 - Unique Local Addresses (ULA)
+		_, ulaNetwork, _ := net.ParseCIDR("fc00::/7")
+		if ulaNetwork.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // fetchURL fetches content from a URL
 func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchURLResult, error) {
 	if args.URL == "" {
 		return FetchURLResult{
 			Success: false,
 			Error:   "URL cannot be empty",
+		}, nil
+	}
+
+	// SSRF Protection: Validate URL before fetching
+	if err := validateURL(args.URL); err != nil {
+		return FetchURLResult{
+			Success: false,
+			Error:   fmt.Sprintf("URL validation failed: %v", err),
 		}, nil
 	}
 

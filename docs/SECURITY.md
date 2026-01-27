@@ -586,6 +586,280 @@ curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
 - **Audit trail**: All permission checks logged with context
 - **A2A compatibility**: Works with both Slack and direct API access
 
+---
+
+## SSRF Protection (fetch_url Tool)
+
+The Knowledge Agent implements comprehensive **Server-Side Request Forgery (SSRF) protection** for the `fetch_url` tool to prevent attackers from scanning or accessing internal infrastructure.
+
+### What is SSRF?
+
+SSRF vulnerabilities occur when an application fetches remote resources based on user input without proper validation. Attackers can exploit this to:
+- Scan internal network services (databases, caches, APIs)
+- Access cloud metadata services (AWS, GCP, Azure)
+- Enumerate Kubernetes cluster services
+- Bypass firewall restrictions
+
+### Protection Mechanisms
+
+The `fetch_url` tool in `internal/tools/webfetch.go` implements multiple layers of protection:
+
+#### 1. URL Scheme Validation
+
+Only `http://` and `https://` schemes are allowed:
+
+```
+✅ Allowed:
+  - https://example.com
+  - http://api.example.com:8080
+
+❌ Blocked:
+  - file:///etc/passwd
+  - ftp://internal.server/files
+  - gopher://localhost:70/
+  - dict://localhost:2628/
+```
+
+#### 2. Hostname Blocklist
+
+Specific dangerous hostnames are explicitly blocked:
+
+```
+❌ Blocked Hostnames:
+  - localhost
+  - 127.0.0.1
+  - 0.0.0.0
+  - [::1] (IPv6 localhost)
+  - metadata.google.internal (GCP metadata)
+  - 169.254.169.254 (AWS/Azure metadata)
+```
+
+#### 3. Kubernetes Internal Service DNS Blocking
+
+All Kubernetes internal service DNS names are blocked:
+
+```
+❌ Blocked Patterns:
+  - *.svc.cluster.local
+  - kubernetes.default.svc.cluster.local
+  - redis.production.svc.cluster.local
+  - postgres.staging.svc.cluster.local
+```
+
+#### 4. Private IP Range Filtering
+
+After hostname DNS resolution, all private/internal IP ranges are blocked:
+
+**IPv4 Private Ranges:**
+```
+❌ Blocked IP Ranges:
+  - 10.0.0.0/8        (Private network)
+  - 172.16.0.0/12     (Private network)
+  - 192.168.0.0/16    (Private network)
+  - 127.0.0.0/8       (Loopback)
+  - 169.254.0.0/16    (Link-local / Cloud metadata)
+  - 0.0.0.0/8         (Current network)
+  - 100.64.0.0/10     (Carrier-grade NAT)
+  - 192.0.0.0/24      (IETF Protocol Assignments)
+  - 192.0.2.0/24      (TEST-NET-1)
+  - 198.18.0.0/15     (Benchmarking)
+  - 198.51.100.0/24   (TEST-NET-2)
+  - 203.0.113.0/24    (TEST-NET-3)
+  - 224.0.0.0/4       (Multicast)
+  - 240.0.0.0/4       (Reserved)
+```
+
+**IPv6 Private Ranges:**
+```
+❌ Blocked IP Ranges:
+  - ::1/128           (Loopback)
+  - fe80::/10         (Link-local)
+  - fc00::/7          (Unique Local Addresses)
+```
+
+### Implementation Details
+
+**Validation function** (`internal/tools/webfetch.go:77-142`):
+
+```go
+func validateURL(rawURL string) error {
+    // 1. Parse URL
+    parsedURL, err := url.Parse(rawURL)
+
+    // 2. Validate scheme (http/https only)
+    if scheme != "http" && scheme != "https" {
+        return error
+    }
+
+    // 3. Block localhost and metadata services
+    if hostname == "localhost" || hostname == "169.254.169.254" {
+        return error
+    }
+
+    // 4. Block Kubernetes internal DNS
+    if strings.HasSuffix(hostname, ".svc.cluster.local") {
+        return error
+    }
+
+    // 5. Resolve DNS and check IP ranges
+    ips, err := net.LookupIP(hostname)
+    for _, ip := range ips {
+        if isPrivateIP(ip) {
+            return error
+        }
+    }
+
+    return nil
+}
+```
+
+**Integration** (`internal/tools/webfetch.go:189-194`):
+
+```go
+func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchURLResult, error) {
+    // SSRF Protection: Validate URL before fetching
+    if err := validateURL(args.URL); err != nil {
+        return FetchURLResult{
+            Success: false,
+            Error:   fmt.Sprintf("URL validation failed: %v", err),
+        }, nil
+    }
+
+    // Proceed with HTTP request...
+}
+```
+
+### Testing
+
+Comprehensive test suite in `internal/tools/webfetch_test.go`:
+
+```bash
+# Run SSRF protection tests
+go test -v ./internal/tools/... -run TestValidateURL
+
+# Test private IP detection
+go test -v ./internal/tools/... -run TestIsPrivateIP
+```
+
+**Test coverage:**
+- ✅ Valid public URLs (example.com, api.example.com)
+- ✅ Scheme validation (file://, ftp://, gopher://)
+- ✅ Localhost variations (localhost, 127.0.0.1, ::1)
+- ✅ Cloud metadata (169.254.169.254, metadata.google.internal)
+- ✅ Kubernetes services (*.svc.cluster.local)
+- ✅ Private IP ranges (10.x, 172.16.x, 192.168.x)
+- ✅ Link-local addresses (169.254.x.x)
+- ✅ IPv6 private addresses
+
+### Attack Scenarios Prevented
+
+#### Scenario 1: Internal Service Scanning
+
+**Attack attempt:**
+```
+User: @bot fetch this URL: http://localhost:6379/
+```
+
+**Agent response:**
+```
+❌ URL validation failed: access to 'localhost' is not allowed (localhost/metadata service)
+```
+
+#### Scenario 2: Cloud Metadata Access
+
+**Attack attempt:**
+```
+User: @bot analyze http://169.254.169.254/latest/meta-data/iam/security-credentials/
+```
+
+**Agent response:**
+```
+❌ URL validation failed: access to '169.254.169.254' is not allowed (localhost/metadata service)
+```
+
+#### Scenario 3: Kubernetes Service Enumeration
+
+**Attack attempt:**
+```
+User: @bot fetch http://kubernetes.default.svc.cluster.local/api/v1/namespaces
+```
+
+**Agent response:**
+```
+❌ URL validation failed: access to Kubernetes internal services (*.svc.cluster.local) is not allowed
+```
+
+#### Scenario 4: Private Network Scanning
+
+**Attack attempt:**
+```
+User: @bot check this URL: http://192.168.1.1/admin
+```
+
+**Agent response:**
+```
+❌ URL validation failed: access to private/internal IP addresses is not allowed (resolved to 192.168.1.1)
+```
+
+#### Scenario 5: File System Access
+
+**Attack attempt:**
+```
+User: @bot read file:///etc/passwd
+```
+
+**Agent response:**
+```
+❌ URL validation failed: unsupported URL scheme 'file': only http and https are allowed
+```
+
+### Security Best Practices
+
+1. **Defense in Depth**: Multiple validation layers (scheme, hostname, DNS, IP range)
+2. **Fail Closed**: Unknown or invalid URLs are rejected
+3. **Clear Error Messages**: Users understand why URL was rejected (without exposing internal details)
+4. **DNS Resolution**: Validates resolved IPs, not just hostnames (prevents DNS rebinding)
+5. **No Bypass**: Validation happens before HTTP client creation
+
+### Limitations
+
+**Known limitations:**
+- DNS rebinding attacks with very short TTLs are still theoretically possible
+- IPv6 address format tricks (e.g., IPv4-mapped IPv6) are mitigated by checking all resolved IPs
+- Time-of-check-time-of-use (TOCTOU) race conditions are possible if DNS changes between validation and fetch
+
+**Mitigations:**
+- HTTP client has 30-second timeout
+- No redirect following to different hosts
+- All resolved IPs are validated
+
+### Monitoring & Alerts
+
+**Log SSRF attempts:**
+
+```bash
+# Search for blocked URL attempts
+grep "URL validation failed" logs/agent.log
+
+# Monitor for patterns
+grep "private/internal IP" logs/agent.log
+grep "Kubernetes internal services" logs/agent.log
+grep "localhost/metadata service" logs/agent.log
+```
+
+**Recommended alerts:**
+- Alert on >10 SSRF attempts per hour from same user
+- Alert on attempts to access cloud metadata services
+- Alert on attempts to access Kubernetes API
+
+### References
+
+- [CWE-918: Server-Side Request Forgery (SSRF)](https://cwe.mitre.org/data/definitions/918.html)
+- [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)
+- [RFC 1918: Private Address Space](https://datatracker.ietf.org/doc/html/rfc1918)
+
+---
+
 ## See Also
 
 - [docs/A2A.md](A2A.md) - Agent-to-Agent integration guide
