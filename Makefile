@@ -1,4 +1,4 @@
-.PHONY: help build dev docker-up docker-down docker-logs migrate test integration-test clean
+.PHONY: help build dev docker-up docker-down docker-logs test integration-test clean
 
 # Load .env file for development
 ifneq (,$(wildcard ./.env))
@@ -146,9 +146,6 @@ docker-prune: ## Clean up Docker resources (images, volumes, etc.)
 	@echo "🧹 Cleaning up Docker resources..."
 	@docker system prune -af --volumes
 	@echo "✅ Docker resources cleaned"
-
-migrate: ## Run database migrations
-	@./scripts/migrate-db.sh
 
 test: ## Run unit tests
 	@echo "🧪 Running unit tests..."

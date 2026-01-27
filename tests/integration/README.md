@@ -42,7 +42,6 @@ Tests rate limiting middleware:
 1. **Services Running**: Start infrastructure and agent:
    ```bash
    make docker-up
-   make migrate
    make dev
    ```
 
@@ -217,7 +216,6 @@ Current integration test coverage:
 ## Next Steps
 
 Additional integration tests to consider:
-- [ ] Langfuse tracing integration (SDK migrated to git-hulk/langfuse-go v0.1.0, tests pending)
 - [ ] Metrics collection and exposure
 - [ ] Health check dependencies (PostgreSQL, Redis, Ollama)
 - [ ] A2A authentication flows

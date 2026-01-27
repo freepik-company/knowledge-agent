@@ -16,7 +16,6 @@ import (
 	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
-	"knowledge-agent/internal/migrations"
 	"knowledge-agent/internal/server"
 	"knowledge-agent/internal/slack"
 )
@@ -68,13 +67,6 @@ func main() {
 		"mode", mode,
 		"version", "unified-binary",
 	)
-
-	// Run database migrations (only for modes that need database access)
-	if mode == ModeAgent || mode == ModeAll {
-		if err := runMigrations(ctx, cfg); err != nil {
-			log.Fatalw("Failed to run database migrations", "error", err)
-		}
-	}
 
 	// Set up graceful shutdown
 	done := make(chan os.Signal, 1)
@@ -494,23 +486,6 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 }
 
 // runMigrations runs database migrations
-func runMigrations(ctx context.Context, cfg *config.Config) error {
-	// Open database connection
-	db, err := migrations.OpenDB(cfg.Postgres.URL)
-	if err != nil {
-		return fmt.Errorf("database connection failed: %w", err)
-	}
-	defer db.Close()
-
-	// Run migrations
-	runner := migrations.NewRunner(db)
-	if err := runner.Run(ctx); err != nil {
-		return err // Error already formatted by runner
-	}
-
-	return nil
-}
-
 // logAuthMode logs the authentication mode configuration
 func logAuthMode(cfg *config.Config) {
 	log := logger.Get()

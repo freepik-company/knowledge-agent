@@ -95,14 +95,11 @@ Security model:
 
 ### Database
 
-#### `migrate-db.sh`
 Run database migrations.
 
 **Usage:**
 ```bash
-./scripts/migrate-db.sh
 # or
-make migrate
 ```
 
 Applies all migrations from `migrations/` directory to PostgreSQL.
@@ -153,7 +150,6 @@ make test-auth
 make docker-up
 
 # Run migrations
-make migrate
 ```
 
 ## See Also

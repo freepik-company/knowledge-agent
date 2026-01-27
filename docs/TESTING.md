@@ -170,7 +170,6 @@ Integration tests verify end-to-end functionality and require running services.
 
 2. Run migrations:
    ```bash
-   make migrate
    ```
 
 3. Start agent (for some tests):

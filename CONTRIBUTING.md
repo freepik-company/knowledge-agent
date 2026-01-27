@@ -100,7 +100,6 @@ cp config-example.yaml config.yaml
 make docker-up
 
 # Run migrations
-make migrate
 
 # Run tests
 make test

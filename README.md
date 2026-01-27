@@ -61,8 +61,6 @@ docker exec knowledge-agent-ollama ollama pull nomic-embed-text
 # 1. Start infrastructure only
 make docker-up
 
-# 2. Run migrations
-make migrate
 
 # 3. Run agent locally
 make dev
@@ -115,7 +113,6 @@ make docker-health    # Check service health
 
 ### Database
 ```bash
-make migrate          # Run migrations (manual)
 make db-shell         # PostgreSQL shell
 make redis-shell      # Redis shell
 ```

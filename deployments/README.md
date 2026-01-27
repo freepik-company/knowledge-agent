@@ -257,30 +257,14 @@ See `deployments/examples/` for complete examples:
 - `docker-compose.mcp.yaml` - Both build-time and runtime examples
 - `helm-values.yaml` - Kubernetes/Helm configuration
 
-## Database Migrations
+## Database Schema
 
-Migrations run automatically when the Knowledge Agent starts. The application checks for pending migrations and applies them before starting the agent service.
+The Knowledge Agent uses **adk-utils-go** library which automatically creates and manages the database schema (`memory_entries` table with pgvector support). No manual migrations are required.
 
-**How it works:**
-- Migration files are embedded in the application binary
-- A `schema_migrations` table tracks applied migrations
-- Each migration runs in a transaction (atomic, rollback on error)
-- Safe to run multiple times - already-applied migrations are skipped
-
-**Migration files location:** `internal/migrations/sql/`
-
-**View migration status:**
-```bash
-# Check PostgreSQL for applied migrations
-make db-shell
-# Then in psql:
-SELECT * FROM schema_migrations ORDER BY version;
-```
-
-**Add new migrations:**
-1. Create new file: `internal/migrations/sql/00X_description.sql`
-2. Version numbers must be sequential (001, 002, 003, etc.)
-3. Rebuild and restart - new migrations apply automatically
+**Requirements:**
+- PostgreSQL with pgvector extension installed
+- Database user with CREATE TABLE permissions
+- Schema is created automatically on first startup
 
 ## Ollama Models
 
@@ -390,7 +374,6 @@ services:
 ### Database
 - [ ] **PostgreSQL has pgvector extension installed** (see `docs/PRODUCTION_POSTGRESQL.md`)
 - [ ] Verify: `CREATE EXTENSION IF NOT EXISTS vector;` works
-- [ ] Database user has CREATE permission (for migrations)
 - [ ] Back up PostgreSQL data regularly
 - [ ] Monitor disk usage (PostgreSQL, Ollama models)
 

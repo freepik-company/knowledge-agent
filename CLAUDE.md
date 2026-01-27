@@ -37,8 +37,6 @@ go mod download && go mod tidy
 # Start infrastructure (PostgreSQL, Redis, Ollama)
 make docker-up
 
-# Run database migrations
-make migrate
 
 # Check service health
 make docker-health
@@ -1200,7 +1198,7 @@ The Knowledge Agent can be tested independently:
 
 ```bash
 # Terminal 1: Start infrastructure and agent
-make docker-up && make migrate
+make docker-up
 make dev-agent
 
 # Terminal 2: Test endpoints directly
@@ -1456,7 +1454,6 @@ log:
 - `internal/slack/handler.go` - Slack event handling, forwards all messages to Knowledge Agent with thread context
 - `internal/config/config.go` - Configuration loading from environment variables
 - `internal/mcp/factory.go` - MCP toolset creation, transport handling, authentication
-- `migrations/` - PostgreSQL schema including pgvector setup
 
 ## Dependencies Note
 

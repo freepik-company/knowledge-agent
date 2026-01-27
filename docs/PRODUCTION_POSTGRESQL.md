@@ -320,12 +320,12 @@ CREATE EXTENSION vector;
 
 ### Automatic Verification
 
-When the Knowledge Agent starts, it **automatically verifies pgvector availability**:
+When the Knowledge Agent starts, it **automatically verifies pgvector availability** and creates the necessary schema via adk-utils-go:
 
 ```
-INFO  Starting database migrations...
-DEBUG Verifying pgvector extension availability...
-INFO  pgvector extension verified successfully
+INFO  Knowledge Agent starting...
+DEBUG Connecting to PostgreSQL...
+INFO  Database schema initialized successfully
 ```
 
 ### If pgvector is Missing
@@ -333,7 +333,7 @@ INFO  pgvector extension verified successfully
 The application will **fail to start** with a detailed error message:
 
 ```
-ERROR Failed to run database migrations
+ERROR Failed to initialize database
   error=pgvector extension not found
 
 The Knowledge Agent requires the pgvector extension for semantic search.
@@ -487,7 +487,7 @@ SELECT pg_size_pretty(pg_relation_size('idx_memory_entries_embedding'));
      url: postgres://user:pass@prod-db.example.com:5432/knowledge_agent?sslmode=require
    ```
 
-4. **Deploy application** - migrations run automatically on first start
+4. **Deploy application** - adk-utils-go initializes schema automatically
 
 5. **Import data** (if needed):
    ```bash
@@ -500,8 +500,8 @@ For existing production systems:
 
 1. Install pgvector on production database
 2. Create extension during maintenance window
-3. Deploy new version with migrations enabled
-4. Migrations run automatically, no manual SQL needed
+3. Deploy new version
+4. Schema created automatically by adk-utils-go, no manual SQL needed
 
 ---
 
@@ -527,10 +527,7 @@ GRANT USAGE ON SCHEMA public TO knowledge_agent;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO knowledge_agent;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO knowledge_agent;
 
--- Grant CREATE for migrations (first deploy only)
 GRANT CREATE ON DATABASE knowledge_agent TO knowledge_agent;
--- Revoke after initial migration:
--- REVOKE CREATE ON DATABASE knowledge_agent FROM knowledge_agent;
 ```
 
 ### Extension Creation Privilege
