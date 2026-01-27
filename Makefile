@@ -1,4 +1,4 @@
-.PHONY: help build dev docker-up docker-down docker-logs test integration-test clean
+.PHONY: help build package package-signature dev docker-up docker-down docker-logs test integration-test clean
 
 # Load .env file for development
 ifneq (,$(wildcard ./.env))
@@ -25,6 +25,17 @@ build: ## Build unified binary
 	@echo "  ./bin/knowledge-agent --mode all        # Run both services (default)"
 	@echo "  ./bin/knowledge-agent --mode agent      # Run agent only"
 	@echo "  ./bin/knowledge-agent --mode slack-bot  # Run Slack bridge only"
+
+package: ## Create release package (requires GOOS, GOARCH, PACKAGE_NAME env vars)
+	@echo "📦 Creating release package..."
+	@mkdir -p dist
+	@tar -czf dist/$(PACKAGE_NAME) -C bin knowledge-agent
+	@echo "✅ Package created: dist/$(PACKAGE_NAME)"
+
+package-signature: ## Create MD5 signature for package (requires PACKAGE_NAME env var)
+	@echo "🔏 Creating package signature..."
+	@cd dist && md5sum $(PACKAGE_NAME) > $(PACKAGE_NAME).md5
+	@echo "✅ Signature created: dist/$(PACKAGE_NAME).md5"
 
 dev: ## Run all services (unified binary). Optional: CONFIG=config.yaml
 	@echo "🚀 Starting Knowledge Agent system (unified binary)..."
@@ -90,7 +101,7 @@ docker-health: ## Check health of Docker services
 		curl -s http://localhost:8081/health > /dev/null && echo "✅ Agent healthy" || echo "❌ Agent unhealthy"; \
 	fi
 
-docker-build: ## Build Docker image for agent
+docker-compose-build: ## Build Docker image for agent (via docker-compose)
 	@echo "🔨 Building Docker image..."
 	@cd deployments && docker-compose build agent
 	@echo "✅ Image built successfully"
