@@ -270,8 +270,15 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		return
 	}
 
-	// Create request
-	req, err := http.NewRequest("POST",
+	// Log payload size for debugging
+	payloadSize := len(reqBody)
+	log.Debugw("Request payload prepared",
+		"size_bytes", payloadSize,
+		"size_kb", payloadSize/1024,
+	)
+
+	// Create request with context for proper timeout handling
+	req, err := http.NewRequestWithContext(ctx, "POST",
 		fmt.Sprintf("%s/api/query", h.agentURL),
 		bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -293,15 +300,37 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		req.Header.Set("X-Slack-User-Id", event.User)
 	}
 
-	// Send request
+	// Send request - context controls the timeout (5 min)
+	// No Client.Timeout to avoid conflicts with context cancellation
 	client := &http.Client{}
 	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Errorw("Failed to call Knowledge Agent", "error", err)
+		// Distinguish different error types for better debugging
+		errMsg := "Could not reach Knowledge Agent"
+		if ctx.Err() != nil {
+			log.Errorw("Request canceled or timed out",
+				"error", err,
+				"context_error", ctx.Err(),
+				"payload_kb", payloadSize/1024,
+			)
+			errMsg = "Request timed out - the operation took too long"
+		} else if strings.Contains(err.Error(), "EOF") {
+			log.Errorw("Connection closed unexpectedly (EOF)",
+				"error", err,
+				"payload_kb", payloadSize/1024,
+				"hint", "Server may have closed connection due to large payload or timeout",
+			)
+			errMsg = "Connection closed unexpectedly. The request may be too large or the server is overloaded"
+		} else {
+			log.Errorw("Failed to call Knowledge Agent",
+				"error", err,
+				"payload_kb", payloadSize/1024,
+			)
+		}
 		metrics.RecordAgentForward(false)
 		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: Could not reach Knowledge Agent: %v", err))
+			fmt.Sprintf("Error: %s: %v", errMsg, err))
 		return
 	}
 	defer resp.Body.Close()
