@@ -188,9 +188,45 @@ func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, err
 				})
 			}
 
+			// Get message text - combine main text + attachments
+			var textParts []string
+
+			// Add main text if present
+			if msg.Text != "" {
+				textParts = append(textParts, msg.Text)
+			}
+
+			// Extract text from attachments (common for bot messages like alerts)
+			if len(msg.Attachments) > 0 {
+				for _, att := range msg.Attachments {
+					// Pretext goes first (usually context/header)
+					if att.Pretext != "" {
+						textParts = append(textParts, att.Pretext)
+					}
+					// Main attachment text
+					if att.Text != "" {
+						textParts = append(textParts, att.Text)
+					} else if att.Fallback != "" {
+						// Fallback is a plain-text summary
+						textParts = append(textParts, att.Fallback)
+					}
+				}
+			}
+
+			text := strings.Join(textParts, "\n")
+
+			// Determine user identifier (handle bot messages)
+			user := msg.User
+			if user == "" && msg.BotID != "" {
+				user = fmt.Sprintf("bot:%s", msg.BotID)
+				if msg.Username != "" {
+					user = fmt.Sprintf("bot:%s", msg.Username)
+				}
+			}
+
 			allMessages = append(allMessages, Message{
-				User:      msg.User,
-				Text:      msg.Text,
+				User:      user,
+				Text:      text,
 				Timestamp: msg.Timestamp,
 				ThreadTS:  msg.ThreadTimestamp,
 				Type:      msg.Type,
@@ -406,6 +442,10 @@ func (c *Client) GetChannelInfo(channelID string) (*slack.Channel, error) {
 
 // DownloadFile downloads a file from Slack
 func (c *Client) DownloadFile(fileURL string) ([]byte, error) {
+	if fileURL == "" {
+		return nil, fmt.Errorf("file URL is empty")
+	}
+
 	req, err := http.NewRequest("GET", fileURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -414,7 +454,10 @@ func (c *Client) DownloadFile(fileURL string) ([]byte, error) {
 	// Add Slack authorization header
 	req.Header.Add("Authorization", "Bearer "+c.token)
 
-	client := &http.Client{}
+	// Use client with timeout to prevent hanging
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
@@ -422,7 +465,7 @@ func (c *Client) DownloadFile(fileURL string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to download file: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to download file: status %d (URL: %s)", resp.StatusCode, fileURL)
 	}
 
 	// Check Content-Length header if available

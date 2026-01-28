@@ -183,6 +183,12 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	log.Debugw("Fetched thread messages", "count", len(messages))
 
 	// 3. Transform messages to format for agent
+	// Track image stats for logging
+	const maxImagesPerThread = 10 // Limit to prevent payload bloat
+	totalImagesFound := 0
+	totalImagesDownloaded := 0
+	totalImageBytes := 0
+
 	messageData := make([]map[string]any, len(messages))
 	for i, msg := range messages {
 		msgData := map[string]any{
@@ -192,15 +198,28 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"type": msg.Type,
 		}
 
-		// Include images if present
+		// Include images if present (respect max limit across all messages)
 		if len(msg.Files) > 0 {
 			var images []map[string]any
 			for _, file := range msg.Files {
 				if file.IsImage() {
+					totalImagesFound++
+
+					// Check if we've hit the limit
+					if totalImagesDownloaded >= maxImagesPerThread {
+						log.Debugw("Skipping image due to limit",
+							"name", file.Name,
+							"current_count", totalImagesDownloaded,
+							"max", maxImagesPerThread,
+						)
+						continue
+					}
+
 					log.Debugw("Downloading image",
 						"name", file.Name,
 						"mime_type", file.MIMEType,
 						"size", file.Size,
+						"url_present", file.URL != "",
 					)
 
 					// Download image
@@ -208,12 +227,11 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 					if err != nil {
 						log.Warnw("Failed to download image",
 							"name", file.Name,
+							"url", file.URL,
 							"error", err,
 						)
 						continue
 					}
-
-					log.Debugw("Downloaded image", "bytes", len(imageData))
 
 					// Check if data is valid
 					if len(imageData) == 0 {
@@ -229,11 +247,12 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 						"data":      base64Data,
 					})
 
-					log.Debugw("Included image",
+					totalImagesDownloaded++
+					totalImageBytes += len(imageData)
+
+					log.Debugw("Image downloaded successfully",
 						"name", file.Name,
-						"mime_type", file.MIMEType,
 						"raw_bytes", len(imageData),
-						"base64_bytes", len(base64Data),
 					)
 				}
 			}
@@ -243,6 +262,16 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		}
 
 		messageData[i] = msgData
+	}
+
+	// Log image processing summary
+	if totalImagesFound > 0 {
+		log.Infow("Thread images processed",
+			"found", totalImagesFound,
+			"downloaded", totalImagesDownloaded,
+			"total_bytes", totalImageBytes,
+			"skipped_limit", totalImagesFound-totalImagesDownloaded,
+		)
 	}
 
 	queryRequest := map[string]any{
