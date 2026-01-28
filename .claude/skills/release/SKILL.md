@@ -54,15 +54,18 @@ Process to follow:
   - Flags, configs, or manual post-release steps
 - If high risks detected, warn explicitly before continuing.
 
-5) Final command
+5) Tag and Release creation
 - Generate the exact `gh release create` command:
   - Include tag, title, and notes
   - Use `--draft` by default
+  - **IMPORTANT**: `gh release create` automatically creates the Git tag when executed
 - Example:
-  gh release create vX.Y.Z --title "vX.Y.Z" --notes "<release notes>"
+  gh release create vX.Y.Z --title "vX.Y.Z" --notes "<release notes>" --draft
 
 DO NOT execute the command.
 Deliver the command ready to copy/paste.
+
+Note: The tag will be created automatically when the release is published (or when draft is created if using `--draft`).
 
 Output format:
 
@@ -78,7 +81,12 @@ B) RELEASE NOTES
 C) GH COMMAND
 <exact command>
 
+D) TAG CREATION
+Explain that the tag (vX.Y.Z) will be created automatically when running the gh command above.
+
 Rules:
-- Don't publish the release automatically.
+- Don't publish the release automatically (use --draft).
 - Don't invent changes: if there are doubts, indicate them.
 - Prioritize clarity and safety over speed.
+- Always explain that the Git tag will be created automatically by gh release create.
+- Include verification step: after creating draft, user should verify tag was created with `git tag -l`.

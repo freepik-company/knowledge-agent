@@ -2,7 +2,7 @@ name: Build Docker image
 
 on:
   release:
-    types: [created]
+    types: [created, published]
 
   workflow_dispatch:
     inputs:
