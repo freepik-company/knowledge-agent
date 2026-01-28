@@ -1,8 +1,13 @@
 package tools
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateURL(t *testing.T) {
@@ -256,6 +261,115 @@ func TestIsPrivateIP(t *testing.T) {
 				t.Errorf("isPrivateIP(%q) = %v, want %v", tt.ip, result, tt.isPrivate)
 			}
 		})
+	}
+}
+
+// TestHeaderLeakage verifies that sensitive headers are not leaked in outgoing requests
+func TestHeaderLeakage(t *testing.T) {
+	// Track received headers
+	var receivedHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("test response"))
+	}))
+	defer server.Close()
+
+	// Create an HTTP client exactly as the fetchURL function does
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 0,
+		}).DialContext,
+	}
+
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+
+	// Create request with clean context
+	cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(cleanCtx, "GET", server.URL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Set headers exactly as the tool does
+	req.Header = http.Header{
+		"User-Agent": []string{"KnowledgeAgent/1.0 (Web Content Fetcher)"},
+		"Accept":     []string{"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+	}
+
+	// Execute request
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP status code: %d", resp.StatusCode)
+	}
+
+	// Verify ONLY safe headers are present
+	allowedHeaders := map[string]bool{
+		"User-Agent":      true,
+		"Accept":          true,
+		"Accept-Encoding": true, // Go http client adds this automatically
+	}
+
+	// List of sensitive headers that should NEVER be present
+	forbiddenHeaders := []string{
+		"X-Forwarded-For",
+		"X-Forwarded-Proto",
+		"X-Envoy-External-Address",
+		"X-Envoy-Peer-Metadata-Id",
+		"X-Envoy-Peer-Metadata",
+		"X-B3-Traceid",
+		"X-B3-Spanid",
+		"X-B3-Sampled",
+		"X-Request-Id",
+		"Authorization",
+		"Cookie",
+	}
+
+	// Check for forbidden headers
+	for _, forbiddenHeader := range forbiddenHeaders {
+		if _, exists := receivedHeaders[forbiddenHeader]; exists {
+			t.Errorf("Sensitive header leaked: %s = %v", forbiddenHeader, receivedHeaders[forbiddenHeader])
+		}
+		// Also check lowercase variants
+		lowerHeader := strings.ToLower(forbiddenHeader)
+		for headerKey := range receivedHeaders {
+			if strings.ToLower(headerKey) == lowerHeader {
+				t.Errorf("Sensitive header leaked (case variation): %s = %v", headerKey, receivedHeaders[headerKey])
+			}
+		}
+	}
+
+	// Verify only expected headers are present
+	for headerKey := range receivedHeaders {
+		if !allowedHeaders[headerKey] {
+			// Log unexpected headers (not necessarily an error, but good to know)
+			t.Logf("Unexpected header present: %s = %v", headerKey, receivedHeaders[headerKey])
+		}
+	}
+
+	// Verify required headers are present and correct
+	userAgent := receivedHeaders.Get("User-Agent")
+	if userAgent != "KnowledgeAgent/1.0 (Web Content Fetcher)" {
+		t.Errorf("User-Agent = %q, want %q", userAgent, "KnowledgeAgent/1.0 (Web Content Fetcher)")
+	}
+
+	accept := receivedHeaders.Get("Accept")
+	expectedAccept := "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	if accept != expectedAccept {
+		t.Errorf("Accept = %q, want %q", accept, expectedAccept)
 	}
 }
 

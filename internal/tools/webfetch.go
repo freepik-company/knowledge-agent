@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -201,13 +202,31 @@ func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchU
 		maxLength = 10000
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// Create HTTP client with timeout and custom transport to prevent header leakage
+	transport := &http.Transport{
+		// Disable keep-alives to ensure clean connections
+		DisableKeepAlives: true,
+		// Set reasonable timeouts
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 0,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", args.URL, nil)
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+
+	// Create request with a clean context (not propagating any metadata)
+	// Use context.Background() to ensure no metadata from the incoming request is leaked
+	cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(cleanCtx, "GET", args.URL, nil)
 	if err != nil {
 		return FetchURLResult{
 			Success: false,
@@ -215,8 +234,12 @@ func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchU
 		}, nil
 	}
 
-	// Set user agent
-	req.Header.Set("User-Agent", "KnowledgeAgent/1.0 (Web Content Fetcher)")
+	// CRITICAL: Set ONLY safe headers - do not propagate any headers from incoming requests
+	// This prevents leaking internal infrastructure metadata (Istio, Envoy, K8s, etc.)
+	req.Header = http.Header{
+		"User-Agent": []string{"KnowledgeAgent/1.0 (Web Content Fetcher)"},
+		"Accept":     []string{"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+	}
 
 	// Fetch URL
 	resp, err := client.Do(req)
