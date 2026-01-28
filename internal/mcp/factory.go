@@ -182,14 +182,26 @@ func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 		return nil, fmt.Errorf("endpoint is required for SSE transport")
 	}
 
-	// Create HTTP client with timeout
-	timeout := time.Duration(cfg.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
+	// For Server-Sent Events (SSE), we need special timeout handling:
+	// - NO Client.Timeout: This would kill long-running SSE connections
+	// - ResponseHeaderTimeout: Only for initial handshake/headers (30s default)
+	// - IdleConnTimeout: For detecting broken connections
+
+	responseHeaderTimeout := time.Duration(cfg.Timeout) * time.Second
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = 30 * time.Second
+	}
+
+	// Create custom transport with SSE-friendly timeouts
+	transport := &http.Transport{
+		ResponseHeaderTimeout: responseHeaderTimeout, // Timeout only for headers, not body
+		IdleConnTimeout:       90 * time.Second,      // Detect broken idle connections
+		// NO DialTimeout or TLSHandshakeTimeout needed - use defaults
 	}
 
 	httpClient := &http.Client{
-		Timeout: timeout,
+		Transport: transport,
+		Timeout:   0, // CRITICAL: No global timeout for SSE streaming connections
 	}
 
 	// Apply authentication if configured
@@ -221,14 +233,26 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 		return nil, fmt.Errorf("endpoint is required for streamable transport")
 	}
 
-	// Create HTTP client with timeout
-	timeout := time.Duration(cfg.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
+	// For streaming connections (SSE/Streamable), we need special timeout handling:
+	// - NO Client.Timeout: This would kill long-running streaming connections
+	// - ResponseHeaderTimeout: Only for initial handshake/headers (30s default)
+	// - IdleConnTimeout: For detecting broken connections
+
+	responseHeaderTimeout := time.Duration(cfg.Timeout) * time.Second
+	if responseHeaderTimeout == 0 {
+		responseHeaderTimeout = 30 * time.Second
+	}
+
+	// Create custom transport with streaming-friendly timeouts
+	transport := &http.Transport{
+		ResponseHeaderTimeout: responseHeaderTimeout, // Timeout only for headers, not body
+		IdleConnTimeout:       90 * time.Second,      // Detect broken idle connections
+		// NO DialTimeout or TLSHandshakeTimeout needed - use defaults
 	}
 
 	httpClient := &http.Client{
-		Timeout: timeout,
+		Transport: transport,
+		Timeout:   0, // CRITICAL: No global timeout for streaming connections
 	}
 
 	// Apply authentication if configured
@@ -251,9 +275,16 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 	}, nil
 }
 
-// applyAuth applies authentication to HTTP client
+// applyAuth applies authentication to HTTP client by wrapping its existing Transport
+// This preserves any custom Transport settings (timeouts, etc.)
 func applyAuth(client *http.Client, auth *config.MCPAuthConfig) *http.Client {
 	log := logger.Get()
+
+	// Get the base transport (use DefaultTransport if none set)
+	baseTransport := client.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
 
 	switch auth.Type {
 	case "bearer":
@@ -265,23 +296,25 @@ func applyAuth(client *http.Client, auth *config.MCPAuthConfig) *http.Client {
 			}
 		}
 		if token != "" {
+			// Wrap the existing transport (preserves custom timeouts)
 			client.Transport = &bearerTransport{
-				base:  client.Transport,
+				base:  baseTransport,
 				token: token,
 			}
-			log.Debug("Applied bearer token authentication")
+			log.Debug("Applied bearer token authentication (preserving base transport)")
 		}
 
 	case "basic":
 		username := auth.Username
 		password := auth.Password
 		if username != "" && password != "" {
+			// Wrap the existing transport (preserves custom timeouts)
 			client.Transport = &basicAuthTransport{
-				base:     client.Transport,
+				base:     baseTransport,
 				username: username,
 				password: password,
 			}
-			log.Debug("Applied basic authentication")
+			log.Debug("Applied basic authentication (preserving base transport)")
 		}
 
 	case "oauth2":
