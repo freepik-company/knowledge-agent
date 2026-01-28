@@ -360,6 +360,7 @@ func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // retryTransport wraps an MCP transport with automatic reconnection logic
 // This is crucial for HTTP-based transports (SSE, Streamable) that can disconnect between queries
+// IMPORTANT: Uses a long-lived background context for connections to prevent premature closes
 type retryTransport struct {
 	name          string
 	baseTransport mcp.Transport
@@ -368,19 +369,36 @@ type retryTransport struct {
 }
 
 // Connect implements mcp.Transport with exponential backoff retry logic
+// CRITICAL: We use context.Background() for the actual connection to ensure streaming
+// connections stay alive beyond individual query contexts. The passed ctx is only used
+// to respect cancellation during the connection attempt itself.
 func (r *retryTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	log := logger.Get()
 	var lastErr error
 
+	// Create a long-lived context for the actual connection
+	// This prevents the streaming connection from being closed when individual
+	// query contexts are canceled
+	connCtx := context.Background()
+
 	for attempt := 1; attempt <= r.maxRetries; attempt++ {
+		// Check if the caller's context is still valid before attempting
+		if ctx.Err() != nil {
+			log.Warnw("Caller context canceled before connection attempt",
+				"server", r.name,
+				"attempt", attempt)
+			return nil, fmt.Errorf("caller context canceled: %w", ctx.Err())
+		}
+
 		log.Debugw("Attempting MCP connection",
 			"server", r.name,
 			"attempt", attempt,
 			"max_retries", r.maxRetries)
 
-		conn, err := r.baseTransport.Connect(ctx)
+		// Use the long-lived connCtx for the actual connection
+		conn, err := r.baseTransport.Connect(connCtx)
 		if err == nil {
-			log.Infow("MCP connection established",
+			log.Infow("MCP connection established with long-lived context",
 				"server", r.name,
 				"attempt", attempt)
 			return conn, nil
@@ -392,14 +410,6 @@ func (r *retryTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 			"attempt", attempt,
 			"error", err)
 
-		// Don't retry if context is canceled
-		if ctx.Err() != nil {
-			log.Warnw("Context canceled, stopping retries",
-				"server", r.name,
-				"attempt", attempt)
-			return nil, fmt.Errorf("context canceled during retry: %w", ctx.Err())
-		}
-
 		// Don't sleep after the last attempt
 		if attempt < r.maxRetries {
 			// Exponential backoff: initialDelay * 2^(attempt-1)
@@ -408,9 +418,10 @@ func (r *retryTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 				"server", r.name,
 				"delay_ms", delay.Milliseconds())
 
+			// Use caller's context for backoff cancellation
 			select {
 			case <-ctx.Done():
-				return nil, fmt.Errorf("context canceled during backoff: %w", ctx.Err())
+				return nil, fmt.Errorf("caller context canceled during backoff: %w", ctx.Err())
 			case <-time.After(delay):
 				// Continue to next retry
 			}
