@@ -18,6 +18,7 @@ import (
 	memorytools "github.com/achetronic/adk-utils-go/tools/memory"
 	"github.com/git-hulk/langfuse-go/pkg/traces"
 
+	"knowledge-agent/internal/a2a"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
@@ -189,6 +190,22 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		log.Debug("MCP integration disabled")
 	}
 
+	// 8b. Create A2A toolsets (if enabled)
+	var a2aToolsets []tool.Toolset
+	if cfg.A2A.Enabled {
+		log.Infow("A2A integration enabled",
+			"self_name", cfg.A2A.SelfName,
+			"agents", len(cfg.A2A.Agents),
+		)
+		a2aToolsets, err = a2a.CreateA2AToolsets(&cfg.A2A)
+		if err != nil {
+			// Graceful degradation: log warning but don't fail agent startup
+			log.Warnw("Failed to create A2A toolsets", "error", err)
+		}
+	} else {
+		log.Debug("A2A integration disabled")
+	}
+
 	// 9. Initialize prompt manager
 	log.Info("Initializing prompt manager")
 	promptManager, err := prompt.NewManager(&cfg.Prompt)
@@ -214,15 +231,16 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("failed to create langfuse tracer: %w", err)
 	}
 
-	// 10. Create ADK agent with system prompt and toolsets
+	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
-	// Build toolsets array (base + MCP)
+	// Build toolsets array (base + MCP + A2A)
 	toolsets := []tool.Toolset{
 		memoryToolset, // Uses wrapped permission memory service
 		webToolset,
 	}
 	toolsets = append(toolsets, mcpToolsets...)
+	toolsets = append(toolsets, a2aToolsets...)
 
 	llmAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Knowledge Agent",

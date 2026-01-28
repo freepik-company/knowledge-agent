@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"knowledge-agent/internal/a2a"
 	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
@@ -52,14 +53,18 @@ func (s *AgentServer) registerRoutes() {
 	// Create rate limiter (10 requests/second, burst of 20)
 	s.rateLimiter = NewRateLimiter(10.0, 20)
 
-	// Create authentication middleware
+	// Create middleware chain:
+	// 1. Rate limiting (first, to prevent DoS)
+	// 2. A2A loop prevention (before auth, to fail fast on loops)
+	// 3. Authentication (last, to identify caller)
+	loopPreventionMiddleware := a2a.LoopPreventionMiddleware(&s.config.A2A)
 	authMiddleware := AuthMiddleware(s.config)
 
-	// API endpoints (protected with rate limiting and authentication)
+	// API endpoints (protected with rate limiting, loop prevention, and authentication)
 	s.mux.Handle("/api/ingest-thread",
-		s.rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleIngestThread))))
+		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(http.HandlerFunc(s.handleIngestThread)))))
 	s.mux.Handle("/api/query",
-		s.rateLimiter.Middleware()(authMiddleware(http.HandlerFunc(s.handleQuery))))
+		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(http.HandlerFunc(s.handleQuery)))))
 }
 
 // Close stops the rate limiter cleanup routine

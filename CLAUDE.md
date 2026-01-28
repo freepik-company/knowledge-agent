@@ -262,6 +262,85 @@ mcp:
 - Restrict filesystem paths to specific directories
 - Monitor MCP tool usage in Langfuse
 
+### A2A Tool Integration
+
+**Agent-to-Agent (A2A)** enables the agent to call tools exposed by other agents in your infrastructure.
+
+**Architecture**:
+```
+Agent Startup
+  ↓
+Load A2A Config (config.yaml)
+  ↓
+For each enabled agent:
+  - Create authenticator (API Key/Bearer/OAuth2/None)
+  - Create A2A client with loop prevention
+  - Create toolset with configured tools
+  ↓
+LLM receives ALL tools (memory + web + MCP + A2A)
+  ↓
+Claude intelligently selects and uses tools
+```
+
+**Key Components**:
+- **A2A Client** (`internal/a2a/client.go`): HTTP client for calling external agents
+- **Authenticators** (`internal/a2a/auth.go`): API Key, Bearer, OAuth2 (client credentials), None
+- **Loop Prevention** (`internal/a2a/middleware.go`): Prevents infinite loops via headers
+- **A2A Toolset** (`internal/a2a/toolset.go`): Creates ADK tools from config
+
+**Configuration** (config.yaml):
+```yaml
+a2a:
+  enabled: true
+  self_name: "knowledge-agent"  # For loop prevention
+  max_call_depth: 5
+  agents:
+    - name: "logs-agent"
+      endpoint: "http://logs-agent:8081"
+      timeout: 30
+      auth:
+        type: "api_key"
+        header: "X-API-Key"
+        key_env: "LOGS_AGENT_API_KEY"
+      tools:
+        - name: "search_logs"
+          description: "Search logs by query and time range"
+```
+
+**Loop Prevention Headers**:
+| Header | Description |
+|--------|-------------|
+| `X-Request-ID` | Unique ID for the original request |
+| `X-Call-Chain` | CSV list of agents in the chain |
+| `X-Call-Depth` | Current depth (checked against max_call_depth) |
+
+**Authentication Types**:
+| Type | Description | Config |
+|------|-------------|--------|
+| `api_key` | Custom header with API key | `header`, `key_env` |
+| `bearer` | Authorization: Bearer <token> | `token_env` |
+| `oauth2` | Client credentials flow | `token_url`, `client_id_env`, `client_secret_env`, `scopes` |
+| `none` | No authentication | - |
+
+**Graceful Degradation**:
+- Failed agents log warnings but don't prevent startup
+- Agent continues with successfully initialized A2A clients
+- Similar pattern to MCP toolset creation
+
+**Files**:
+- `internal/a2a/context.go` - Call chain context and headers
+- `internal/a2a/middleware.go` - Loop prevention middleware
+- `internal/a2a/auth.go` - Authentication implementations
+- `internal/a2a/client.go` - HTTP client for agent calls
+- `internal/a2a/toolset.go` - ADK toolset implementation
+- `internal/config/config.go` - A2A configuration structs
+- `docs/A2A_TOOLS.md` - Complete A2A guide
+
+**Common Use Cases**:
+1. **Log Analysis**: "What errors happened in the payment service?"
+2. **Metrics Queries**: "Show CPU usage for the last hour"
+3. **On-Call Management**: "Who is on-call this week?"
+
 ### Multimodal Capabilities
 
 **Image Analysis**:
@@ -394,7 +473,7 @@ if apiKey != "" {
 - External AI agents calling the Knowledge Agent
 - Third-party integrations
 - Multi-agent systems
-- See `docs/A2A.md` for complete integration guide
+- See `docs/A2A_TOOLS.md` for complete A2A tool integration guide
 
 ### Level 3: Legacy Slack Signature (Fallback)
 
@@ -1014,7 +1093,7 @@ Slack Bridge   → X-API-Key: ka_slackbridge → Knowledge Agent
 - `internal/config/config.go` - APIKeys configuration
 - `internal/slack/handler.go` - Slack Bridge sends API key in requests
 
-**See `docs/A2A.md` for complete integration guide**
+**See `docs/A2A_TOOLS.md` for complete A2A tool integration guide**
 
 ### Langfuse Observability Configuration
 

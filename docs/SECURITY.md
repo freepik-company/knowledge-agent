@@ -862,6 +862,6 @@ grep "localhost/metadata service" logs/agent.log
 
 ## See Also
 
-- [docs/A2A.md](A2A.md) - Agent-to-Agent integration guide
+- [A2A_TOOLS.md](A2A_TOOLS.md) - A2A Tool Integration Guide
+- [CONFIGURATION.md](CONFIGURATION.md) - Full configuration reference
 - [CLAUDE.md](../CLAUDE.md) - General system architecture
-- [WEBHOOK_API.md](../WEBHOOK_API.md) - API endpoints documentation
