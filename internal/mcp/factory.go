@@ -173,7 +173,7 @@ func createCommandTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	return factory, nil
 }
 
-// createSSETransport creates an SSE-based transport
+// createSSETransport creates an SSE-based transport with automatic reconnection
 func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	log := logger.Get()
 	log.Infow("Creating SSE transport", "server", cfg.Name, "endpoint", cfg.Endpoint)
@@ -197,16 +197,22 @@ func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 		httpClient = applyAuth(httpClient, cfg.Auth)
 	}
 
-	// Create SSE client transport
-	transport := &mcp.SSEClientTransport{
+	// Create base SSE client transport
+	baseTransport := &mcp.SSEClientTransport{
 		Endpoint:   cfg.Endpoint,
 		HTTPClient: httpClient,
 	}
 
-	return transport, nil
+	// Wrap with retry logic for automatic reconnection
+	return &retryTransport{
+		name:          cfg.Name,
+		baseTransport: baseTransport,
+		maxRetries:    5,
+		initialDelay:  500 * time.Millisecond,
+	}, nil
 }
 
-// createStreamableTransport creates a streamable HTTP transport
+// createStreamableTransport creates a streamable HTTP transport with automatic reconnection
 func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	log := logger.Get()
 	log.Infow("Creating streamable transport", "server", cfg.Name, "endpoint", cfg.Endpoint)
@@ -230,13 +236,19 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 		httpClient = applyAuth(httpClient, cfg.Auth)
 	}
 
-	// Create streamable client transport
-	transport := &mcp.StreamableClientTransport{
+	// Create base streamable client transport
+	baseTransport := &mcp.StreamableClientTransport{
 		Endpoint:   cfg.Endpoint,
 		HTTPClient: httpClient,
 	}
 
-	return transport, nil
+	// Wrap with retry logic for automatic reconnection
+	return &retryTransport{
+		name:          cfg.Name,
+		baseTransport: baseTransport,
+		maxRetries:    5,
+		initialDelay:  500 * time.Millisecond,
+	}, nil
 }
 
 // applyAuth applies authentication to HTTP client
@@ -311,4 +323,71 @@ func (t *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error
 		base = http.DefaultTransport
 	}
 	return base.RoundTrip(req)
+}
+
+// retryTransport wraps an MCP transport with automatic reconnection logic
+// This is crucial for HTTP-based transports (SSE, Streamable) that can disconnect between queries
+type retryTransport struct {
+	name          string
+	baseTransport mcp.Transport
+	maxRetries    int
+	initialDelay  time.Duration
+}
+
+// Connect implements mcp.Transport with exponential backoff retry logic
+func (r *retryTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	log := logger.Get()
+	var lastErr error
+
+	for attempt := 1; attempt <= r.maxRetries; attempt++ {
+		log.Debugw("Attempting MCP connection",
+			"server", r.name,
+			"attempt", attempt,
+			"max_retries", r.maxRetries)
+
+		conn, err := r.baseTransport.Connect(ctx)
+		if err == nil {
+			log.Infow("MCP connection established",
+				"server", r.name,
+				"attempt", attempt)
+			return conn, nil
+		}
+
+		lastErr = err
+		log.Warnw("MCP connection attempt failed",
+			"server", r.name,
+			"attempt", attempt,
+			"error", err)
+
+		// Don't retry if context is canceled
+		if ctx.Err() != nil {
+			log.Warnw("Context canceled, stopping retries",
+				"server", r.name,
+				"attempt", attempt)
+			return nil, fmt.Errorf("context canceled during retry: %w", ctx.Err())
+		}
+
+		// Don't sleep after the last attempt
+		if attempt < r.maxRetries {
+			// Exponential backoff: initialDelay * 2^(attempt-1)
+			delay := r.initialDelay * time.Duration(1<<uint(attempt-1))
+			log.Debugw("Waiting before retry",
+				"server", r.name,
+				"delay_ms", delay.Milliseconds())
+
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context canceled during backoff: %w", ctx.Err())
+			case <-time.After(delay):
+				// Continue to next retry
+			}
+		}
+	}
+
+	log.Errorw("MCP connection failed after all retries",
+		"server", r.name,
+		"attempts", r.maxRetries,
+		"error", lastErr)
+
+	return nil, fmt.Errorf("failed to connect after %d attempts: %w", r.maxRetries, lastErr)
 }
