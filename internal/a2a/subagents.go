@@ -191,9 +191,9 @@ func resolveAuthHeader(auth config.A2AAuthConfig) (headerName, headerValue strin
 		return "Authorization", "Bearer " + token, nil
 
 	case "oauth2":
-		// OAuth2 is more complex - not yet supported for sub_agents
-		// Use legacy a2a.agents config for OAuth2
-		return "", "", fmt.Errorf("oauth2 auth not yet supported for sub_agents, use legacy a2a.agents config")
+		// OAuth2 client credentials flow is not supported for sub_agents
+		// Use api_key or bearer auth instead
+		return "", "", fmt.Errorf("oauth2 auth not supported for sub_agents, use api_key or bearer instead")
 
 	default:
 		return "", "", fmt.Errorf("unsupported auth type: %s", authType)

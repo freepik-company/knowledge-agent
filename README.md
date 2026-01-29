@@ -194,7 +194,7 @@ langfuse:
 
 **SDK**: Uses `github.com/git-hulk/langfuse-go` (community-maintained, feature-complete)
 
-See `docs/OBSERVABILITY.md` for complete guide.
+See `docs/OPERATIONS.md` for complete guide.
 
 ## Security & Authentication
 
@@ -232,7 +232,7 @@ curl -X POST http://localhost:8081/api/query \
   -d '{"question":"How do we deploy?"}'
 ```
 
-See `docs/A2A.md` for complete integration guide and `docs/SECURITY.md` for detailed security configuration.
+See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY.md` for detailed security configuration.
 
 ## ADK Launcher & A2A Protocol
 

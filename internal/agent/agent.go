@@ -193,29 +193,17 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 
 	// 8b. Create A2A sub-agents using remoteagent (if enabled)
 	var subAgents []agent.Agent
-	var a2aToolsets []tool.Toolset
 	if cfg.A2A.Enabled {
 		log.Infow("A2A integration enabled",
 			"self_name", cfg.A2A.SelfName,
 			"sub_agents", len(cfg.A2A.SubAgents),
-			"legacy_agents", len(cfg.A2A.Agents),
 		)
 
-		// New: Create sub-agents using remoteagent.NewA2A
 		if len(cfg.A2A.SubAgents) > 0 {
 			subAgents, err = a2a.CreateSubAgents(&cfg.A2A)
 			if err != nil {
 				// Graceful degradation: log warning but don't fail agent startup
 				log.Warnw("Failed to create A2A sub-agents", "error", err)
-			}
-		}
-
-		// Legacy: Create A2A toolsets (DEPRECATED - for backwards compatibility)
-		if len(cfg.A2A.Agents) > 0 {
-			log.Warn("Using deprecated a2a.agents config - migrate to a2a.sub_agents")
-			a2aToolsets, err = a2a.CreateA2AToolsets(&cfg.A2A)
-			if err != nil {
-				log.Warnw("Failed to create legacy A2A toolsets", "error", err)
 			}
 		}
 	} else {
@@ -256,13 +244,12 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
-	// Build toolsets array (base + MCP + A2A)
+	// Build toolsets array (base + MCP)
 	toolsets := []tool.Toolset{
 		memoryToolset, // Uses wrapped permission memory service
 		webToolset,
 	}
 	toolsets = append(toolsets, mcpToolsets...)
-	toolsets = append(toolsets, a2aToolsets...)
 
 	llmAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Knowledge Agent",

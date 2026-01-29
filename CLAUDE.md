@@ -368,11 +368,6 @@ a2a:
 - `internal/config/config.go` - A2A and Launcher configuration structs
 - `docs/A2A_TOOLS.md` - Complete A2A guide
 
-**Legacy Files** (DEPRECATED - for backwards compatibility):
-- `internal/a2a/client.go` - Custom HTTP client (use sub_agents instead)
-- `internal/a2a/auth.go` - Authentication for legacy agents
-- `internal/a2a/toolset.go` - Creates tools from legacy config
-
 **Common Use Cases**:
 1. **Log Analysis**: "What errors happened in the payment service?" → delegates to logs_agent
 2. **Metrics Queries**: "Show CPU usage for the last hour" → delegates to metrics_agent

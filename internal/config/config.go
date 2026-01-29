@@ -111,7 +111,6 @@ type A2AConfig struct {
 	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
 	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
 	Polling      bool                `yaml:"polling" mapstructure:"polling" default:"true"`                           // Use polling instead of streaming for sub-agents (required for large responses)
-	Agents       []A2AAgentConfig    `yaml:"agents" mapstructure:"agents"`                                            // DEPRECATED: Use sub_agents instead
 	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                    // List of remote ADK agents to integrate as sub-agents
 }
 
@@ -127,33 +126,12 @@ type A2ASubAgentConfig struct {
 	Timeout int `yaml:"timeout" mapstructure:"timeout" default:"30"` // Reserved for future use (not currently applied)
 }
 
-// A2AAgentConfig holds configuration for a single external agent
-type A2AAgentConfig struct {
-	Name        string          `yaml:"name" mapstructure:"name"`                            // Agent name (for logging and identification)
-	Description string          `yaml:"description" mapstructure:"description"`              // Human-readable description
-	Endpoint    string          `yaml:"endpoint" mapstructure:"endpoint"`                    // HTTP endpoint (e.g., http://logs-agent:8081)
-	Path        string          `yaml:"path" mapstructure:"path" default:"/query"`           // API path to call (default: /query for ADK agents, use /api/query for knowledge-agent)
-	Timeout     int             `yaml:"timeout" mapstructure:"timeout" default:"30"`         // Request timeout in seconds
-	Auth        A2AAuthConfig   `yaml:"auth" mapstructure:"auth"`                            // Authentication configuration
-	Tools       []A2AToolConfig `yaml:"tools" mapstructure:"tools"`                          // List of tools this agent provides
-}
-
 // A2AAuthConfig holds authentication configuration for an external agent
 type A2AAuthConfig struct {
-	Type            string   `yaml:"type" mapstructure:"type"`                                           // "api_key", "bearer", "oauth2", or "none"
-	Header          string   `yaml:"header,omitempty" mapstructure:"header"`                             // Header name for api_key auth (e.g., "X-API-Key")
-	KeyEnv          string   `yaml:"key_env,omitempty" mapstructure:"key_env"`                           // Environment variable containing API key
-	TokenEnv        string   `yaml:"token_env,omitempty" mapstructure:"token_env"`                       // Environment variable containing bearer token
-	TokenURL        string   `yaml:"token_url,omitempty" mapstructure:"token_url"`                       // OAuth2 token endpoint URL
-	ClientIDEnv     string   `yaml:"client_id_env,omitempty" mapstructure:"client_id_env"`               // Environment variable containing OAuth2 client ID
-	ClientSecretEnv string   `yaml:"client_secret_env,omitempty" mapstructure:"client_secret_env"`       // Environment variable containing OAuth2 client secret
-	Scopes          []string `yaml:"scopes,omitempty" mapstructure:"scopes"`                             // OAuth2 scopes to request
-}
-
-// A2AToolConfig holds configuration for a tool provided by an external agent
-type A2AToolConfig struct {
-	Name        string `yaml:"name" mapstructure:"name"`               // Tool name (e.g., "search_logs")
-	Description string `yaml:"description" mapstructure:"description"` // Tool description for LLM
+	Type     string `yaml:"type" mapstructure:"type"`                     // "api_key", "bearer", or "none"
+	Header   string `yaml:"header,omitempty" mapstructure:"header"`       // Header name for api_key auth (e.g., "X-API-Key")
+	KeyEnv   string `yaml:"key_env,omitempty" mapstructure:"key_env"`     // Environment variable containing API key
+	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"` // Environment variable containing bearer token
 }
 
 // AnthropicConfig holds Anthropic API configuration
@@ -299,7 +277,7 @@ func (c *Config) Validate() error {
 			c.A2A.MaxCallDepth = 5 // Default value
 		}
 
-		// Validate sub_agents (new ADK remoteagent-based config)
+		// Validate sub_agents
 		for i, subAgent := range c.A2A.SubAgents {
 			if subAgent.Name == "" {
 				return fmt.Errorf("a2a.sub_agents[%d]: name is required", i)
@@ -309,57 +287,6 @@ func (c *Config) Validate() error {
 			}
 			if subAgent.Description == "" {
 				return fmt.Errorf("a2a.sub_agents[%d] (%s): description is required", i, subAgent.Name)
-			}
-		}
-
-		// Validate legacy agents config (DEPRECATED - for backwards compatibility)
-		for i, agent := range c.A2A.Agents {
-			if agent.Name == "" {
-				return fmt.Errorf("a2a.agents[%d]: name is required", i)
-			}
-			if agent.Endpoint == "" {
-				return fmt.Errorf("a2a.agents[%d] (%s): endpoint is required", i, agent.Name)
-			}
-			if len(agent.Tools) == 0 {
-				return fmt.Errorf("a2a.agents[%d] (%s): at least one tool must be configured", i, agent.Name)
-			}
-			// Validate auth type
-			validAuthTypes := map[string]bool{"api_key": true, "bearer": true, "oauth2": true, "none": true, "": true}
-			if !validAuthTypes[agent.Auth.Type] {
-				return fmt.Errorf("a2a.agents[%d] (%s): auth.type must be 'api_key', 'bearer', 'oauth2', or 'none'", i, agent.Name)
-			}
-			// Validate auth-specific requirements
-			switch agent.Auth.Type {
-			case "api_key":
-				if agent.Auth.Header == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.header is required for api_key auth", i, agent.Name)
-				}
-				if agent.Auth.KeyEnv == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.key_env is required for api_key auth", i, agent.Name)
-				}
-			case "bearer":
-				if agent.Auth.TokenEnv == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.token_env is required for bearer auth", i, agent.Name)
-				}
-			case "oauth2":
-				if agent.Auth.TokenURL == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.token_url is required for oauth2 auth", i, agent.Name)
-				}
-				if agent.Auth.ClientIDEnv == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.client_id_env is required for oauth2 auth", i, agent.Name)
-				}
-				if agent.Auth.ClientSecretEnv == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s): auth.client_secret_env is required for oauth2 auth", i, agent.Name)
-				}
-			}
-			// Validate tools
-			for j, tool := range agent.Tools {
-				if tool.Name == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s).tools[%d]: name is required", i, agent.Name, j)
-				}
-				if tool.Description == "" {
-					return fmt.Errorf("a2a.agents[%d] (%s).tools[%d] (%s): description is required", i, agent.Name, j, tool.Name)
-				}
 			}
 		}
 	}

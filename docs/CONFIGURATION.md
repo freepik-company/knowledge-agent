@@ -331,9 +331,11 @@ log:
   output_path: stdout
 
 # A2A Authentication (optional)
+# Format: client_id: secret_token
+# The secret is sent in X-API-Key header, client_id is used for logging
 a2a_api_keys:
-  ka_rootagent: root-agent
-  ka_slackbridge: slack-bridge
+  root-agent: ka_secret_rootagent
+  slack-bridge: ka_secret_slackbridge
 
 # MCP Integration (optional)
 mcp:
@@ -521,6 +523,61 @@ See `examples/mcp/` for complete examples:
 ### Complete Documentation
 
 For comprehensive MCP integration guide, see: **[docs/MCP_INTEGRATION.md](MCP_INTEGRATION.md)**
+
+---
+
+## Response Cleaner Configuration
+
+The Response Cleaner uses Claude Haiku to clean agent narration from responses before sending them to users. This removes internal process descriptions like "Let me transfer you to..." or "I'm going to search for...".
+
+### Basic Setup
+
+```yaml
+response_cleaner:
+  enabled: true
+  model: claude-haiku-4-5-20251001  # Default model
+```
+
+### Configuration Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable response cleaning |
+| `model` | string | `claude-haiku-4-5-20251001` | Claude model to use for cleaning |
+
+### How It Works
+
+1. Agent generates response (may include narration about tools, transfers, etc.)
+2. If response > 200 characters, cleaner is invoked
+3. Haiku removes meta-commentary while preserving substantive content
+4. Cleaned response is returned to user
+
+### What Gets Removed
+
+- Transfer phrases: "I'm going to transfer you to...", "The metrics agent says..."
+- Process narration: "Let me search for that...", "I'm checking the database..."
+- Redundant greetings and repetitions
+- Meta-comments about tool usage
+
+### What's Preserved
+
+- All factual information and data
+- Technical details and context
+- Follow-up questions to the user
+- The original language
+
+### Requirements
+
+- `ANTHROPIC_API_KEY` must be set (uses Anthropic API directly)
+- Adds ~1-2 seconds latency per cleaned response
+- Uses Haiku tokens (cost-effective for this use case)
+
+### Graceful Degradation
+
+- If API key is not set, cleaner is disabled with a warning
+- If cleaning fails, original response is returned
+- If cleaner returns empty response, original is used
+- Responses < 200 characters skip cleaning (already concise)
 
 ---
 
@@ -1040,8 +1097,8 @@ postgres:
   url: ${POSTGRES_URL}
 
 a2a_api_keys:
-  ka_slackbridge: slack-bridge
-  ka_rootagent: root-agent
+  slack-bridge: ka_secret_slackbridge
+  root-agent: ka_secret_rootagent
 ```
 
 ```bash
@@ -1239,9 +1296,10 @@ Configure which API keys are accepted:
 
 ```yaml
 # config.yaml
+# Format: client_id: secret_token
 a2a_api_keys:
-  ka_rootagent: root-agent
-  ka_slackbridge: slack-bridge
+  root-agent: ka_secret_rootagent
+  slack-bridge: ka_secret_slackbridge
 ```
 
 Or via environment:

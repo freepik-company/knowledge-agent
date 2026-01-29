@@ -49,6 +49,13 @@ func NewResponseCleaner(cfg *config.Config) *ResponseCleaner {
 		return &ResponseCleaner{enabled: false}
 	}
 
+	// Validate API key exists before creating client
+	if cfg.Anthropic.APIKey == "" {
+		log := logger.Get()
+		log.Warn("Response cleaner disabled: ANTHROPIC_API_KEY not set")
+		return &ResponseCleaner{enabled: false}
+	}
+
 	client := anthropic.NewClient(
 		option.WithAPIKey(cfg.Anthropic.APIKey),
 	)
@@ -88,7 +95,11 @@ func (rc *ResponseCleaner) Clean(ctx context.Context, response string) (string, 
 
 	prompt := fmt.Sprintf(cleanerPrompt, response)
 
-	message, err := rc.client.Messages.New(ctx, anthropic.MessageNewParams{
+	// Add timeout to prevent indefinite blocking
+	cleanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	message, err := rc.client.Messages.New(cleanCtx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(rc.model),
 		MaxTokens: 4096,
 		Messages: []anthropic.MessageParam{
@@ -108,6 +119,14 @@ func (rc *ResponseCleaner) Clean(ctx context.Context, response string) (string, 
 		if block.Type == "text" {
 			cleanedResponse += block.Text
 		}
+	}
+
+	// Validate cleaner didn't return empty response
+	if cleanedResponse == "" {
+		log.Warnw("Cleaner returned empty response, using original",
+			"original_length", len(response),
+		)
+		return response, nil
 	}
 
 	duration := time.Since(startTime)

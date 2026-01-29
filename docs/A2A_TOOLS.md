@@ -281,44 +281,6 @@ If unexpected, check:
 2. Verify sub-agent `description` clearly describes its capabilities
 3. Restart the agent to reload configuration
 
-## Migration from Legacy A2A Tools
-
-If you were using the legacy `a2a.agents` configuration with custom HTTP tools, migrate to `a2a.sub_agents`:
-
-**Before (legacy):**
-```yaml
-a2a:
-  enabled: true
-  agents:
-    - name: "logs-agent"
-      endpoint: "http://logs-agent:8081"
-      path: "/query"
-      auth:
-        type: "api_key"
-        header: "X-API-Key"
-        key_env: "LOGS_AGENT_API_KEY"
-      tools:
-        - name: "search_logs"
-          description: "Search logs by query"
-```
-
-**After (sub-agents):**
-```yaml
-a2a:
-  enabled: true
-  sub_agents:
-    - name: logs_agent
-      description: "Search and analyze application logs"
-      endpoint: http://logs-agent:9000  # Agent card URL
-      timeout: 30
-```
-
-**Key differences:**
-- Sub-agents use standard A2A protocol (not custom HTTP)
-- No need to define individual tools (discovered from agent card)
-- No need to configure authentication (handled by A2A protocol)
-- LLM decides when to delegate (not explicit tool calls)
-
 ## Related Documentation
 
 - [SECURITY.md](SECURITY.md) - Authentication, permissions, and SSRF protection
