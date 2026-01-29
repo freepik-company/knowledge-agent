@@ -796,6 +796,13 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 						"has_response", part.FunctionResponse.Response != nil,
 					)
 
+					// Log detailed response for A2A debugging
+					if part.FunctionResponse.Name == "transfer_to_agent" {
+						log.Debugw("transfer_to_agent response details",
+							"response", part.FunctionResponse.Response,
+						)
+					}
+
 					// End tool call in Langfuse
 					trace.EndToolCall(part.FunctionResponse.Name, part.FunctionResponse.Response, nil)
 				}

@@ -130,6 +130,11 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool) (agent.Agent,
 		}),
 	}
 
+	// Always add logging interceptor for debugging A2A calls
+	factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(&loggingInterceptor{
+		agentName: cfg.Name,
+	}))
+
 	// Add auth interceptor if configured
 	if authHeaderName != "" {
 		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(&authInterceptor{
@@ -195,6 +200,44 @@ func resolveAuthHeader(auth config.A2AAuthConfig) (headerName, headerValue strin
 	}
 }
 
+// loggingInterceptor implements a2aclient.CallInterceptor for debugging A2A calls
+type loggingInterceptor struct {
+	a2aclient.PassthroughInterceptor
+	agentName string
+}
+
+// Before logs the outgoing A2A request
+func (li *loggingInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
+	log := logger.Get()
+	log.Infow("A2A outgoing request",
+		"agent", li.agentName,
+		"method", req.Method,
+		"base_url", req.BaseURL,
+		"has_payload", req.Payload != nil,
+	)
+	return ctx, nil
+}
+
+// After logs the A2A response
+func (li *loggingInterceptor) After(ctx context.Context, resp *a2aclient.Response) error {
+	log := logger.Get()
+	if resp.Err != nil {
+		log.Errorw("A2A request failed",
+			"agent", li.agentName,
+			"method", resp.Method,
+			"error", resp.Err,
+		)
+	} else {
+		log.Infow("A2A response received",
+			"agent", li.agentName,
+			"method", resp.Method,
+			"base_url", resp.BaseURL,
+			"has_payload", resp.Payload != nil,
+		)
+	}
+	return nil
+}
+
 // authInterceptor implements a2aclient.CallInterceptor to add auth headers to requests
 type authInterceptor struct {
 	a2aclient.PassthroughInterceptor
@@ -204,6 +247,12 @@ type authInterceptor struct {
 
 // Before adds the auth header to the request metadata
 func (ai *authInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
+	log := logger.Get()
+	log.Debugw("A2A interceptor: Adding auth header to request",
+		"header", ai.headerName,
+		"method", req.Method,
+	)
+
 	if req.Meta == nil {
 		req.Meta = make(a2aclient.CallMeta)
 	}
