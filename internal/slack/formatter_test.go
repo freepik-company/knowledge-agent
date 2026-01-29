@@ -60,6 +60,26 @@ func TestFormatMessageForSlack(t *testing.T) {
 			input:    "Here is code:\n```\nfunction test() {\n  return true;\n}\n```",
 			expected: "Here is code:\n`function test() {\n  return true;\n}`",
 		},
+		{
+			name:     "Preserve underscores in code",
+			input:    "The domain is `fotosgratis.re_og` with underscore",
+			expected: "The domain is `fotosgratis.re_og` with underscore",
+		},
+		{
+			name:     "Preserve text with underscores - no character loss",
+			input:    "Check out _this_ link: `fotosgratis.re_og`",
+			expected: "Check out _this_ link: `fotosgratis.re_og`",
+		},
+		{
+			name:     "Preserve variable names with underscores",
+			input:    "The variable `user_name` and `user_id` are important",
+			expected: "The variable `user_name` and `user_id` are important",
+		},
+		{
+			name:     "Text with multiple underscores preserved",
+			input:    "Config: `SOME_VAR_NAME_HERE` is set to `OTHER_VAR`",
+			expected: "Config: `SOME_VAR_NAME_HERE` is set to `OTHER_VAR`",
+		},
 	}
 
 	for _, tt := range tests {

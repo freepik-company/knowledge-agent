@@ -524,6 +524,119 @@ For comprehensive MCP integration guide, see: **[docs/MCP_INTEGRATION.md](MCP_IN
 
 ---
 
+## ADK Launcher Configuration
+
+The ADK Launcher exposes the standard A2A (Agent-to-Agent) protocol on a separate port, allowing other ADK agents to call this agent.
+
+### Basic Setup
+
+```yaml
+launcher:
+  enabled: true
+  port: 8082
+  enable_webui: true
+  # Public URL for agent discovery (optional, for production)
+  # agent_url: https://knowledge-agent.example.com
+```
+
+### Configuration Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable ADK Launcher |
+| `port` | int | `8082` | Port for A2A protocol |
+| `enable_webui` | bool | `true` | Enable WebUI at `/ui/` |
+| `agent_url` | string | `""` | Public URL for agent discovery |
+
+### Exposed Endpoints
+
+When enabled, the launcher exposes:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/agent-card.json` | Agent card for A2A discovery |
+| `POST /a2a/invoke` | A2A protocol invocation |
+| `GET /ui/` | WebUI for testing (if `enable_webui: true`) |
+
+### Authentication
+
+The launcher uses the same `a2a_api_keys` configuration:
+
+- If `a2a_api_keys` is configured → All A2A requests require `X-API-Key` header
+- If `a2a_api_keys` is empty → Open mode (no authentication)
+
+### Architecture
+
+```
+Port 8081 (Custom HTTP)          Port 8082 (ADK Launcher)
+├── /api/query                   ├── /.well-known/agent-card.json
+├── /api/ingest-thread           ├── /a2a/invoke
+├── /health                      └── /ui/ (WebUI)
+├── /metrics
+└── Auth, Rate Limiting
+```
+
+Both ports share the same LLM agent and session service.
+
+---
+
+## A2A Sub-agents Configuration
+
+Knowledge Agent can delegate tasks to other ADK agents using the sub-agents pattern.
+
+### Basic Setup
+
+```yaml
+a2a:
+  enabled: true
+  self_name: knowledge-agent  # Used for loop prevention
+  max_call_depth: 5           # Maximum nested agent calls
+
+  sub_agents:
+    - name: metrics_agent
+      description: "Query Prometheus metrics and analyze performance data"
+      endpoint: http://metrics-agent:9000
+      timeout: 30
+
+    - name: logs_agent
+      description: "Search and analyze application logs from Loki"
+      endpoint: http://logs-agent:9000
+      timeout: 30
+```
+
+### Configuration Fields
+
+**A2A Section:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable A2A integration |
+| `self_name` | string | `""` | This agent's name (for loop prevention) |
+| `max_call_depth` | int | `5` | Maximum call chain depth |
+| `sub_agents` | array | `[]` | List of remote agents |
+
+**Sub-agent Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Sub-agent identifier |
+| `description` | string | Yes | Describes capabilities (used by LLM) |
+| `endpoint` | string | Yes | Agent card source URL |
+| `timeout` | int | No | Reserved for future use (default: 30) |
+
+### How Sub-agents Work
+
+1. At startup, `remoteagent.NewA2A` creates remote agent wrappers
+2. Sub-agents are added to the LLM agent
+3. LLM automatically decides when to delegate based on descriptions
+4. Delegation uses standard A2A protocol
+
+### Complete Documentation
+
+For comprehensive A2A integration guide, see: **[docs/A2A_TOOLS.md](A2A_TOOLS.md)**
+
+---
+
 ## Best Practices
 
 ### Secrets Management

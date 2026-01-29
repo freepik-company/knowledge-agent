@@ -1,5 +1,11 @@
 package a2a
 
+// Client is a custom HTTP client for calling external A2A agents.
+//
+// DEPRECATED: Use remoteagent.NewA2A instead for standard A2A protocol support.
+// This client is kept for backwards compatibility with the legacy a2a.agents config.
+// New integrations should use a2a.sub_agents config which creates true A2A sub-agents.
+
 import (
 	"bytes"
 	"context"

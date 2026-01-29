@@ -274,6 +274,32 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		)
 	}
 
+	// 4. Translate user IDs to names for better context
+	// Extract all unique user IDs from messages
+	userIDs := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		if msg.User != "" {
+			userIDs = append(userIDs, msg.User)
+		}
+	}
+
+	// Fetch user names in batch
+	userNames := h.client.GetUserNames(userIDs)
+
+	// Update message data with resolved user names
+	for i := range messageData {
+		if userID, ok := messageData[i]["user"].(string); ok && userID != "" {
+			if displayName, found := userNames[userID]; found {
+				messageData[i]["user_name"] = displayName
+			}
+		}
+	}
+
+	log.Debugw("Thread user names resolved",
+		"total_users", len(userIDs),
+		"resolved", len(userNames),
+	)
+
 	queryRequest := map[string]any{
 		"question":       message,
 		"thread_ts":      threadTS,

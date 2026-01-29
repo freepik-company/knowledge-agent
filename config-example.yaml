@@ -253,3 +253,62 @@ mcp:
     #     type: "bearer"
     #     token_env: "GITHUB_PAT"
     #   timeout: 30
+
+# ============================================================================
+# ADK Launcher Configuration
+# ============================================================================
+# The ADK Launcher exposes the standard A2A (Agent-to-Agent) protocol
+# This allows other ADK agents to call this agent using the A2A standard
+#
+# Architecture when enabled:
+#   - Port 8081: Custom HTTP server (existing /api/query, /api/ingest-thread, auth, etc.)
+#   - Port 8082: ADK Launcher (A2A protocol, WebUI, agent card)
+#
+# Authentication: The launcher uses the same a2a_api_keys as the custom HTTP server
+# If a2a_api_keys is configured, all A2A requests require X-API-Key header
+# If a2a_api_keys is empty, the launcher runs in open mode (no auth)
+launcher:
+  enabled: true
+  port: 8082
+  enable_webui: true
+  # Public URL for this agent (used for A2A discovery)
+  # Set this when deploying behind a reverse proxy or load balancer
+  # agent_url: https://knowledge-agent.example.com
+
+# ============================================================================
+# Agent-to-Agent (A2A) Integration
+# ============================================================================
+# A2A enables this agent to call other agents as sub-agents
+# Using Google ADK's remoteagent.NewA2A for standard A2A protocol support
+a2a:
+  enabled: false
+  self_name: knowledge-agent  # Used for loop prevention
+
+  # Maximum call chain depth (prevents infinite loops)
+  max_call_depth: 5
+
+  # Sub-agents: Remote ADK agents that this agent can delegate tasks to
+  # These are integrated using remoteagent.NewA2A and appear as sub-agents
+  # The LLM will automatically decide when to delegate to each sub-agent
+  sub_agents: []
+    # Example: Metrics agent for querying Prometheus
+    # - name: metrics_agent
+    #   description: "Query Prometheus metrics and analyze performance data"
+    #   endpoint: http://metrics-agent:9000  # Agent card source URL
+    #   timeout: 30
+
+    # Example: Logs agent for searching application logs
+    # - name: logs_agent
+    #   description: "Search and analyze application logs from Loki"
+    #   endpoint: http://logs-agent:9000
+    #   timeout: 30
+
+    # Example: Alerts agent for managing PagerDuty incidents
+    # - name: alerts_agent
+    #   description: "Get current alerts, acknowledge incidents, and manage on-call schedules"
+    #   endpoint: http://alerts-agent:9000
+    #   timeout: 30
+
+  # DEPRECATED: Legacy agents config (use sub_agents instead)
+  # This config creates custom HTTP tools, not standard A2A sub-agents
+  # agents: []

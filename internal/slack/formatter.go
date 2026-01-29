@@ -18,10 +18,12 @@ func FormatMessageForSlack(text string) string {
 	boldRegex := regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
 	text = boldRegex.ReplaceAllString(text, "*$1*")
 
-	// Convert _italic_ or *italic* to _italic_ (Slack uses underscore for italic)
-	// But preserve already converted bold
-	italicRegex := regexp.MustCompile(`(?:^|[^*])_([^_\n]+)_(?:$|[^*])`)
-	text = italicRegex.ReplaceAllString(text, "_$1_")
+	// Note: We don't convert italic syntax because:
+	// 1. Slack already supports _italic_ with underscores
+	// 2. The previous regex was consuming boundary characters and losing text
+	// 3. Code with underscores like `fotosgratis.re_og` was being corrupted
+	// If Claude uses *italic* (single asterisks), Slack interprets it as bold,
+	// but that's acceptable since we instructed Claude to use underscores for italic
 
 	// Convert code blocks ```code``` to `code` (Slack doesn't support triple backticks well in basic messages)
 	codeBlockRegex := regexp.MustCompile("```[\\s\\S]*?```")

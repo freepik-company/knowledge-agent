@@ -10,7 +10,11 @@ func (a *Agent) buildThreadContext(req IngestRequest) string {
 	var builder strings.Builder
 
 	for i, msg := range req.Messages {
-		user := getStringFromMap(msg, "user")
+		// Prefer user_name (resolved display name) over raw user ID
+		user := getStringFromMap(msg, "user_name")
+		if user == "" {
+			user = getStringFromMap(msg, "user")
+		}
 		text := getStringFromMap(msg, "text")
 		ts := getStringFromMap(msg, "ts")
 
@@ -19,7 +23,7 @@ func (a *Agent) buildThreadContext(req IngestRequest) string {
 		}
 
 		// Format: [timestamp] User: message
-		fmt.Fprintf(&builder, "[%d] User %s: %s\n", i+1, user, text)
+		fmt.Fprintf(&builder, "[%d] %s: %s\n", i+1, user, text)
 
 		// Add metadata if available
 		if ts != "" {
@@ -35,7 +39,11 @@ func (a *Agent) buildThreadContextFromMessages(messages []map[string]any) string
 	var builder strings.Builder
 
 	for i, msg := range messages {
-		user := getStringFromMap(msg, "user")
+		// Prefer user_name (resolved display name) over raw user ID
+		user := getStringFromMap(msg, "user_name")
+		if user == "" {
+			user = getStringFromMap(msg, "user")
+		}
 		text := getStringFromMap(msg, "text")
 		ts := getStringFromMap(msg, "ts")
 
@@ -44,7 +52,7 @@ func (a *Agent) buildThreadContextFromMessages(messages []map[string]any) string
 		}
 
 		// Format: [timestamp] User: message
-		fmt.Fprintf(&builder, "[%d] User %s: %s\n", i+1, user, text)
+		fmt.Fprintf(&builder, "[%d] %s: %s\n", i+1, user, text)
 
 		// Add metadata if available
 		if ts != "" {

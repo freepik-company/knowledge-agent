@@ -19,12 +19,22 @@ Complete REST API documentation for Knowledge Agent.
 
 ## Overview
 
-The Knowledge Agent exposes a REST API with four endpoints:
+Knowledge Agent exposes APIs on two ports:
+
+### Port 8081 - Custom HTTP API
 
 - **Public endpoints** (no authentication): `/health`, `/metrics`
 - **Protected endpoints** (authentication required): `/api/query`, `/api/ingest-thread`
 
 **Base URL**: `http://localhost:8081` (default)
+
+### Port 8082 - ADK Launcher (A2A Protocol)
+
+- **Discovery**: `/.well-known/agent-card.json`
+- **A2A Protocol**: `/a2a/invoke`
+- **WebUI**: `/ui/` (if enabled)
+
+**Base URL**: `http://localhost:8082` (default)
 
 **Content-Type**: `application/json`
 
@@ -462,6 +472,98 @@ curl -X POST http://localhost:8081/api/ingest-thread \
     ]
   }'
 ```
+
+---
+
+## ADK Launcher Endpoints (Port 8082)
+
+The ADK Launcher exposes standard A2A protocol endpoints.
+
+### GET /.well-known/agent-card.json
+
+Agent card for A2A discovery.
+
+**Authentication**: None (public for discovery)
+
+**Response**: `200 OK`
+
+```json
+{
+  "name": "knowledge-agent",
+  "description": "Knowledge management assistant",
+  "url": "http://localhost:8082",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false
+  }
+}
+```
+
+**Example**:
+```bash
+curl http://localhost:8082/.well-known/agent-card.json
+```
+
+---
+
+### POST /a2a/invoke
+
+A2A protocol invocation endpoint.
+
+**Authentication**: Required (if `a2a_api_keys` configured)
+
+**Request Headers**:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | Must be `application/json` |
+| `X-API-Key` | Conditional | API key for A2A access |
+
+**Request Body**:
+
+```json
+{
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [
+        {"text": "What is our deployment process?"}
+      ]
+    }
+  }
+}
+```
+
+**Response**: A2A protocol response (streaming or non-streaming)
+
+**Example**:
+```bash
+curl -X POST http://localhost:8082/a2a/invoke \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"text": "What is our deployment process?"}]
+      }
+    }
+  }'
+```
+
+---
+
+### GET /ui/
+
+WebUI for testing and debugging (if `launcher.enable_webui: true`).
+
+**Authentication**: None (for development use)
+
+Opens an interactive chat interface to test the agent.
+
+**Example**: Open `http://localhost:8082/ui/` in a browser.
 
 ---
 

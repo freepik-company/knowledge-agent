@@ -190,17 +190,32 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		log.Debug("MCP integration disabled")
 	}
 
-	// 8b. Create A2A toolsets (if enabled)
+	// 8b. Create A2A sub-agents using remoteagent (if enabled)
+	var subAgents []agent.Agent
 	var a2aToolsets []tool.Toolset
 	if cfg.A2A.Enabled {
 		log.Infow("A2A integration enabled",
 			"self_name", cfg.A2A.SelfName,
-			"agents", len(cfg.A2A.Agents),
+			"sub_agents", len(cfg.A2A.SubAgents),
+			"legacy_agents", len(cfg.A2A.Agents),
 		)
-		a2aToolsets, err = a2a.CreateA2AToolsets(&cfg.A2A)
-		if err != nil {
-			// Graceful degradation: log warning but don't fail agent startup
-			log.Warnw("Failed to create A2A toolsets", "error", err)
+
+		// New: Create sub-agents using remoteagent.NewA2A
+		if len(cfg.A2A.SubAgents) > 0 {
+			subAgents, err = a2a.CreateSubAgents(&cfg.A2A)
+			if err != nil {
+				// Graceful degradation: log warning but don't fail agent startup
+				log.Warnw("Failed to create A2A sub-agents", "error", err)
+			}
+		}
+
+		// Legacy: Create A2A toolsets (DEPRECATED - for backwards compatibility)
+		if len(cfg.A2A.Agents) > 0 {
+			log.Warn("Using deprecated a2a.agents config - migrate to a2a.sub_agents")
+			a2aToolsets, err = a2a.CreateA2AToolsets(&cfg.A2A)
+			if err != nil {
+				log.Warnw("Failed to create legacy A2A toolsets", "error", err)
+			}
 		}
 	} else {
 		log.Debug("A2A integration disabled")
@@ -248,6 +263,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		Description: "An intelligent assistant that helps teams build and maintain their institutional knowledge base by ingesting and organizing conversation threads.",
 		Instruction: systemPromptWithPermissions,
 		Toolsets:    toolsets,
+		SubAgents:   subAgents, // A2A remote agents via remoteagent.NewA2A
 	})
 	if err != nil {
 		memoryService.Close()
@@ -336,6 +352,21 @@ func (a *Agent) Close() error {
 
 	log.Info("Agent resources closed successfully")
 	return nil
+}
+
+// GetLLMAgent returns the underlying LLM agent for use with the ADK launcher
+func (a *Agent) GetLLMAgent() agent.Agent {
+	return a.llmAgent
+}
+
+// GetSessionService returns the session service for use with the ADK launcher
+func (a *Agent) GetSessionService() *sessionredis.RedisSessionService {
+	return a.sessionService
+}
+
+// GetConfig returns the agent configuration
+func (a *Agent) GetConfig() *config.Config {
+	return a.config
 }
 
 // IngestThread handles thread ingestion using ADK agent

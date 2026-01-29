@@ -1,5 +1,10 @@
 package a2a
 
+// Authenticator implementations for A2A HTTP client.
+//
+// DEPRECATED: Use remoteagent.NewA2A instead for standard A2A protocol support.
+// These authenticators are kept for backwards compatibility with the legacy a2a.agents config.
+
 import (
 	"context"
 	"encoding/json"

@@ -86,10 +86,32 @@ make dev
 ## Architecture
 
 ```
-Slack → Webhook Bridge (:8080) → Agent (:8081) → Claude + ADK
-                                              ↓
-                                    PostgreSQL + Redis
+                         knowledge-agent
+                               │
+         ┌─────────────────────┼─────────────────────┐
+         │                     │                     │
+    Port 8080             Port 8081             Port 8082
+  (Slack Bridge)        (Custom HTTP)        (ADK Launcher)
+         │                     │                     │
+    Slack Events         /api/query            A2A Protocol
+    Socket/Webhook      /api/ingest           /.well-known/agent-card.json
+                        /health               /ui/ (WebUI)
+                        /metrics              /a2a/invoke
+         │                     │                     │
+         └─────────────────────┼─────────────────────┘
+                               │
+                         ADK LLM Agent
+                      (Claude + SubAgents)
+                               │
+                    ┌──────────┴──────────┐
+                    │                     │
+              PostgreSQL+pgvector      Redis
+                (memories)           (sessions)
 ```
+
+**Dual-Port Design:**
+- **Port 8081**: Custom HTTP API with authentication, rate limiting, Slack integration
+- **Port 8082**: Standard A2A protocol for inter-agent communication (ADK Launcher)
 
 ## Commands
 
@@ -211,6 +233,37 @@ curl -X POST http://localhost:8081/api/query \
 ```
 
 See `docs/A2A.md` for complete integration guide and `docs/SECURITY.md` for detailed security configuration.
+
+## ADK Launcher & A2A Protocol
+
+Knowledge Agent exposes the standard **A2A (Agent-to-Agent) protocol** via Google ADK Launcher on port 8082:
+
+```yaml
+# config.yaml
+launcher:
+  enabled: true
+  port: 8082
+  enable_webui: true  # Access WebUI at http://localhost:8082/ui/
+```
+
+**What you get:**
+- ✅ Standard A2A protocol endpoints (`/a2a/invoke`)
+- ✅ Agent card discovery (`/.well-known/agent-card.json`)
+- ✅ WebUI for testing and debugging
+- ✅ Compatible with other ADK agents (metrics-agent, logs-agent, etc.)
+
+**Sub-agents** - Call other ADK agents as sub-agents:
+
+```yaml
+a2a:
+  enabled: true
+  sub_agents:
+    - name: metrics_agent
+      description: "Query Prometheus metrics"
+      endpoint: http://metrics-agent:9000
+```
+
+See `docs/A2A_TOOLS.md` for complete A2A integration guide.
 
 ## MCP Integration (Model Context Protocol)
 

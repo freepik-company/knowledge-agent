@@ -428,6 +428,52 @@ func (c *Client) GetUserInfo(userID string) (*User, error) {
 	}, nil
 }
 
+// GetUserNames fetches display names for multiple user IDs
+// Returns a map of userID -> displayName (uses RealName if available, falls back to Name)
+// Errors are logged but don't stop processing - missing users will not be in the map
+func (c *Client) GetUserNames(userIDs []string) map[string]string {
+	log := logger.Get()
+	result := make(map[string]string)
+
+	// Deduplicate user IDs
+	seen := make(map[string]bool)
+	uniqueIDs := make([]string, 0, len(userIDs))
+	for _, id := range userIDs {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			uniqueIDs = append(uniqueIDs, id)
+		}
+	}
+
+	for _, userID := range uniqueIDs {
+		user, err := c.api.GetUserInfo(userID)
+		if err != nil {
+			log.Debugw("Failed to get user info, using ID",
+				"user_id", userID,
+				"error", err,
+			)
+			continue
+		}
+
+		// Prefer RealName, fall back to Name, then to ID
+		displayName := user.RealName
+		if displayName == "" {
+			displayName = user.Name
+		}
+		if displayName == "" {
+			displayName = userID
+		}
+		result[userID] = displayName
+	}
+
+	log.Debugw("Fetched user names",
+		"requested", len(uniqueIDs),
+		"resolved", len(result),
+	)
+
+	return result
+}
+
 // GetChannelInfo retrieves channel information
 func (c *Client) GetChannelInfo(channelID string) (*slack.Channel, error) {
 	channel, err := c.api.GetConversationInfo(&slack.GetConversationInfoInput{

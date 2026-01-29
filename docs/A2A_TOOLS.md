@@ -1,160 +1,186 @@
-# A2A Tool Integration Guide
+# A2A Integration Guide
 
-This document describes how to configure Knowledge Agent to call tools exposed by other agents using Agent-to-Agent (A2A) communication.
+This document describes how to configure Knowledge Agent for Agent-to-Agent (A2A) communication using the Google ADK standard.
 
 ## Overview
 
-A2A tool integration allows Knowledge Agent to leverage capabilities from other agents in your infrastructure. For example:
-- Call a **logs-agent** to search application logs
-- Query a **metrics-agent** for performance data
-- Page on-call via an **oncall-agent**
+Knowledge Agent supports A2A in two ways:
 
-The LLM intelligently decides when to use these tools based on user queries, just like it uses the built-in `search_memory` and `save_to_memory` tools.
+1. **Inbound A2A** (Port 8082): Other agents can call this agent using the standard A2A protocol
+2. **Outbound A2A** (Sub-agents): This agent can delegate tasks to other ADK agents
 
 ## Architecture
 
 ```
-knowledge-agent                    external-agent
-     │                                  │
-     │  ┌──────────────────────────┐   │
-     │  │ A2A Toolset              │   │
-     │  │ - search_logs            │───│── HTTP POST {path}
-     │  │ - get_error_context      │   │   (default: /query)
-     │  └──────────────────────────┘   │   + Authentication
-     │                                  │   + Loop Prevention Headers
-     │  Headers propagated:            │
-     │  X-Request-ID: uuid             │
-     │  X-Call-Chain: knowledge-agent  │
-     │  X-Call-Depth: 1                │
+                    External ADK Agents
+                           │
+                           │ A2A Protocol
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│                   knowledge-agent                         │
+│                                                          │
+│  ┌─────────────────┐          ┌─────────────────────┐   │
+│  │  Custom HTTP    │          │   ADK Launcher      │   │
+│  │  Port 8081      │          │   Port 8082         │   │
+│  │                 │          │                     │   │
+│  │  /api/query     │          │  /.well-known/      │   │
+│  │  /api/ingest    │          │    agent-card.json  │   │
+│  │  /health        │          │  /a2a/invoke        │   │
+│  │  /metrics       │          │  /ui/ (WebUI)       │   │
+│  └────────┬────────┘          └──────────┬──────────┘   │
+│           │                              │              │
+│           └──────────────┬───────────────┘              │
+│                          │                              │
+│                    ┌─────▼─────┐                        │
+│                    │ LLM Agent │                        │
+│                    │ (Claude)  │                        │
+│                    └─────┬─────┘                        │
+│                          │                              │
+│           ┌──────────────┼──────────────┐               │
+│           │              │              │               │
+│           ▼              ▼              ▼               │
+│     ┌──────────┐  ┌──────────┐  ┌──────────┐           │
+│     │ Memory   │  │   MCP    │  │ SubAgents │           │
+│     │ Tools    │  │ Toolsets │  │ (A2A)    │           │
+│     └──────────┘  └──────────┘  └────┬─────┘           │
+│                                      │                  │
+└──────────────────────────────────────┼──────────────────┘
+                                       │
+                                       │ A2A Protocol
+                                       ▼
+                              ┌─────────────────┐
+                              │ Remote Agents   │
+                              │ (metrics, logs) │
+                              └─────────────────┘
 ```
 
-## Configuration
+## Inbound A2A (ADK Launcher)
 
-Add the `a2a` section to your `config.yaml`:
+The ADK Launcher exposes standard A2A protocol endpoints on port 8082, allowing other ADK agents to call this agent.
+
+### Configuration
 
 ```yaml
+# config.yaml
+launcher:
+  enabled: true
+  port: 8082
+  enable_webui: true
+  # Public URL for agent discovery (optional, for production)
+  # agent_url: https://knowledge-agent.example.com
+```
+
+### Exposed Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/agent-card.json` | Agent card for discovery |
+| `POST /a2a/invoke` | A2A protocol invocation |
+| `GET /ui/` | WebUI for testing (if enabled) |
+
+### Authentication
+
+The launcher uses the same `a2a_api_keys` configuration as the custom HTTP server:
+
+```yaml
+# config.yaml
+a2a_api_keys:
+  root-agent: ${A2A_ROOT_AGENT_TOKEN}
+  metrics-agent: ${A2A_METRICS_TOKEN}
+```
+
+**How it works:**
+- If `a2a_api_keys` is configured → All A2A requests require `X-API-Key` header
+- If `a2a_api_keys` is empty → Open mode (no authentication)
+
+**Request example:**
+```bash
+curl -X POST http://localhost:8082/a2a/invoke \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"method": "message/send", "params": {...}}'
+```
+
+### Agent Card Discovery
+
+Other agents can discover this agent's capabilities:
+
+```bash
+curl http://localhost:8082/.well-known/agent-card.json
+```
+
+## Outbound A2A (Sub-agents)
+
+Knowledge Agent can delegate tasks to other ADK agents using the sub-agents pattern. Sub-agents are integrated using `remoteagent.NewA2A` from Google ADK.
+
+### Configuration
+
+```yaml
+# config.yaml
 a2a:
   enabled: true
-  self_name: "knowledge-agent"  # This agent's identifier for loop prevention
-  max_call_depth: 5             # Maximum nested agent calls (prevents infinite loops)
+  self_name: knowledge-agent  # Used for loop prevention
 
-  agents:
-    # Agent with API Key authentication
-    - name: "logs-agent"
-      description: "Search and analyze application logs"
-      endpoint: "http://logs-agent:8081"
-      path: "/query"            # API path (default: /query, use /api/query for knowledge-agent)
-      timeout: 30
-      auth:
-        type: "api_key"
-        header: "X-API-Key"
-        key_env: "LOGS_AGENT_API_KEY"
-      tools:
-        - name: "search_logs"
-          description: "Search logs by query, time range, and severity level"
-        - name: "get_error_context"
-          description: "Get surrounding log context for a specific error"
+  # Maximum call chain depth (prevents infinite loops)
+  max_call_depth: 5
 
-    # Agent with Bearer token authentication
-    - name: "metrics-agent"
-      description: "Query metrics from Prometheus/Grafana"
-      endpoint: "http://metrics-agent:8081"
-      # path: "/query"          # Defaults to /query (standard ADK path)
+  # Sub-agents: Remote ADK agents that this agent can delegate to
+  sub_agents:
+    - name: metrics_agent
+      description: "Query Prometheus metrics and analyze performance data"
+      endpoint: http://metrics-agent:9000  # Agent card source URL
       timeout: 30
-      auth:
-        type: "bearer"
-        token_env: "METRICS_AGENT_TOKEN"
-      tools:
-        - name: "query_metrics"
-          description: "Query time-series metrics with PromQL"
 
-    # Agent with OAuth2 (Keycloak) authentication
-    - name: "oncall-agent"
-      description: "Manage on-call schedules and paging"
-      endpoint: "http://oncall-agent:8081"
+    - name: logs_agent
+      description: "Search and analyze application logs from Loki"
+      endpoint: http://logs-agent:9000
       timeout: 30
-      auth:
-        type: "oauth2"
-        token_url: "https://keycloak.example.com/realms/agents/protocol/openid-connect/token"
-        client_id_env: "ONCALL_CLIENT_ID"
-        client_secret_env: "ONCALL_CLIENT_SECRET"
-        scopes: ["agent:call"]
-      tools:
-        - name: "get_oncall_schedule"
-          description: "Get the current on-call schedule"
-        - name: "page_oncall"
-          description: "Send an alert to the current on-call person"
 
-    # Calling another knowledge-agent instance (uses /api/query)
-    - name: "knowledge-agent-prod"
-      description: "Production knowledge base"
-      endpoint: "http://knowledge-agent-prod:8081"
-      path: "/api/query"        # knowledge-agent uses /api/query
+    - name: alerts_agent
+      description: "Get current alerts and manage on-call schedules"
+      endpoint: http://alerts-agent:9000
       timeout: 30
-      auth:
-        type: "api_key"
-        header: "X-API-Key"
-        key_env: "KA_PROD_API_KEY"
-      tools:
-        - name: "search_prod_knowledge"
-          description: "Search production knowledge base"
-
-    # Agent without authentication (internal/trusted network)
-    - name: "internal-agent"
-      description: "Internal service health checks"
-      endpoint: "http://internal-agent:8081"
-      timeout: 30
-      auth:
-        type: "none"
-      tools:
-        - name: "health_check"
-          description: "Check health of internal services"
 ```
 
-## Authentication Types
+### How Sub-agents Work
 
-| Type | Description | Required Config |
-|------|-------------|-----------------|
-| `api_key` | Custom header with API key | `header`, `key_env` |
-| `bearer` | `Authorization: Bearer <token>` | `token_env` |
-| `oauth2` | OAuth2 client credentials flow | `token_url`, `client_id_env`, `client_secret_env`, `scopes` |
-| `none` | No authentication | - |
+1. At startup, Knowledge Agent creates remote agent wrappers using `remoteagent.NewA2A`
+2. These are added as sub-agents to the LLM agent
+3. The LLM (Claude) automatically decides when to delegate to each sub-agent
+4. Delegation uses the standard A2A protocol
 
-### API Key Authentication
+**Key characteristics:**
+- **Lazy initialization**: Agent card is fetched when first used, not at startup
+- **Graceful degradation**: If a sub-agent fails to initialize, others continue working
+- **Automatic delegation**: LLM decides based on sub-agent descriptions
 
-```yaml
-auth:
-  type: "api_key"
-  header: "X-API-Key"           # Header name (default: X-API-Key)
-  key_env: "LOGS_AGENT_API_KEY" # Environment variable with the key
+### Example Use Case
+
+User asks: "What errors happened in the payment service in the last hour?"
+
+1. LLM receives the question
+2. LLM decides to delegate to `logs_agent` based on description
+3. Knowledge Agent calls logs-agent via A2A protocol
+4. logs-agent searches logs and returns results
+5. LLM synthesizes the response for the user
+
 ```
+User: What errors happened in the payment service in the last hour?
 
-### Bearer Token Authentication
+Agent: [Delegates to logs_agent]
 
-```yaml
-auth:
-  type: "bearer"
-  token_env: "METRICS_AGENT_TOKEN" # Environment variable with the token
+logs_agent: Found 15 errors in the payment service:
+- 10x "Payment gateway timeout" (10:00-10:30)
+- 3x "Invalid card number" (10:15-10:45)
+- 2x "Insufficient funds" (10:30-11:00)
+
+Agent: In the last hour, there were 15 errors in the payment service:
+- *10 payment gateway timeouts* between 10:00-10:30 (likely network issue)
+- *3 invalid card number errors* (user input validation)
+- *2 insufficient funds errors* (expected business errors)
+
+The gateway timeouts cluster suggests a potential infrastructure issue around 10:15.
 ```
-
-### OAuth2 Client Credentials
-
-```yaml
-auth:
-  type: "oauth2"
-  token_url: "https://keycloak.example.com/realms/agents/protocol/openid-connect/token"
-  client_id_env: "ONCALL_CLIENT_ID"
-  client_secret_env: "ONCALL_CLIENT_SECRET"
-  scopes: ["agent:call", "read:schedule"]  # Optional scopes
-```
-
-> **⚠️ Security Requirement**: The `token_url` **must use HTTPS**. HTTP URLs are rejected to protect OAuth2 credentials in transit.
-
-The OAuth2 implementation:
-- Uses client credentials grant type
-- **Requires HTTPS** for token endpoint (HTTP is rejected)
-- Caches tokens until 30 seconds before expiry
-- Automatically refreshes expired tokens
 
 ## Loop Prevention
 
@@ -209,110 +235,27 @@ A2A endpoints are validated before use to prevent Server-Side Request Forgery at
 
 > **Note**: A2A is designed for internal agent communication. Internal/private IPs are intentionally allowed since agents typically communicate within the same network.
 
-**Example blocked configuration:**
-```yaml
-# ❌ This will fail validation
-agents:
-  - name: "malicious"
-    endpoint: "http://169.254.169.254/latest/meta-data"
-```
-
-**Error message:**
-```
-failed to create A2A toolset: invalid endpoint for agent malicious: access to cloud metadata service '169.254.169.254' is not allowed
-```
-
-## Environment Variables
-
-Set these in your `.env` file or deployment configuration:
-
-```bash
-# Generate secure values - DO NOT use placeholders in production
-
-# API Key authentication
-LOGS_AGENT_API_KEY=$(openssl rand -hex 32)
-
-# Bearer token authentication
-METRICS_AGENT_TOKEN=$(openssl rand -hex 32)
-
-# OAuth2 authentication (obtain from your IdP admin console)
-ONCALL_CLIENT_ID=<from-keycloak-admin-console>
-ONCALL_CLIENT_SECRET=<from-keycloak-admin-console>
-```
-
-> **⚠️ Never commit real credentials**. Use environment variables or secret management (Vault, AWS Secrets Manager, Kubernetes Secrets, etc.).
-
-## Tool Execution
-
-When the LLM decides to use an A2A tool:
-
-1. The tool receives the query from the LLM
-2. Knowledge Agent sends an HTTP POST to the remote agent's configured path (default: `/query`)
-3. The request includes:
-   - Authentication headers (based on config)
-   - Loop prevention headers
-   - The query as JSON body
-4. The remote agent processes the query
-5. The response is returned to the LLM for further processing
-
-### API Path Configuration
-
-| Agent Type | Default Path | Config |
-|------------|--------------|--------|
-| ADK-based agents | `/query` | Default, no config needed |
-| knowledge-agent | `/api/query` | Set `path: "/api/query"` |
-| Custom agents | Any | Set `path: "/your/path"` |
-
-### Request Format
-
-```json
-{
-  "question": "Search for errors in the last hour",
-  "metadata": {
-    "tool_name": "search_logs"
-  }
-}
-```
-
-### Response Format
-
-```json
-{
-  "success": true,
-  "answer": "Found 15 errors in the last hour..."
-}
-```
-
 ## Graceful Degradation
 
-A2A toolset creation follows the same graceful degradation pattern as MCP:
+Sub-agent creation follows a graceful degradation pattern:
 
-- If an agent fails to initialize (e.g., missing credentials), it's skipped
-- Other agents continue to work
+- If a sub-agent fails to initialize (e.g., endpoint unreachable), it's skipped
+- Other sub-agents continue to work
 - Warnings are logged but the agent starts successfully
 
 ```log
 # Example log output
-WARN  Failed to create A2A toolset, skipping  agent=oncall-agent error="OAuth2 client ID env var not set"
-INFO  A2A toolsets created successfully  count=2
+WARN  Failed to create remote agent, skipping  agent=oncall-agent error="connection refused"
+INFO  A2A sub-agents created successfully  count=2
 ```
 
 ## Troubleshooting
 
-### Agent not receiving requests
+### Sub-agent not receiving requests
 
 1. Check that `a2a.enabled: true` in config
 2. Verify `endpoint` is correct and reachable
-3. Check authentication configuration
-
-### 401 Unauthorized errors
-
-1. Verify environment variables are set:
-   ```bash
-   echo $LOGS_AGENT_API_KEY
-   ```
-2. Check that the header name matches what the remote agent expects
-3. For OAuth2, verify token URL is accessible
+3. Check that the remote agent exposes `/.well-known/agent-card.json`
 
 ### 508 Loop Detected errors
 
@@ -326,45 +269,58 @@ If unexpected, check:
 
 ### Timeouts
 
-1. Increase `timeout` in agent config
+1. Increase `timeout` in sub-agent config
 2. Check network connectivity to the remote agent
 3. Verify the remote agent is responding in time
 
-### Missing tools in LLM
+> **Note**: The `timeout` field in sub-agent configuration is reserved for future use. Currently, `remoteagent.NewA2A` manages timeouts internally.
 
-1. Check logs for "A2A toolset created" messages
-2. Verify `tools` array in config has entries with `name` and `description`
+### LLM not using sub-agents
+
+1. Check logs for "A2A sub-agents created successfully" message
+2. Verify sub-agent `description` clearly describes its capabilities
 3. Restart the agent to reload configuration
 
-## Example Use Case
+## Migration from Legacy A2A Tools
 
-User asks: "What errors happened in the payment service in the last hour?"
+If you were using the legacy `a2a.agents` configuration with custom HTTP tools, migrate to `a2a.sub_agents`:
 
-1. LLM decides to use `search_logs` tool from `logs-agent`
-2. Knowledge Agent calls logs-agent with the query
-3. logs-agent searches logs and returns results
-4. LLM synthesizes the response for the user
-
+**Before (legacy):**
+```yaml
+a2a:
+  enabled: true
+  agents:
+    - name: "logs-agent"
+      endpoint: "http://logs-agent:8081"
+      path: "/query"
+      auth:
+        type: "api_key"
+        header: "X-API-Key"
+        key_env: "LOGS_AGENT_API_KEY"
+      tools:
+        - name: "search_logs"
+          description: "Search logs by query"
 ```
-User: What errors happened in the payment service in the last hour?
 
-Agent: [Calls search_logs tool with query]
-
-logs-agent: Found 15 errors in the payment service:
-- 10x "Payment gateway timeout" (10:00-10:30)
-- 3x "Invalid card number" (10:15-10:45)
-- 2x "Insufficient funds" (10:30-11:00)
-
-Agent: In the last hour, there were 15 errors in the payment service:
-- **10 payment gateway timeouts** between 10:00-10:30 (likely network issue)
-- **3 invalid card number errors** (user input validation)
-- **2 insufficient funds errors** (expected business errors)
-
-The gateway timeouts cluster suggests a potential infrastructure issue around 10:15.
+**After (sub-agents):**
+```yaml
+a2a:
+  enabled: true
+  sub_agents:
+    - name: logs_agent
+      description: "Search and analyze application logs"
+      endpoint: http://logs-agent:9000  # Agent card URL
+      timeout: 30
 ```
+
+**Key differences:**
+- Sub-agents use standard A2A protocol (not custom HTTP)
+- No need to define individual tools (discovered from agent card)
+- No need to configure authentication (handled by A2A protocol)
+- LLM decides when to delegate (not explicit tool calls)
 
 ## Related Documentation
 
 - [SECURITY.md](SECURITY.md) - Authentication, permissions, and SSRF protection
 - [CONFIGURATION.md](CONFIGURATION.md) - Full configuration reference
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) - Similar pattern for MCP tools
+- [API_REFERENCE.md](API_REFERENCE.md) - REST API documentation

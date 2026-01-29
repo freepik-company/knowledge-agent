@@ -22,8 +22,17 @@ type Config struct {
 	Prompt      PromptConfig      `yaml:"prompt" mapstructure:"prompt"`
 	Langfuse    LangfuseConfig    `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP         MCPConfig         `yaml:"mcp" mapstructure:"mcp"`
-	A2A         A2AConfig         `yaml:"a2a" mapstructure:"a2a"` // Agent-to-Agent tool integration
+	A2A         A2AConfig         `yaml:"a2a" mapstructure:"a2a"`               // Agent-to-Agent tool integration
+	Launcher    LauncherConfig    `yaml:"launcher" mapstructure:"launcher"`     // ADK Launcher configuration
 	APIKeys     map[string]string `yaml:"a2a_api_keys" mapstructure:"a2a_api_keys"` // Maps client ID to secret token for external A2A access (e.g., "root-agent" -> "ka_secret_abc123")
+}
+
+// LauncherConfig holds ADK Launcher configuration
+type LauncherConfig struct {
+	Enabled     bool   `yaml:"enabled" mapstructure:"enabled" envconfig:"LAUNCHER_ENABLED" default:"true"`     // Enable ADK Launcher (A2A protocol, WebUI)
+	Port        int    `yaml:"port" mapstructure:"port" envconfig:"LAUNCHER_PORT" default:"8082"`               // Port for launcher (separate from custom HTTP)
+	EnableWebUI bool   `yaml:"enable_webui" mapstructure:"enable_webui" envconfig:"LAUNCHER_WEBUI" default:"true"` // Enable WebUI interface
+	AgentURL    string `yaml:"agent_url" mapstructure:"agent_url"`                                               // Public URL for this agent (for A2A discovery)
 }
 
 // AuthConfig holds authentication configuration
@@ -91,10 +100,22 @@ type MCPAuthConfig struct {
 
 // A2AConfig holds Agent-to-Agent tool integration configuration
 type A2AConfig struct {
-	Enabled      bool             `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"` // Enable A2A tool integration
-	SelfName     string           `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
-	MaxCallDepth int              `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
-	Agents       []A2AAgentConfig `yaml:"agents" mapstructure:"agents"`                                            // List of external agents to connect to
+	Enabled      bool                `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"` // Enable A2A tool integration
+	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
+	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
+	Agents       []A2AAgentConfig    `yaml:"agents" mapstructure:"agents"`                                            // DEPRECATED: Use sub_agents instead
+	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                    // List of remote ADK agents to integrate as sub-agents
+}
+
+// A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
+type A2ASubAgentConfig struct {
+	Name        string `yaml:"name" mapstructure:"name"`               // Agent name (used in LLM instructions)
+	Description string `yaml:"description" mapstructure:"description"` // Human-readable description for LLM
+	Endpoint    string `yaml:"endpoint" mapstructure:"endpoint"`       // Agent card source URL (e.g., http://metrics-agent:9000)
+	// NOTE: Timeout is not currently supported by remoteagent.NewA2A
+	// The ADK library uses its own internal timeouts for A2A communication
+	// This field is kept for future compatibility when/if ADK adds timeout support
+	Timeout int `yaml:"timeout" mapstructure:"timeout" default:"30"` // Reserved for future use (not currently applied)
 }
 
 // A2AAgentConfig holds configuration for a single external agent
@@ -268,6 +289,21 @@ func (c *Config) Validate() error {
 		if c.A2A.MaxCallDepth <= 0 {
 			c.A2A.MaxCallDepth = 5 // Default value
 		}
+
+		// Validate sub_agents (new ADK remoteagent-based config)
+		for i, subAgent := range c.A2A.SubAgents {
+			if subAgent.Name == "" {
+				return fmt.Errorf("a2a.sub_agents[%d]: name is required", i)
+			}
+			if subAgent.Endpoint == "" {
+				return fmt.Errorf("a2a.sub_agents[%d] (%s): endpoint is required", i, subAgent.Name)
+			}
+			if subAgent.Description == "" {
+				return fmt.Errorf("a2a.sub_agents[%d] (%s): description is required", i, subAgent.Name)
+			}
+		}
+
+		// Validate legacy agents config (DEPRECATED - for backwards compatibility)
 		for i, agent := range c.A2A.Agents {
 			if agent.Name == "" {
 				return fmt.Errorf("a2a.agents[%d]: name is required", i)
@@ -316,6 +352,13 @@ func (c *Config) Validate() error {
 					return fmt.Errorf("a2a.agents[%d] (%s).tools[%d] (%s): description is required", i, agent.Name, j, tool.Name)
 				}
 			}
+		}
+	}
+
+	// Validate Launcher configuration
+	if c.Launcher.Enabled {
+		if c.Launcher.Port <= 0 {
+			c.Launcher.Port = 8082 // Default port
 		}
 	}
 

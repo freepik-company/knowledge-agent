@@ -69,7 +69,33 @@ A2A_API_KEYS='{"root-agent":"ka_secret_abc123","external-service":"ka_secret_def
 - Secrets can be individually rotated by updating the value for that client_id
 - Client ID appears in logs, making audit trails clear without exposing secrets
 
-### 3. Slack Signature Authentication (Legacy)
+### 3. ADK Launcher Authentication (Port 8082)
+
+**Purpose**: Secure the A2A protocol endpoints on the ADK Launcher port.
+
+**Method**: API key via `X-API-Key` header (same as External A2A)
+
+**Configuration**:
+```yaml
+# Same a2a_api_keys used for both ports
+a2a_api_keys:
+  root-agent: ka_secret_abc123
+  metrics-agent: ka_secret_def456
+```
+
+**How it works**:
+1. ADK Launcher uses `CallInterceptor` to intercept A2A requests
+2. Interceptor validates `X-API-Key` header against `a2a_api_keys`
+3. If key is valid → request proceeds with authenticated caller
+4. If key is invalid → `401 Unauthorized`
+5. If `a2a_api_keys` is empty → Open mode (no authentication)
+
+**Security characteristics**:
+- Uses constant-time comparison to prevent timing attacks
+- Case-insensitive header matching (X-API-Key, x-api-key, etc.)
+- Same authentication rules as port 8081
+
+### 4. Slack Signature Authentication (Legacy)
 
 **Purpose**: Verify requests come directly from Slack (when not using Slack Bridge).
 
@@ -85,9 +111,11 @@ slack:
 
 ## Authentication Flow
 
+### Port 8081 (Custom HTTP)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Request arrives at Agent                                     │
+│ Request arrives at Agent (Port 8081)                         │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
@@ -127,6 +155,43 @@ slack:
                                    │ 401  │  │ ALLOW as    │
                                    │      │  │ unauthenticated │
                                    └──────┘  └─────────────┘
+```
+
+### Port 8082 (ADK Launcher)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ A2A Request arrives at Launcher (Port 8082)                  │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+         ┌───────────────────────────────┐
+         │ a2a_api_keys configured?      │
+         └───────────┬───────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        │ YES                     │ NO (empty)
+        ▼                         ▼
+┌──────────────────────┐    ┌─────────────────────┐
+│ Has X-API-Key header?│    │ ALLOW               │
+└────┬─────────────────┘    │ (open mode)         │
+     │                      └─────────────────────┘
+     │
+┌────┴────┐
+│ YES     │ NO
+▼         ▼
+┌─────────────────┐  ┌─────────────────────┐
+│ Key in APIKeys? │  │ 401 Unauthorized:   │
+│ (constant-time) │  │ missing X-API-Key   │
+└────┬────────────┘  └─────────────────────┘
+     │
+┌────┴────┐
+│ YES     │ NO
+▼         ▼
+┌─────────┐  ┌─────────────────────┐
+│ ALLOW   │  │ 401 Unauthorized:   │
+│         │  │ invalid API key     │
+└─────────┘  └─────────────────────┘
 ```
 
 ## Security Modes

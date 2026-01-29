@@ -1,3 +1,19 @@
+// Package a2a provides Agent-to-Agent integration capabilities.
+//
+// ARCHITECTURE:
+//
+// There are two ways to integrate with external agents:
+//
+// 1. Sub-Agents (RECOMMENDED): Use remoteagent.NewA2A from Google ADK.
+//    Configure via a2a.sub_agents in config.yaml.
+//    Creates true A2A sub-agents with standard protocol support.
+//    See subagents.go for implementation.
+//
+// 2. Legacy Toolsets (DEPRECATED): Custom HTTP tools.
+//    Configure via a2a.agents in config.yaml.
+//    Creates custom tools that call external HTTP endpoints.
+//    Kept for backwards compatibility only.
+//    See toolset.go, client.go, auth.go for implementation.
 package a2a
 
 import (
@@ -12,6 +28,7 @@ import (
 )
 
 // Toolset implements tool.Toolset for A2A tools
+// DEPRECATED: Use CreateSubAgents instead for standard A2A protocol support
 type Toolset struct {
 	agentName   string
 	description string
@@ -143,6 +160,9 @@ func (ts *Toolset) createTool(toolCfg config.A2AToolConfig) (tool.Tool, error) {
 
 // CreateA2AToolsets creates all A2A toolsets from configuration
 // Returns toolsets and any errors encountered (uses graceful degradation)
+//
+// DEPRECATED: Use CreateSubAgents instead for standard A2A protocol support.
+// This function is kept for backwards compatibility with the legacy a2a.agents config.
 func CreateA2AToolsets(cfg *config.A2AConfig) ([]tool.Toolset, error) {
 	log := logger.Get()
 

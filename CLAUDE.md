@@ -18,14 +18,36 @@ Knowledge Agent is an intelligent AI assistant that helps teams capture and retr
   - Or do multiple things at once
 - Automatically responds in the user's language (Spanish, English, etc.)
 
-**Architecture (two-service design):**
+**Architecture (hybrid design with ADK Launcher):**
 ```
-Slack (Event Subscriptions)
-  → Slack Webhook Bridge (:8080)
-    → Knowledge Agent (:8081)
-      → ADK Runner + Claude
-        → PostgreSQL+pgvector
+                    knowledge-agent
+                          │
+        ┌─────────────────┼─────────────────┐
+        │                 │                 │
+   Port 8081         Port 8082         Slack Bridge
+   (Custom HTTP)     (ADK Launcher)        (:8080)
+        │                 │                 │
+   ┌────┴────┐      ┌─────┴─────┐          │
+   │/api/query│      │/api/run   │          │
+   │/ingest   │      │/a2a/invoke│          │
+   │/health   │      │/ui/       │          │
+   │/metrics  │      │agent-card │          │
+   └─────────┘      └───────────┘          │
+        │                 │                 │
+        └────────────────┬┴─────────────────┘
+                         │
+                   Shared ADK Agent
+                   - llmagent + tools
+                   - sub-agents (A2A)
+                   - session service
+                         │
+                   PostgreSQL+pgvector
 ```
+
+**Port breakdown:**
+- **8080**: Slack Webhook Bridge (receives Slack events)
+- **8081**: Custom HTTP server (authenticated /api/query, /api/ingest-thread, /health, /metrics)
+- **8082**: ADK Launcher (A2A protocol, WebUI, agent card) - internal only, no auth
 
 ## Development Commands
 
@@ -264,7 +286,19 @@ mcp:
 
 ### A2A Tool Integration
 
-**Agent-to-Agent (A2A)** enables the agent to call tools exposed by other agents in your infrastructure.
+**Agent-to-Agent (A2A)** enables integration with other agents using the standard A2A protocol from Google ADK.
+
+**Two Integration Modes:**
+
+1. **Inbound A2A** (this agent as server): Via ADK Launcher on port 8082
+   - Other agents call `http://localhost:8082/a2a/invoke`
+   - Agent card at `/.well-known/agent-card.json`
+   - WebUI at `/ui/`
+
+2. **Outbound A2A** (calling other agents): Via Sub-Agents using `remoteagent.NewA2A`
+   - Standard A2A protocol support
+   - Automatic agent card discovery
+   - LLM decides when to delegate to sub-agents
 
 **Architecture**:
 ```
@@ -272,74 +306,118 @@ Agent Startup
   ↓
 Load A2A Config (config.yaml)
   ↓
-For each enabled agent:
-  - Create authenticator (API Key/Bearer/OAuth2/None)
-  - Create A2A client with loop prevention
-  - Create toolset with configured tools
+For each sub_agent:
+  - Create remoteagent.NewA2A(AgentCardSource: endpoint)
+  - Returns agent.Agent interface
   ↓
-LLM receives ALL tools (memory + web + MCP + A2A)
+llmagent.New(SubAgents: [...])
   ↓
-Claude intelligently selects and uses tools
+LLM sees sub-agents as delegation options
+  ↓
+"Let me ask the metrics agent about that..."
 ```
 
 **Key Components**:
-- **A2A Client** (`internal/a2a/client.go`): HTTP client for calling external agents
-- **Authenticators** (`internal/a2a/auth.go`): API Key, Bearer, OAuth2 (client credentials), None
-- **Loop Prevention** (`internal/a2a/middleware.go`): Prevents infinite loops via headers
-- **A2A Toolset** (`internal/a2a/toolset.go`): Creates ADK tools from config
+- **Sub-Agents** (`internal/a2a/subagents.go`): Creates remote agents using `remoteagent.NewA2A`
+- **Loop Prevention** (`internal/a2a/middleware.go`): Inbound loop detection via headers
+- **ADK Launcher** (`internal/launcher/launcher.go`): Exposes A2A server endpoint
 
 **Configuration** (config.yaml):
 ```yaml
+# ADK Launcher (inbound A2A)
+launcher:
+  enabled: true
+  port: 8082
+  enable_webui: true
+
+# A2A Integration (outbound)
 a2a:
   enabled: true
   self_name: "knowledge-agent"  # For loop prevention
   max_call_depth: 5
-  agents:
-    - name: "logs-agent"
-      endpoint: "http://logs-agent:8081"
+
+  # Sub-agents (RECOMMENDED): Standard A2A protocol
+  sub_agents:
+    - name: "metrics_agent"
+      description: "Query Prometheus metrics and analyze performance data"
+      endpoint: "http://metrics-agent:9000"  # Agent card source URL
       timeout: 30
-      auth:
-        type: "api_key"
-        header: "X-API-Key"
-        key_env: "LOGS_AGENT_API_KEY"
-      tools:
-        - name: "search_logs"
-          description: "Search logs by query and time range"
+
+    - name: "logs_agent"
+      description: "Search and analyze application logs"
+      endpoint: "http://logs-agent:9000"
 ```
 
-**Loop Prevention Headers**:
+**Loop Prevention Headers** (inbound requests):
 | Header | Description |
 |--------|-------------|
 | `X-Request-ID` | Unique ID for the original request |
 | `X-Call-Chain` | CSV list of agents in the chain |
 | `X-Call-Depth` | Current depth (checked against max_call_depth) |
 
-**Authentication Types**:
-| Type | Description | Config |
-|------|-------------|--------|
-| `api_key` | Custom header with API key | `header`, `key_env` |
-| `bearer` | Authorization: Bearer <token> | `token_env` |
-| `oauth2` | Client credentials flow | `token_url`, `client_id_env`, `client_secret_env`, `scopes` |
-| `none` | No authentication | - |
-
 **Graceful Degradation**:
-- Failed agents log warnings but don't prevent startup
-- Agent continues with successfully initialized A2A clients
+- Failed sub-agents log warnings but don't prevent startup
+- Agent continues with successfully initialized sub-agents
 - Similar pattern to MCP toolset creation
 
 **Files**:
+- `internal/a2a/subagents.go` - **NEW** Creates sub-agents via remoteagent.NewA2A
 - `internal/a2a/context.go` - Call chain context and headers
-- `internal/a2a/middleware.go` - Loop prevention middleware
-- `internal/a2a/auth.go` - Authentication implementations
-- `internal/a2a/client.go` - HTTP client for agent calls
-- `internal/a2a/toolset.go` - ADK toolset implementation
-- `internal/config/config.go` - A2A configuration structs
+- `internal/a2a/middleware.go` - Inbound loop prevention middleware
+- `internal/launcher/launcher.go` - ADK Launcher wrapper
+- `internal/config/config.go` - A2A and Launcher configuration structs
 - `docs/A2A_TOOLS.md` - Complete A2A guide
 
+**Legacy Files** (DEPRECATED - for backwards compatibility):
+- `internal/a2a/client.go` - Custom HTTP client (use sub_agents instead)
+- `internal/a2a/auth.go` - Authentication for legacy agents
+- `internal/a2a/toolset.go` - Creates tools from legacy config
+
 **Common Use Cases**:
-1. **Log Analysis**: "What errors happened in the payment service?"
-2. **Metrics Queries**: "Show CPU usage for the last hour"
-3. **On-Call Management**: "Who is on-call this week?"
+1. **Log Analysis**: "What errors happened in the payment service?" → delegates to logs_agent
+2. **Metrics Queries**: "Show CPU usage for the last hour" → delegates to metrics_agent
+3. **On-Call Management**: "Who is on-call this week?" → delegates to alerts_agent
+
+### ADK Launcher
+
+The ADK Launcher exposes the standard Google ADK A2A protocol, allowing other ADK agents to call this agent.
+
+**Endpoints Provided**:
+- `POST /a2a/invoke` - A2A protocol invocation
+- `GET /.well-known/agent-card.json` - Agent discovery
+- `GET /ui/` - WebUI for debugging (if enabled)
+- `POST /api/run` - REST API
+
+**Configuration**:
+```yaml
+launcher:
+  enabled: true           # Enable ADK Launcher
+  port: 8082              # Launcher port (separate from custom HTTP)
+  enable_webui: true      # Enable WebUI interface
+  agent_url: ""           # Public URL for agent card (optional)
+
+# Same API keys used for both ports (8081 and 8082)
+a2a_api_keys:
+  ka_metrics_agent: metrics-agent
+  ka_root_agent: root-agent
+```
+
+**Authentication**:
+The launcher uses the same `a2a_api_keys` configuration as the custom HTTP server.
+- If `a2a_api_keys` is configured → Authentication required via `X-API-Key` header
+- If `a2a_api_keys` is empty → Open mode (no authentication)
+
+Calling agents must include the API key header:
+```bash
+curl -X POST http://localhost:8082/a2a/invoke \
+  -H "X-API-Key: ka_metrics_agent" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "message/send", ...}'
+```
+
+**Files**:
+- `internal/launcher/launcher.go` - Launcher wrapper with AuthInterceptor
+- `cmd/knowledge-agent/main.go` - Starts launcher in parallel with custom HTTP
 
 ### Multimodal Capabilities
 
@@ -1050,6 +1128,9 @@ Environment variables (`.env.example`):
 - `REDIS_ADDR` - Redis address (default: localhost:6379)
 - `OLLAMA_BASE_URL` - Ollama API for embeddings (default: http://localhost:11434/v1)
 - `EMBEDDING_MODEL` - Default: nomic-embed-text (768 dimensions)
+- `LAUNCHER_ENABLED` - Enable ADK Launcher (default: true)
+- `LAUNCHER_PORT` - ADK Launcher port (default: 8082)
+- `LAUNCHER_WEBUI` - Enable WebUI (default: true)
 
 ### Socket Mode vs Webhook Mode
 
