@@ -35,6 +35,7 @@ type QueryResponse struct {
 type Client struct {
 	agentName     string
 	endpoint      string
+	path          string
 	timeout       time.Duration
 	authenticator Authenticator
 	selfName      string
@@ -102,9 +103,16 @@ func NewClient(agentCfg config.A2AAgentConfig, selfName string) (*Client, error)
 		timeout = 30 * time.Second
 	}
 
+	// Default path to /query if not specified (standard ADK path)
+	path := agentCfg.Path
+	if path == "" {
+		path = "/query"
+	}
+
 	log.Infow("Creating A2A client",
 		"agent", agentCfg.Name,
 		"endpoint", agentCfg.Endpoint,
+		"path", path,
 		"auth_type", agentCfg.Auth.Type,
 		"timeout", timeout,
 	)
@@ -112,6 +120,7 @@ func NewClient(agentCfg config.A2AAgentConfig, selfName string) (*Client, error)
 	return &Client{
 		agentName:     agentCfg.Name,
 		endpoint:      agentCfg.Endpoint,
+		path:          path,
 		timeout:       timeout,
 		authenticator: auth,
 		selfName:      selfName,
@@ -151,7 +160,7 @@ func (c *Client) Query(ctx context.Context, question string, metadata map[string
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/query", bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+c.path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

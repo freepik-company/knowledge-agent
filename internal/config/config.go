@@ -99,12 +99,13 @@ type A2AConfig struct {
 
 // A2AAgentConfig holds configuration for a single external agent
 type A2AAgentConfig struct {
-	Name        string           `yaml:"name" mapstructure:"name"`               // Agent name (for logging and identification)
-	Description string           `yaml:"description" mapstructure:"description"` // Human-readable description
-	Endpoint    string           `yaml:"endpoint" mapstructure:"endpoint"`       // HTTP endpoint (e.g., http://logs-agent:8081)
-	Timeout     int              `yaml:"timeout" mapstructure:"timeout" default:"30"` // Request timeout in seconds
-	Auth        A2AAuthConfig    `yaml:"auth" mapstructure:"auth"`               // Authentication configuration
-	Tools       []A2AToolConfig  `yaml:"tools" mapstructure:"tools"`             // List of tools this agent provides
+	Name        string          `yaml:"name" mapstructure:"name"`                            // Agent name (for logging and identification)
+	Description string          `yaml:"description" mapstructure:"description"`              // Human-readable description
+	Endpoint    string          `yaml:"endpoint" mapstructure:"endpoint"`                    // HTTP endpoint (e.g., http://logs-agent:8081)
+	Path        string          `yaml:"path" mapstructure:"path" default:"/query"`           // API path to call (default: /query for ADK agents, use /api/query for knowledge-agent)
+	Timeout     int             `yaml:"timeout" mapstructure:"timeout" default:"30"`         // Request timeout in seconds
+	Auth        A2AAuthConfig   `yaml:"auth" mapstructure:"auth"`                            // Authentication configuration
+	Tools       []A2AToolConfig `yaml:"tools" mapstructure:"tools"`                          // List of tools this agent provides
 }
 
 // A2AAuthConfig holds authentication configuration for an external agent

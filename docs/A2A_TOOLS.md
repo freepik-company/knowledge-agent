@@ -18,10 +18,10 @@ knowledge-agent                    external-agent
      │                                  │
      │  ┌──────────────────────────┐   │
      │  │ A2A Toolset              │   │
-     │  │ - search_logs            │───│── HTTP POST /api/query
-     │  │ - get_error_context      │   │   + Authentication
-     │  └──────────────────────────┘   │   + Loop Prevention Headers
-     │                                  │
+     │  │ - search_logs            │───│── HTTP POST {path}
+     │  │ - get_error_context      │   │   (default: /query)
+     │  └──────────────────────────┘   │   + Authentication
+     │                                  │   + Loop Prevention Headers
      │  Headers propagated:            │
      │  X-Request-ID: uuid             │
      │  X-Call-Chain: knowledge-agent  │
@@ -43,6 +43,7 @@ a2a:
     - name: "logs-agent"
       description: "Search and analyze application logs"
       endpoint: "http://logs-agent:8081"
+      path: "/query"            # API path (default: /query, use /api/query for knowledge-agent)
       timeout: 30
       auth:
         type: "api_key"
@@ -58,6 +59,7 @@ a2a:
     - name: "metrics-agent"
       description: "Query metrics from Prometheus/Grafana"
       endpoint: "http://metrics-agent:8081"
+      # path: "/query"          # Defaults to /query (standard ADK path)
       timeout: 30
       auth:
         type: "bearer"
@@ -82,6 +84,20 @@ a2a:
           description: "Get the current on-call schedule"
         - name: "page_oncall"
           description: "Send an alert to the current on-call person"
+
+    # Calling another knowledge-agent instance (uses /api/query)
+    - name: "knowledge-agent-prod"
+      description: "Production knowledge base"
+      endpoint: "http://knowledge-agent-prod:8081"
+      path: "/api/query"        # knowledge-agent uses /api/query
+      timeout: 30
+      auth:
+        type: "api_key"
+        header: "X-API-Key"
+        key_env: "KA_PROD_API_KEY"
+      tools:
+        - name: "search_prod_knowledge"
+          description: "Search production knowledge base"
 
     # Agent without authentication (internal/trusted network)
     - name: "internal-agent"
@@ -231,13 +247,21 @@ ONCALL_CLIENT_SECRET=<from-keycloak-admin-console>
 When the LLM decides to use an A2A tool:
 
 1. The tool receives the query from the LLM
-2. Knowledge Agent sends an HTTP POST to the remote agent's `/api/query` endpoint
+2. Knowledge Agent sends an HTTP POST to the remote agent's configured path (default: `/query`)
 3. The request includes:
    - Authentication headers (based on config)
    - Loop prevention headers
    - The query as JSON body
 4. The remote agent processes the query
 5. The response is returned to the LLM for further processing
+
+### API Path Configuration
+
+| Agent Type | Default Path | Config |
+|------------|--------------|--------|
+| ADK-based agents | `/query` | Default, no config needed |
+| knowledge-agent | `/api/query` | Set `path: "/api/query"` |
+| Custom agents | Any | Set `path: "/your/path"` |
 
 ### Request Format
 

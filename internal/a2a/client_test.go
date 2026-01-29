@@ -60,6 +60,73 @@ func TestNewClient_DefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestNewClient_DefaultPath(t *testing.T) {
+	cfg := config.A2AAgentConfig{
+		Name:     "test-agent",
+		Endpoint: "http://localhost:8081",
+		// Path not specified - should default to /query
+		Auth: config.A2AAuthConfig{
+			Type: "none",
+		},
+	}
+
+	client, err := NewClient(cfg, "self-agent")
+
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	if client.path != "/query" {
+		t.Errorf("expected default path '/query', got '%s'", client.path)
+	}
+}
+
+func TestNewClient_CustomPath(t *testing.T) {
+	cfg := config.A2AAgentConfig{
+		Name:     "test-agent",
+		Endpoint: "http://localhost:8081",
+		Path:     "/api/query", // Custom path
+		Auth: config.A2AAuthConfig{
+			Type: "none",
+		},
+	}
+
+	client, err := NewClient(cfg, "self-agent")
+
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	if client.path != "/api/query" {
+		t.Errorf("expected custom path '/api/query', got '%s'", client.path)
+	}
+}
+
+func TestClient_Query_CustomPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify custom path is used
+		if r.URL.Path != "/custom/endpoint" {
+			t.Errorf("expected path /custom/endpoint, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(QueryResponse{Success: true, Answer: "ok"})
+	}))
+	defer server.Close()
+
+	cfg := config.A2AAgentConfig{
+		Name:     "remote-agent",
+		Endpoint: server.URL,
+		Path:     "/custom/endpoint",
+		Timeout:  5,
+		Auth:     config.A2AAuthConfig{Type: "none"},
+	}
+
+	client, _ := NewClient(cfg, "my-agent")
+	_, err := client.Query(context.Background(), "test", nil)
+
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+}
+
 func TestClient_Query_Success(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +134,8 @@ func TestClient_Query_Success(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/query" {
-			t.Errorf("expected path /api/query, got %s", r.URL.Path)
+		if r.URL.Path != "/query" {
+			t.Errorf("expected path /query, got %s", r.URL.Path)
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("expected Content-Type application/json")
