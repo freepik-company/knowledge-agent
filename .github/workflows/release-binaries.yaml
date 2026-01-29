@@ -2,7 +2,7 @@ name: Compile into binaries
 
 on:
   release:
-    types: [created, published]
+    types: [published]
 
   workflow_dispatch:
     inputs:
