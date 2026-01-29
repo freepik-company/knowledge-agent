@@ -22,18 +22,9 @@ type Config struct {
 	Prompt          PromptConfig          `yaml:"prompt" mapstructure:"prompt"`
 	Langfuse        LangfuseConfig        `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP             MCPConfig             `yaml:"mcp" mapstructure:"mcp"`
-	A2A             A2AConfig             `yaml:"a2a" mapstructure:"a2a"`                             // Agent-to-Agent tool integration
-	Launcher        LauncherConfig        `yaml:"launcher" mapstructure:"launcher"`                   // ADK Launcher configuration
+	A2A             A2AConfig             `yaml:"a2a" mapstructure:"a2a"`                             // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
 	ResponseCleaner ResponseCleanerConfig `yaml:"response_cleaner" mapstructure:"response_cleaner"`   // Clean responses before sending to user
 	APIKeys         map[string]string     `yaml:"a2a_api_keys" mapstructure:"a2a_api_keys"`           // Maps client ID to secret token for external A2A access (e.g., "root-agent" -> "ka_secret_abc123")
-}
-
-// LauncherConfig holds ADK Launcher configuration
-type LauncherConfig struct {
-	Enabled     bool   `yaml:"enabled" mapstructure:"enabled" envconfig:"LAUNCHER_ENABLED" default:"true"`     // Enable ADK Launcher (A2A protocol, WebUI)
-	Port        int    `yaml:"port" mapstructure:"port" envconfig:"LAUNCHER_PORT" default:"8082"`               // Port for launcher (separate from custom HTTP)
-	EnableWebUI bool   `yaml:"enable_webui" mapstructure:"enable_webui" envconfig:"LAUNCHER_WEBUI" default:"true"` // Enable WebUI interface
-	AgentURL    string `yaml:"agent_url" mapstructure:"agent_url"`                                               // Public URL for this agent (for A2A discovery)
 }
 
 // ResponseCleanerConfig holds configuration for cleaning responses before sending to users
@@ -111,6 +102,7 @@ type A2AConfig struct {
 	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
 	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
 	Polling      bool                `yaml:"polling" mapstructure:"polling" default:"true"`                           // Use polling instead of streaming for sub-agents (required for large responses)
+	AgentURL     string              `yaml:"agent_url" mapstructure:"agent_url"`                                      // Public URL for this agent (for A2A discovery/agent card)
 	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                    // List of remote ADK agents to integrate as sub-agents
 }
 
@@ -179,11 +171,12 @@ type RAGConfig struct {
 
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
-	AgentPort      int `yaml:"agent_port" mapstructure:"agent_port" envconfig:"AGENT_PORT" default:"8081"`
-	SlackBotPort   int `yaml:"slack_bot_port" mapstructure:"slack_bot_port" envconfig:"SLACK_BOT_PORT" default:"8080"`
-	ReadTimeout    int `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`   // seconds
-	WriteTimeout   int `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"` // seconds (3 minutes for long operations)
-	RequestTimeout int `yaml:"request_timeout" mapstructure:"request_timeout" envconfig:"SERVER_REQUEST_TIMEOUT" default:"120"` // seconds (2 minutes for agent operations)
+	AgentPort      int      `yaml:"agent_port" mapstructure:"agent_port" envconfig:"AGENT_PORT" default:"8081"`
+	SlackBotPort   int      `yaml:"slack_bot_port" mapstructure:"slack_bot_port" envconfig:"SLACK_BOT_PORT" default:"8080"`
+	ReadTimeout    int      `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`       // seconds
+	WriteTimeout   int      `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"`   // seconds (3 minutes for long operations)
+	RequestTimeout int      `yaml:"request_timeout" mapstructure:"request_timeout" envconfig:"SERVER_REQUEST_TIMEOUT" default:"120"` // seconds (2 minutes for agent operations)
+	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                              // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
 }
 
 // LogConfig holds logging configuration
@@ -288,13 +281,6 @@ func (c *Config) Validate() error {
 			if subAgent.Description == "" {
 				return fmt.Errorf("a2a.sub_agents[%d] (%s): description is required", i, subAgent.Name)
 			}
-		}
-	}
-
-	// Validate Launcher configuration
-	if c.Launcher.Enabled {
-		if c.Launcher.Port <= 0 {
-			c.Launcher.Port = 8082 // Default port
 		}
 	}
 

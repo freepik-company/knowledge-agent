@@ -23,18 +23,10 @@ Knowledge Agent exposes APIs on two ports:
 
 ### Port 8081 - Custom HTTP API
 
-- **Public endpoints** (no authentication): `/health`, `/metrics`
-- **Protected endpoints** (authentication required): `/api/query`, `/api/ingest-thread`
+- **Public endpoints** (no authentication): `/health`, `/metrics`, `/.well-known/agent-card.json`
+- **Protected endpoints** (authentication required): `/api/query`, `/api/ingest-thread`, `/a2a/invoke`
 
 **Base URL**: `http://localhost:8081` (default)
-
-### Port 8082 - ADK Launcher (A2A Protocol)
-
-- **Discovery**: `/.well-known/agent-card.json`
-- **A2A Protocol**: `/a2a/invoke`
-- **WebUI**: `/ui/` (if enabled)
-
-**Base URL**: `http://localhost:8082` (default)
 
 **Content-Type**: `application/json`
 
@@ -475,9 +467,9 @@ curl -X POST http://localhost:8081/api/ingest-thread \
 
 ---
 
-## ADK Launcher Endpoints (Port 8082)
+## A2A Protocol Endpoints
 
-The ADK Launcher exposes standard A2A protocol endpoints.
+Standard A2A protocol endpoints (all on port 8081).
 
 ### GET /.well-known/agent-card.json
 
@@ -491,17 +483,16 @@ Agent card for A2A discovery.
 {
   "name": "knowledge-agent",
   "description": "Knowledge management assistant",
-  "url": "http://localhost:8082",
+  "url": "http://localhost:8081/a2a/invoke",
   "capabilities": {
-    "streaming": true,
-    "pushNotifications": false
+    "streaming": true
   }
 }
 ```
 
 **Example**:
 ```bash
-curl http://localhost:8082/.well-known/agent-card.json
+curl http://localhost:8081/.well-known/agent-card.json
 ```
 
 ---
@@ -539,7 +530,7 @@ A2A protocol invocation endpoint.
 
 **Example**:
 ```bash
-curl -X POST http://localhost:8082/a2a/invoke \
+curl -X POST http://localhost:8081/a2a/invoke \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -552,18 +543,6 @@ curl -X POST http://localhost:8082/a2a/invoke \
     }
   }'
 ```
-
----
-
-### GET /ui/
-
-WebUI for testing and debugging (if `launcher.enable_webui: true`).
-
-**Authentication**: None (for development use)
-
-Opens an interactive chat interface to test the agent.
-
-**Example**: Open `http://localhost:8082/ui/` in a browser.
 
 ---
 

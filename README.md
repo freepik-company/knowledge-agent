@@ -88,17 +88,18 @@ make dev
 ```
                          knowledge-agent
                                │
-         ┌─────────────────────┼─────────────────────┐
-         │                     │                     │
-    Port 8080             Port 8081             Port 8082
-  (Slack Bridge)        (Custom HTTP)        (ADK Launcher)
-         │                     │                     │
-    Slack Events         /api/query            A2A Protocol
-    Socket/Webhook      /api/ingest           /.well-known/agent-card.json
-                        /health               /ui/ (WebUI)
-                        /metrics              /a2a/invoke
-         │                     │                     │
-         └─────────────────────┼─────────────────────┘
+         ┌─────────────────────┴─────────────────────┐
+         │                                           │
+    Port 8080                                   Port 8081
+  (Slack Bridge)                            (Unified Server)
+         │                                           │
+    Slack Events                            /api/query (auth)
+    Socket/Webhook                         /api/ingest (auth)
+                                           /a2a/invoke (auth)
+                                           /.well-known/agent-card.json
+                                           /health, /metrics
+         │                                           │
+         └─────────────────────┬─────────────────────┘
                                │
                          ADK LLM Agent
                       (Claude + SubAgents)
@@ -109,9 +110,9 @@ make dev
                 (memories)           (sessions)
 ```
 
-**Dual-Port Design:**
-- **Port 8081**: Custom HTTP API with authentication, rate limiting, Slack integration
-- **Port 8082**: Standard A2A protocol for inter-agent communication (ADK Launcher)
+**Unified Server Design:**
+- **Port 8080**: Slack Bridge (events, webhooks)
+- **Port 8081**: Unified HTTP API with authentication, rate limiting, and A2A protocol
 
 ## Commands
 
@@ -234,22 +235,20 @@ curl -X POST http://localhost:8081/api/query \
 
 See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY.md` for detailed security configuration.
 
-## ADK Launcher & A2A Protocol
+## A2A Protocol (Agent-to-Agent)
 
-Knowledge Agent exposes the standard **A2A (Agent-to-Agent) protocol** via Google ADK Launcher on port 8082:
+Knowledge Agent exposes the standard **A2A (Agent-to-Agent) protocol** on the unified server (port 8081):
 
 ```yaml
 # config.yaml
-launcher:
+a2a:
   enabled: true
-  port: 8082
-  enable_webui: true  # Access WebUI at http://localhost:8082/ui/
+  agent_url: http://knowledge-agent:8081  # For agent card discovery
 ```
 
-**What you get:**
-- ✅ Standard A2A protocol endpoints (`/a2a/invoke`)
-- ✅ Agent card discovery (`/.well-known/agent-card.json`)
-- ✅ WebUI for testing and debugging
+**Endpoints (all on port 8081):**
+- ✅ `POST /a2a/invoke` - A2A protocol invocation (authenticated)
+- ✅ `GET /.well-known/agent-card.json` - Agent discovery (public)
 - ✅ Compatible with other ADK agents (metrics-agent, logs-agent, etc.)
 
 **Sub-agents** - Call other ADK agents as sub-agents:

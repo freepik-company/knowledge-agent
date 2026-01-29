@@ -69,31 +69,32 @@ A2A_API_KEYS='{"root-agent":"ka_secret_abc123","external-service":"ka_secret_def
 - Secrets can be individually rotated by updating the value for that client_id
 - Client ID appears in logs, making audit trails clear without exposing secrets
 
-### 3. ADK Launcher Authentication (Port 8082)
+### 3. A2A Protocol Authentication
 
-**Purpose**: Secure the A2A protocol endpoints on the ADK Launcher port.
+**Purpose**: Secure the A2A protocol endpoints (`/a2a/invoke`).
 
-**Method**: API key via `X-API-Key` header (same as External A2A)
+**Method**: API key via `X-API-Key` header (same as External A2A authentication)
 
 **Configuration**:
 ```yaml
-# Same a2a_api_keys used for both ports
 a2a_api_keys:
   root-agent: ka_secret_abc123
   metrics-agent: ka_secret_def456
 ```
 
 **How it works**:
-1. ADK Launcher uses `CallInterceptor` to intercept A2A requests
-2. Interceptor validates `X-API-Key` header against `a2a_api_keys`
+1. Request arrives at `/a2a/invoke`
+2. HTTP middleware validates `X-API-Key` header against `a2a_api_keys`
 3. If key is valid → request proceeds with authenticated caller
 4. If key is invalid → `401 Unauthorized`
 5. If `a2a_api_keys` is empty → Open mode (no authentication)
 
+**Note**: The agent card at `/.well-known/agent-card.json` is always public to allow agent discovery.
+
 **Security characteristics**:
 - Uses constant-time comparison to prevent timing attacks
 - Case-insensitive header matching (X-API-Key, x-api-key, etc.)
-- Same authentication rules as port 8081
+- Same authentication as `/api/*` endpoints
 
 ### 4. Slack Signature Authentication (Legacy)
 
@@ -157,42 +158,10 @@ slack:
                                    └──────┘  └─────────────┘
 ```
 
-### Port 8082 (ADK Launcher)
+### A2A Endpoint (/a2a/invoke)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ A2A Request arrives at Launcher (Port 8082)                  │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-         ┌───────────────────────────────┐
-         │ a2a_api_keys configured?      │
-         └───────────┬───────────────────┘
-                     │
-        ┌────────────┴────────────┐
-        │ YES                     │ NO (empty)
-        ▼                         ▼
-┌──────────────────────┐    ┌─────────────────────┐
-│ Has X-API-Key header?│    │ ALLOW               │
-└────┬─────────────────┘    │ (open mode)         │
-     │                      └─────────────────────┘
-     │
-┌────┴────┐
-│ YES     │ NO
-▼         ▼
-┌─────────────────┐  ┌─────────────────────┐
-│ Key in APIKeys? │  │ 401 Unauthorized:   │
-│ (constant-time) │  │ missing X-API-Key   │
-└────┬────────────┘  └─────────────────────┘
-     │
-┌────┴────┐
-│ YES     │ NO
-▼         ▼
-┌─────────┐  ┌─────────────────────┐
-│ ALLOW   │  │ 401 Unauthorized:   │
-│         │  │ invalid API key     │
-└─────────┘  └─────────────────────┘
-```
+The `/a2a/invoke` endpoint follows the same authentication flow as `/api/*` endpoints.
+The agent card at `/.well-known/agent-card.json` is always public (no auth) for agent discovery.
 
 ## Security Modes
 
@@ -437,6 +406,114 @@ spec:
 1. Verify the key exists in configuration
 2. Check for typos in API key
 3. Ensure configuration was reloaded after adding key
+
+---
+
+## Rate Limiting
+
+The Knowledge Agent implements **per-IP rate limiting** to prevent abuse and ensure fair resource usage.
+
+### Configuration
+
+Rate limiting is enabled by default with the following settings:
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Rate | 10 requests/second | Token refill rate |
+| Burst | 20 requests | Maximum burst capacity |
+| Algorithm | Token Bucket | Standard rate limiting algorithm |
+
+> **Note**: Rate and burst values are currently hardcoded. Only `trusted_proxies` can be configured.
+
+### Trusted Proxies Configuration
+
+When running behind a load balancer or reverse proxy, you must configure `trusted_proxies` to correctly identify client IPs:
+
+```yaml
+# config.yaml
+server:
+  agent_port: 8081
+  slack_bot_port: 8080
+
+  # Trust X-Forwarded-For header ONLY from these IPs/CIDRs
+  trusted_proxies:
+    - "10.0.0.0/8"       # Kubernetes/Docker networks
+    - "172.16.0.0/12"    # Private network
+    - "192.168.0.0/16"   # Private network
+    - "203.0.113.50"     # Specific proxy IP
+```
+
+### How Trusted Proxies Work
+
+1. **Request arrives** with `RemoteAddr: 10.0.0.5:12345`
+2. **Check if RemoteAddr is trusted**: Is `10.0.0.5` in `trusted_proxies`?
+3. **If trusted**: Use the **first IP** from `X-Forwarded-For` header as client IP
+4. **If NOT trusted**: Ignore `X-Forwarded-For`, use `RemoteAddr` directly
+
+This prevents **IP spoofing attacks** where an attacker sends:
+```
+X-Forwarded-For: 1.2.3.4
+```
+If the request doesn't come from a trusted proxy, the spoofed header is ignored.
+
+### Example Scenarios
+
+**Scenario 1: Direct connection (no proxy)**
+```
+RemoteAddr: 203.0.113.100:12345
+X-Forwarded-For: (none)
+trusted_proxies: []
+
+→ Rate limit by: 203.0.113.100
+```
+
+**Scenario 2: Behind trusted proxy**
+```
+RemoteAddr: 10.0.0.5:12345  (load balancer)
+X-Forwarded-For: 203.0.113.100, 10.0.0.5
+trusted_proxies: ["10.0.0.0/8"]
+
+→ Rate limit by: 203.0.113.100  (real client IP)
+```
+
+**Scenario 3: Spoofing attempt (untrusted source)**
+```
+RemoteAddr: 203.0.113.100:12345  (attacker)
+X-Forwarded-For: 1.2.3.4  (spoofed)
+trusted_proxies: ["10.0.0.0/8"]
+
+→ Rate limit by: 203.0.113.100  (spoofed header ignored)
+```
+
+### Rate Limit Response
+
+When rate limit is exceeded, the server returns:
+
+**HTTP Status**: `429 Too Many Requests`
+
+**Response Body**:
+```json
+{
+  "success": false,
+  "message": "Rate limit exceeded. Please try again later."
+}
+```
+
+### Monitoring
+
+Check logs for rate limiting events:
+
+```bash
+# Look for rate limit warnings
+grep "rate limit" logs/agent.log
+```
+
+### Security Best Practices
+
+1. **Always configure trusted_proxies** in production when behind a load balancer
+2. **Never trust X-Forwarded-For by default** - leave `trusted_proxies` empty if not using a proxy
+3. **Use specific IPs/CIDRs** rather than broad ranges when possible
+4. **Monitor rate limit hits** to detect potential attacks or misconfigured clients
 
 ---
 

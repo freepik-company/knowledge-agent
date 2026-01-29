@@ -257,32 +257,29 @@ mcp:
 # ============================================================================
 # ADK Launcher Configuration
 # ============================================================================
-# The ADK Launcher exposes the standard A2A (Agent-to-Agent) protocol
-# This allows other ADK agents to call this agent using the A2A standard
-#
-# Architecture when enabled:
-#   - Port 8081: Custom HTTP server (existing /api/query, /api/ingest-thread, auth, etc.)
-#   - Port 8082: ADK Launcher (A2A protocol, WebUI, agent card)
-#
-# Authentication: The launcher uses the same a2a_api_keys as the custom HTTP server
-# If a2a_api_keys is configured, all A2A requests require X-API-Key header
-# If a2a_api_keys is empty, the launcher runs in open mode (no auth)
-launcher:
-  enabled: true
-  port: 8082
-  enable_webui: true
-  # Public URL for this agent (used for A2A discovery)
-  # Set this when deploying behind a reverse proxy or load balancer
-  # agent_url: https://knowledge-agent.example.com
-
 # ============================================================================
 # Agent-to-Agent (A2A) Integration
 # ============================================================================
-# A2A enables this agent to call other agents as sub-agents
-# Using Google ADK's remoteagent.NewA2A for standard A2A protocol support
+# A2A protocol support (both inbound and outbound):
+#
+# INBOUND (this agent receives A2A requests):
+#   - Exposes standard A2A endpoints on the same port as custom HTTP (8081)
+#   - GET /.well-known/agent-card.json (public, for agent discovery)
+#   - POST /a2a/invoke (authenticated, uses a2a_api_keys)
+#
+# OUTBOUND (this agent calls other agents):
+#   - Uses Google ADK's remoteagent.NewA2A for standard A2A protocol
+#   - Sub-agents are configured below
+#
+# Authentication: /a2a/invoke uses the same auth as /api/* endpoints
+# If a2a_api_keys is configured, all requests require X-API-Key header
 a2a:
-  enabled: false
+  enabled: true
   self_name: knowledge-agent  # Used for loop prevention
+
+  # Public URL for this agent (used in agent card for A2A discovery)
+  # Set this when deploying behind a reverse proxy or load balancer
+  # agent_url: https://knowledge-agent.example.com
 
   # Maximum call chain depth (prevents infinite loops)
   max_call_depth: 5

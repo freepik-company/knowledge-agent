@@ -6,7 +6,7 @@ This document describes how to configure Knowledge Agent for Agent-to-Agent (A2A
 
 Knowledge Agent supports A2A in two ways:
 
-1. **Inbound A2A** (Port 8082): Other agents can call this agent using the standard A2A protocol
+1. **Inbound A2A** (Port 8081): Other agents can call this agent using the standard A2A protocol
 2. **Outbound A2A** (Sub-agents): This agent can delegate tasks to other ADK agents
 
 ## Architecture
@@ -19,68 +19,63 @@ Knowledge Agent supports A2A in two ways:
 ┌──────────────────────────────────────────────────────────┐
 │                   knowledge-agent                         │
 │                                                          │
-│  ┌─────────────────┐          ┌─────────────────────┐   │
-│  │  Custom HTTP    │          │   ADK Launcher      │   │
-│  │  Port 8081      │          │   Port 8082         │   │
-│  │                 │          │                     │   │
-│  │  /api/query     │          │  /.well-known/      │   │
-│  │  /api/ingest    │          │    agent-card.json  │   │
-│  │  /health        │          │  /a2a/invoke        │   │
-│  │  /metrics       │          │  /ui/ (WebUI)       │   │
-│  └────────┬────────┘          └──────────┬──────────┘   │
-│           │                              │              │
-│           └──────────────┬───────────────┘              │
-│                          │                              │
-│                    ┌─────▼─────┐                        │
-│                    │ LLM Agent │                        │
-│                    │ (Claude)  │                        │
-│                    └─────┬─────┘                        │
-│                          │                              │
-│           ┌──────────────┼──────────────┐               │
-│           │              │              │               │
-│           ▼              ▼              ▼               │
-│     ┌──────────┐  ┌──────────┐  ┌──────────┐           │
-│     │ Memory   │  │   MCP    │  │ SubAgents │           │
-│     │ Tools    │  │ Toolsets │  │ (A2A)    │           │
-│     └──────────┘  └──────────┘  └────┬─────┘           │
-│                                      │                  │
-└──────────────────────────────────────┼──────────────────┘
-                                       │
-                                       │ A2A Protocol
-                                       ▼
-                              ┌─────────────────┐
-                              │ Remote Agents   │
-                              │ (metrics, logs) │
-                              └─────────────────┘
+│  ┌───────────────────────────────────────────────────┐   │
+│  │            Unified HTTP Server (Port 8081)        │   │
+│  │                                                   │   │
+│  │  /api/query        (authenticated)               │   │
+│  │  /api/ingest       (authenticated)               │   │
+│  │  /a2a/invoke       (authenticated)               │   │
+│  │  /.well-known/agent-card.json  (public)          │   │
+│  │  /health, /metrics (public)                      │   │
+│  └────────────────────────┬──────────────────────────┘   │
+│                           │                              │
+│                     ┌─────▼─────┐                        │
+│                     │ LLM Agent │                        │
+│                     │ (Claude)  │                        │
+│                     └─────┬─────┘                        │
+│                           │                              │
+│            ┌──────────────┼──────────────┐               │
+│            │              │              │               │
+│            ▼              ▼              ▼               │
+│      ┌──────────┐  ┌──────────┐  ┌──────────┐           │
+│      │ Memory   │  │   MCP    │  │ SubAgents │           │
+│      │ Tools    │  │ Toolsets │  │ (A2A)    │           │
+│      └──────────┘  └──────────┘  └────┬─────┘           │
+│                                       │                  │
+└───────────────────────────────────────┼──────────────────┘
+                                        │
+                                        │ A2A Protocol
+                                        ▼
+                               ┌─────────────────┐
+                               │ Remote Agents   │
+                               │ (metrics, logs) │
+                               └─────────────────┘
 ```
 
-## Inbound A2A (ADK Launcher)
+## Inbound A2A
 
-The ADK Launcher exposes standard A2A protocol endpoints on port 8082, allowing other ADK agents to call this agent.
+The A2A protocol endpoints are integrated into the main HTTP server on port 8081, allowing other ADK agents to call this agent.
 
 ### Configuration
 
 ```yaml
 # config.yaml
-launcher:
+a2a:
   enabled: true
-  port: 8082
-  enable_webui: true
-  # Public URL for agent discovery (optional, for production)
-  # agent_url: https://knowledge-agent.example.com
+  # Public URL for agent discovery (used in agent card)
+  agent_url: http://knowledge-agent:8081
 ```
 
 ### Exposed Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /.well-known/agent-card.json` | Agent card for discovery |
-| `POST /a2a/invoke` | A2A protocol invocation |
-| `GET /ui/` | WebUI for testing (if enabled) |
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /.well-known/agent-card.json` | Public | Agent card for discovery |
+| `POST /a2a/invoke` | Required | A2A protocol invocation |
 
 ### Authentication
 
-The launcher uses the same `a2a_api_keys` configuration as the custom HTTP server:
+The `/a2a/invoke` endpoint uses the same `a2a_api_keys` authentication as other API endpoints:
 
 ```yaml
 # config.yaml
@@ -92,10 +87,11 @@ a2a_api_keys:
 **How it works:**
 - If `a2a_api_keys` is configured → All A2A requests require `X-API-Key` header
 - If `a2a_api_keys` is empty → Open mode (no authentication)
+- The agent card (`/.well-known/agent-card.json`) is always public for discovery
 
 **Request example:**
 ```bash
-curl -X POST http://localhost:8082/a2a/invoke \
+curl -X POST http://localhost:8081/a2a/invoke \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{"method": "message/send", "params": {...}}'
@@ -106,7 +102,7 @@ curl -X POST http://localhost:8082/a2a/invoke \
 Other agents can discover this agent's capabilities:
 
 ```bash
-curl http://localhost:8082/.well-known/agent-card.json
+curl http://localhost:8081/.well-known/agent-card.json
 ```
 
 ## Outbound A2A (Sub-agents)

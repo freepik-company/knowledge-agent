@@ -15,7 +15,6 @@ import (
 
 	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
-	"knowledge-agent/internal/launcher"
 	"knowledge-agent/internal/logger"
 	"knowledge-agent/internal/server"
 	"knowledge-agent/internal/slack"
@@ -99,6 +98,17 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 	// Create HTTP server with handlers
 	agentServer := server.NewAgentServer(agentInstance, cfg)
 
+	// Setup A2A endpoints if enabled
+	if cfg.A2A.Enabled {
+		agentURL := cfg.A2A.AgentURL
+		if agentURL == "" {
+			agentURL = fmt.Sprintf("http://localhost:%d", cfg.Server.AgentPort)
+		}
+		if err := agentServer.SetupA2A(agentInstance.GetLLMAgent(), agentInstance.GetSessionService(), agentURL); err != nil {
+			log.Fatalw("Failed to setup A2A endpoints", "error", err)
+		}
+	}
+
 	// Create HTTP server
 	addr := fmt.Sprintf(":%d", cfg.Server.AgentPort)
 	httpServer := &http.Server{
@@ -109,10 +119,6 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Create cancelable context for graceful shutdown
-	launcherCtx, cancelLauncher := context.WithCancel(ctx)
-	defer cancelLauncher()
-
 	go func() {
 		log.Infow("Knowledge Agent service starting",
 			"addr", addr,
@@ -122,43 +128,22 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 			"ingest_thread", fmt.Sprintf("POST http://localhost%s/api/ingest-thread", addr),
 			"query", fmt.Sprintf("POST http://localhost%s/api/query", addr),
 		)
+		if cfg.A2A.Enabled {
+			log.Infow("A2A endpoints configured",
+				"agent_card", fmt.Sprintf("GET http://localhost%s/.well-known/agent-card.json (public)", addr),
+				"invoke", fmt.Sprintf("POST http://localhost%s/a2a/invoke (authenticated)", addr),
+			)
+		}
 		logAuthMode(cfg)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalw("Server error", "error", err)
 		}
 	}()
 
-	// Start ADK Launcher in parallel (if enabled)
-	if cfg.Launcher.Enabled {
-		go func() {
-			launcherCfg := launcher.NewConfigFromAppConfig(&cfg.Launcher, cfg.APIKeys)
-			log.Infow("ADK Launcher starting",
-				"port", launcherCfg.Port,
-				"webui", launcherCfg.EnableWebUI,
-				"a2a_endpoint", fmt.Sprintf("http://localhost:%d/a2a/invoke", launcherCfg.Port),
-				"agent_card", fmt.Sprintf("http://localhost:%d/.well-known/agent-card.json", launcherCfg.Port),
-			)
-			if launcherCfg.EnableWebUI {
-				log.Infow("WebUI available", "url", fmt.Sprintf("http://localhost:%d/ui/", launcherCfg.Port))
-			}
-
-			if err := launcher.Run(launcherCtx, launcherCfg, agentInstance.GetLLMAgent(), agentInstance.GetSessionService()); err != nil {
-				if launcherCtx.Err() == nil {
-					// Only log error if not cancelled
-					log.Errorw("ADK Launcher error", "error", err)
-				}
-			}
-		}()
-	}
-
 	<-done
 	log.Info("Shutdown signal received, starting graceful shutdown...")
 
-	// 1. Cancel launcher context first
-	log.Info("Stopping ADK Launcher...")
-	cancelLauncher()
-
-	// 2. Shutdown HTTP server (with timeout)
+	// 1. Shutdown HTTP server (with timeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -168,13 +153,13 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 	}
 	log.Info("HTTP server stopped")
 
-	// 3. Close agent server resources (rate limiter cleanup)
+	// 2. Close agent server resources (rate limiter cleanup)
 	log.Info("Closing agent server resources...")
 	if err := agentServer.Close(); err != nil {
 		log.Warnw("Error closing agent server", "error", err)
 	}
 
-	// 4. Close agent resources (with timeout for safety)
+	// 3. Close agent resources (with timeout for safety)
 	closeAgentWithTimeout(agentInstance, 5*time.Second)
 
 	log.Info("Knowledge Agent service stopped")
@@ -280,7 +265,7 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 	log.Info("Running in All mode (both Agent and Slack Bridge)")
 
 	var wg sync.WaitGroup
-	errors := make(chan error, 3) // Increased for launcher
+	errors := make(chan error, 2)
 
 	// Create cancelable context for graceful shutdown
 	shutdownCtx, cancelShutdown := context.WithCancel(ctx)
@@ -298,6 +283,18 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 
 	// Create Agent HTTP server
 	agentServer := server.NewAgentServer(agentInstance, cfg)
+
+	// Setup A2A endpoints if enabled
+	if cfg.A2A.Enabled {
+		a2aAgentURL := cfg.A2A.AgentURL
+		if a2aAgentURL == "" {
+			a2aAgentURL = agentURL
+		}
+		if err := agentServer.SetupA2A(agentInstance.GetLLMAgent(), agentInstance.GetSessionService(), a2aAgentURL); err != nil {
+			log.Fatalw("Failed to setup A2A endpoints", "error", err)
+		}
+	}
+
 	agentAddr := fmt.Sprintf(":%d", cfg.Server.AgentPort)
 	agentHTTPServer := &http.Server{
 		Addr:         agentAddr,
@@ -319,36 +316,17 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 			"ingest_thread", fmt.Sprintf("POST http://localhost%s/api/ingest-thread", agentAddr),
 			"query", fmt.Sprintf("POST http://localhost%s/api/query", agentAddr),
 		)
+		if cfg.A2A.Enabled {
+			log.Infow("A2A endpoints configured",
+				"agent_card", fmt.Sprintf("GET http://localhost%s/.well-known/agent-card.json (public)", agentAddr),
+				"invoke", fmt.Sprintf("POST http://localhost%s/a2a/invoke (authenticated)", agentAddr),
+			)
+		}
 		logAuthMode(cfg)
 		if err := agentHTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errors <- fmt.Errorf("agent server error: %w", err)
 		}
 	}()
-
-	// Start ADK Launcher in parallel (if enabled)
-	if cfg.Launcher.Enabled {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			launcherCfg := launcher.NewConfigFromAppConfig(&cfg.Launcher, cfg.APIKeys)
-			log.Infow("ADK Launcher starting",
-				"port", launcherCfg.Port,
-				"webui", launcherCfg.EnableWebUI,
-				"a2a_endpoint", fmt.Sprintf("http://localhost:%d/a2a/invoke", launcherCfg.Port),
-				"agent_card", fmt.Sprintf("http://localhost:%d/.well-known/agent-card.json", launcherCfg.Port),
-			)
-			if launcherCfg.EnableWebUI {
-				log.Infow("WebUI available", "url", fmt.Sprintf("http://localhost:%d/ui/", launcherCfg.Port))
-			}
-
-			if err := launcher.Run(shutdownCtx, launcherCfg, agentInstance.GetLLMAgent(), agentInstance.GetSessionService()); err != nil {
-				if shutdownCtx.Err() == nil {
-					// Only report error if not cancelled
-					errors <- fmt.Errorf("launcher error: %w", err)
-				}
-			}
-		}()
-	}
 
 	// Give agent a moment to start
 	time.Sleep(500 * time.Millisecond)

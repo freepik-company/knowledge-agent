@@ -319,10 +319,24 @@ rag:
   similarity_threshold: 0.7
   max_results: 5
 
-# Server Ports
+# Server Configuration
 server:
   agent_port: 8081
   slack_bot_port: 8080
+
+  # Rate Limiting (hardcoded defaults: 10 req/s, burst 20)
+  # Note: Rate and burst are not currently configurable via config.yaml
+  # Only trusted_proxies can be configured
+
+  # Trusted proxies for X-Forwarded-For header
+  # X-Forwarded-For is ONLY trusted when request comes from these IPs/CIDRs
+  # This prevents IP spoofing attacks from untrusted sources
+  # Leave empty to never trust X-Forwarded-For (use RemoteAddr only)
+  trusted_proxies:
+    - "10.0.0.0/8"       # Private network (kubernetes, docker)
+    - "172.16.0.0/12"    # Private network
+    - "192.168.0.0/16"   # Private network
+    # - "203.0.113.1"    # Specific proxy IP
 
 # Logging
 log:
@@ -581,59 +595,49 @@ response_cleaner:
 
 ---
 
-## ADK Launcher Configuration
+## A2A Inbound Configuration
 
-The ADK Launcher exposes the standard A2A (Agent-to-Agent) protocol on a separate port, allowing other ADK agents to call this agent.
+The A2A (Agent-to-Agent) protocol endpoints are integrated into the main HTTP server on port 8081, allowing other ADK agents to call this agent.
 
 ### Basic Setup
 
 ```yaml
-launcher:
+a2a:
   enabled: true
-  port: 8082
-  enable_webui: true
-  # Public URL for agent discovery (optional, for production)
-  # agent_url: https://knowledge-agent.example.com
+  # Public URL for agent discovery (used in agent card)
+  # Required when deploying behind a reverse proxy or load balancer
+  agent_url: http://knowledge-agent:8081
 ```
 
-### Configuration Fields
+### A2A Endpoints
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable ADK Launcher |
-| `port` | int | `8082` | Port for A2A protocol |
-| `enable_webui` | bool | `true` | Enable WebUI at `/ui/` |
-| `agent_url` | string | `""` | Public URL for agent discovery |
+When `a2a.enabled: true`, the following endpoints are added to port 8081:
 
-### Exposed Endpoints
-
-When enabled, the launcher exposes:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /.well-known/agent-card.json` | Agent card for A2A discovery |
-| `POST /a2a/invoke` | A2A protocol invocation |
-| `GET /ui/` | WebUI for testing (if `enable_webui: true`) |
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /.well-known/agent-card.json` | Public | Agent card for A2A discovery |
+| `POST /a2a/invoke` | Required | A2A protocol invocation |
 
 ### Authentication
 
-The launcher uses the same `a2a_api_keys` configuration:
+The `/a2a/invoke` endpoint uses the same authentication as `/api/*` endpoints:
 
-- If `a2a_api_keys` is configured → All A2A requests require `X-API-Key` header
+- If `a2a_api_keys` is configured → All requests require `X-API-Key` header
 - If `a2a_api_keys` is empty → Open mode (no authentication)
 
-### Architecture
+The agent card (`/.well-known/agent-card.json`) is always public to allow agent discovery.
+
+### Unified Architecture
 
 ```
-Port 8081 (Custom HTTP)          Port 8082 (ADK Launcher)
-├── /api/query                   ├── /.well-known/agent-card.json
-├── /api/ingest-thread           ├── /a2a/invoke
-├── /health                      └── /ui/ (WebUI)
-├── /metrics
-└── Auth, Rate Limiting
+Port 8081 (Unified Server)
+├── /api/query           (authenticated)
+├── /api/ingest-thread   (authenticated)
+├── /a2a/invoke          (authenticated)
+├── /.well-known/agent-card.json (public)
+├── /health              (public)
+└── /metrics             (public)
 ```
-
-Both ports share the same LLM agent and session service.
 
 ---
 
