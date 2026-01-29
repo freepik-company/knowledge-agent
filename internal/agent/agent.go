@@ -83,6 +83,7 @@ type Agent struct {
 	permissionChecker *permissions.MemoryPermissionChecker
 	promptManager     *prompt.Manager
 	langfuseTracer    *observability.LangfuseTracer
+	responseCleaner   *ResponseCleaner
 }
 
 // New creates a new agent instance with full ADK integration
@@ -246,6 +247,12 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("failed to create langfuse tracer: %w", err)
 	}
 
+	// 10. Initialize response cleaner (uses Haiku to clean agent narration)
+	responseCleaner := NewResponseCleaner(cfg)
+	if cfg.ResponseCleaner.Enabled {
+		log.Infow("Response cleaner enabled", "model", cfg.ResponseCleaner.Model)
+	}
+
 	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
@@ -297,6 +304,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		permissionChecker: permChecker,
 		promptManager:     promptManager,
 		langfuseTracer:    langfuseTracer,
+		responseCleaner:   responseCleaner,
 	}, nil
 }
 
@@ -866,8 +874,19 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	// End Langfuse trace
 	trace.End(true, responseText)
 
+	// Clean response if enabled (removes agent narration, keeps substantive content)
+	finalResponse := responseText
+	if a.responseCleaner != nil {
+		cleanedResponse, err := a.responseCleaner.Clean(ctx, responseText)
+		if err != nil {
+			log.Warnw("Response cleaning failed, using original", "error", err)
+		} else {
+			finalResponse = cleanedResponse
+		}
+	}
+
 	return &QueryResponse{
 		Success: true,
-		Answer:  responseText,
+		Answer:  finalResponse,
 	}, nil
 }

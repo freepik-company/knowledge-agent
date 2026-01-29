@@ -8,23 +8,24 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	AgentName   string            `yaml:"agent_name" mapstructure:"agent_name" envconfig:"AGENT_NAME" default:"Knowledge Agent"` // Custom name for this agent instance (e.g., "Anton", "Ghost", etc.)
-	Anthropic   AnthropicConfig   `yaml:"anthropic" mapstructure:"anthropic"`
-	Slack       SlackConfig       `yaml:"slack" mapstructure:"slack"`
-	Postgres    PostgresConfig    `yaml:"postgres" mapstructure:"postgres"`
-	Redis       RedisConfig       `yaml:"redis" mapstructure:"redis"`
-	Ollama      OllamaConfig      `yaml:"ollama" mapstructure:"ollama"`
-	RAG         RAGConfig         `yaml:"rag" mapstructure:"rag"`
-	Server      ServerConfig      `yaml:"server" mapstructure:"server"`
-	Log         LogConfig         `yaml:"log" mapstructure:"log"`
-	Auth        AuthConfig        `yaml:"auth" mapstructure:"auth"`
-	Permissions PermissionsConfig `yaml:"permissions" mapstructure:"permissions"`
-	Prompt      PromptConfig      `yaml:"prompt" mapstructure:"prompt"`
-	Langfuse    LangfuseConfig    `yaml:"langfuse" mapstructure:"langfuse"`
-	MCP         MCPConfig         `yaml:"mcp" mapstructure:"mcp"`
-	A2A         A2AConfig         `yaml:"a2a" mapstructure:"a2a"`               // Agent-to-Agent tool integration
-	Launcher    LauncherConfig    `yaml:"launcher" mapstructure:"launcher"`     // ADK Launcher configuration
-	APIKeys     map[string]string `yaml:"a2a_api_keys" mapstructure:"a2a_api_keys"` // Maps client ID to secret token for external A2A access (e.g., "root-agent" -> "ka_secret_abc123")
+	AgentName       string                `yaml:"agent_name" mapstructure:"agent_name" envconfig:"AGENT_NAME" default:"Knowledge Agent"` // Custom name for this agent instance (e.g., "Anton", "Ghost", etc.)
+	Anthropic       AnthropicConfig       `yaml:"anthropic" mapstructure:"anthropic"`
+	Slack           SlackConfig           `yaml:"slack" mapstructure:"slack"`
+	Postgres        PostgresConfig        `yaml:"postgres" mapstructure:"postgres"`
+	Redis           RedisConfig           `yaml:"redis" mapstructure:"redis"`
+	Ollama          OllamaConfig          `yaml:"ollama" mapstructure:"ollama"`
+	RAG             RAGConfig             `yaml:"rag" mapstructure:"rag"`
+	Server          ServerConfig          `yaml:"server" mapstructure:"server"`
+	Log             LogConfig             `yaml:"log" mapstructure:"log"`
+	Auth            AuthConfig            `yaml:"auth" mapstructure:"auth"`
+	Permissions     PermissionsConfig     `yaml:"permissions" mapstructure:"permissions"`
+	Prompt          PromptConfig          `yaml:"prompt" mapstructure:"prompt"`
+	Langfuse        LangfuseConfig        `yaml:"langfuse" mapstructure:"langfuse"`
+	MCP             MCPConfig             `yaml:"mcp" mapstructure:"mcp"`
+	A2A             A2AConfig             `yaml:"a2a" mapstructure:"a2a"`                             // Agent-to-Agent tool integration
+	Launcher        LauncherConfig        `yaml:"launcher" mapstructure:"launcher"`                   // ADK Launcher configuration
+	ResponseCleaner ResponseCleanerConfig `yaml:"response_cleaner" mapstructure:"response_cleaner"`   // Clean responses before sending to user
+	APIKeys         map[string]string     `yaml:"a2a_api_keys" mapstructure:"a2a_api_keys"`           // Maps client ID to secret token for external A2A access (e.g., "root-agent" -> "ka_secret_abc123")
 }
 
 // LauncherConfig holds ADK Launcher configuration
@@ -33,6 +34,12 @@ type LauncherConfig struct {
 	Port        int    `yaml:"port" mapstructure:"port" envconfig:"LAUNCHER_PORT" default:"8082"`               // Port for launcher (separate from custom HTTP)
 	EnableWebUI bool   `yaml:"enable_webui" mapstructure:"enable_webui" envconfig:"LAUNCHER_WEBUI" default:"true"` // Enable WebUI interface
 	AgentURL    string `yaml:"agent_url" mapstructure:"agent_url"`                                               // Public URL for this agent (for A2A discovery)
+}
+
+// ResponseCleanerConfig holds configuration for cleaning responses before sending to users
+type ResponseCleanerConfig struct {
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                                      // Enable response cleaning
+	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"`                      // Model to use for cleaning (default: Haiku for speed/cost)
 }
 
 // AuthConfig holds authentication configuration
