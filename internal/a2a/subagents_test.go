@@ -58,50 +58,20 @@ func TestCreateSubAgents_NilSubAgents(t *testing.T) {
 	}
 }
 
-func TestCreateSubAgents_LazyInitialization(t *testing.T) {
-	// remoteagent.NewA2A creates agents lazily - it doesn't validate
-	// the endpoint until the agent is actually used. This is expected
-	// behavior for graceful startup.
+func TestCreateSubAgents_AgentCardResolution(t *testing.T) {
+	// Now we pre-resolve the agent card at startup (for polling mode)
+	// This test requires real A2A servers
+	t.Skip("Skipping - requires real A2A servers for agent card resolution")
+
 	cfg := &config.A2AConfig{
 		Enabled:  true,
+		Polling:  true,
 		SelfName: "test-agent",
 		SubAgents: []config.A2ASubAgentConfig{
 			{
-				Name:        "lazy-agent",
-				Description: "This will be created lazily",
+				Name:        "test-agent",
+				Description: "This will be created with card resolution",
 				Endpoint:    "http://some-endpoint:9000",
-			},
-		},
-	}
-
-	// This should not return an error - agent is created lazily
-	agents, err := CreateSubAgents(cfg)
-
-	if err != nil {
-		t.Errorf("expected no error (lazy creation), got: %v", err)
-	}
-	// Agent should be created (validation happens later when used)
-	if len(agents) != 1 {
-		t.Errorf("expected 1 agent (lazy), got: %d", len(agents))
-	}
-}
-
-func TestCreateSubAgents_MultipleAgents(t *testing.T) {
-	// Test that multiple sub-agents are created correctly
-	// remoteagent.NewA2A creates agents lazily - validation happens later
-	cfg := &config.A2AConfig{
-		Enabled:  true,
-		SelfName: "test-agent",
-		SubAgents: []config.A2ASubAgentConfig{
-			{
-				Name:        "agent1",
-				Description: "First agent",
-				Endpoint:    "http://agent1:9000",
-			},
-			{
-				Name:        "agent2",
-				Description: "Second agent",
-				Endpoint:    "http://agent2:9000",
 			},
 		},
 	}
@@ -111,24 +81,57 @@ func TestCreateSubAgents_MultipleAgents(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
-	// Both agents should be created (lazy initialization)
-	if len(agents) != 2 {
-		t.Errorf("expected 2 agents, got: %d", len(agents))
+	if len(agents) != 1 {
+		t.Errorf("expected 1 agent, got: %d", len(agents))
+	}
+}
+
+func TestCreateSubAgents_GracefulDegradation(t *testing.T) {
+	// Test that failures in agent card resolution don't crash the system
+	// and return empty agents list with graceful degradation
+	cfg := &config.A2AConfig{
+		Enabled:  true,
+		Polling:  true,
+		SelfName: "test-agent",
+		SubAgents: []config.A2ASubAgentConfig{
+			{
+				Name:        "agent1",
+				Description: "First agent (will fail - no server)",
+				Endpoint:    "http://non-existent-agent1:9000",
+			},
+			{
+				Name:        "agent2",
+				Description: "Second agent (will fail - no server)",
+				Endpoint:    "http://non-existent-agent2:9000",
+			},
+		},
+	}
+
+	// Should NOT return an error (graceful degradation)
+	agents, err := CreateSubAgents(cfg)
+
+	if err != nil {
+		t.Errorf("expected no error (graceful degradation), got: %v", err)
+	}
+	// No agents should be created (all failed to resolve)
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents (graceful degradation), got: %d", len(agents))
 	}
 }
 
 func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
-	// remoteagent.NewA2A uses lazy initialization, so it succeeds
-	// even with invalid endpoints - errors happen at invocation time
+	// Now that we pre-resolve the agent card, this test will fail without a real server
+	// Skip if not running integration tests
+	t.Skip("Skipping - requires real A2A server for agent card resolution")
+
 	cfg := config.A2ASubAgentConfig{
 		Name:        "test-agent",
 		Description: "Test description",
 		Endpoint:    "http://some-endpoint:9000",
 	}
 
-	agent, err := createRemoteAgent(cfg)
+	agent, err := createRemoteAgent(cfg, true) // polling=true
 
-	// Agent is created (lazy) - no error expected
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -144,13 +147,167 @@ func TestCreateRemoteAgent_EmptyEndpoint(t *testing.T) {
 		Endpoint:    "",
 	}
 
-	agent, err := createRemoteAgent(cfg)
+	// Empty endpoint should fail during card resolution
+	_, err := createRemoteAgent(cfg, true)
 
-	// Even empty endpoint may be accepted by lazy initialization
-	// The actual behavior depends on remoteagent implementation
-	// We just verify the function doesn't panic
-	_ = agent
-	_ = err
+	// Should fail because endpoint is empty
+	if err == nil {
+		t.Error("expected error for empty endpoint")
+	}
+}
+
+// Test authentication header resolution
+func TestResolveAuthHeader_APIKey(t *testing.T) {
+	// Set environment variable
+	t.Setenv("TEST_API_KEY", "my-secret-key")
+
+	auth := config.A2AAuthConfig{
+		Type:   "api_key",
+		Header: "X-API-Key",
+		KeyEnv: "TEST_API_KEY",
+	}
+
+	headerName, headerValue, err := resolveAuthHeader(auth)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if headerName != "X-API-Key" {
+		t.Errorf("expected header name 'X-API-Key', got: %s", headerName)
+	}
+	if headerValue != "my-secret-key" {
+		t.Errorf("expected header value 'my-secret-key', got: %s", headerValue)
+	}
+}
+
+func TestResolveAuthHeader_Bearer(t *testing.T) {
+	// Set environment variable
+	t.Setenv("TEST_BEARER_TOKEN", "jwt-token-here")
+
+	auth := config.A2AAuthConfig{
+		Type:     "bearer",
+		TokenEnv: "TEST_BEARER_TOKEN",
+	}
+
+	headerName, headerValue, err := resolveAuthHeader(auth)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if headerName != "Authorization" {
+		t.Errorf("expected header name 'Authorization', got: %s", headerName)
+	}
+	if headerValue != "Bearer jwt-token-here" {
+		t.Errorf("expected 'Bearer jwt-token-here', got: %s", headerValue)
+	}
+}
+
+func TestResolveAuthHeader_MissingEnv(t *testing.T) {
+	auth := config.A2AAuthConfig{
+		Type:   "api_key",
+		Header: "X-API-Key",
+		KeyEnv: "NON_EXISTENT_ENV_VAR",
+	}
+
+	_, _, err := resolveAuthHeader(auth)
+
+	if err == nil {
+		t.Error("expected error for missing env var")
+	}
+}
+
+func TestResolveAuthHeader_MissingHeader(t *testing.T) {
+	t.Setenv("TEST_KEY", "value")
+
+	auth := config.A2AAuthConfig{
+		Type:   "api_key",
+		Header: "", // Missing header
+		KeyEnv: "TEST_KEY",
+	}
+
+	_, _, err := resolveAuthHeader(auth)
+
+	if err == nil {
+		t.Error("expected error for missing header field")
+	}
+}
+
+func TestResolveAuthHeader_OAuth2NotSupported(t *testing.T) {
+	auth := config.A2AAuthConfig{
+		Type: "oauth2",
+	}
+
+	_, _, err := resolveAuthHeader(auth)
+
+	if err == nil {
+		t.Error("expected error for oauth2 (not supported)")
+	}
+}
+
+func TestResolveAuthHeader_UnsupportedType(t *testing.T) {
+	auth := config.A2AAuthConfig{
+		Type: "unknown_auth",
+	}
+
+	_, _, err := resolveAuthHeader(auth)
+
+	if err == nil {
+		t.Error("expected error for unsupported auth type")
+	}
+}
+
+func TestCreateRemoteAgent_WithAuth(t *testing.T) {
+	// Now that we pre-resolve the agent card, this test requires a real server
+	t.Skip("Skipping - requires real A2A server for agent card resolution")
+
+	// Set environment variable
+	t.Setenv("TEST_AGENT_KEY", "secret-key-123")
+
+	cfg := config.A2ASubAgentConfig{
+		Name:        "auth-agent",
+		Description: "Agent with authentication",
+		Endpoint:    "http://some-endpoint:9000",
+		Auth: config.A2AAuthConfig{
+			Type:   "api_key",
+			Header: "X-API-Key",
+			KeyEnv: "TEST_AGENT_KEY",
+		},
+	}
+
+	agent, err := createRemoteAgent(cfg, true) // polling=true
+
+	// Agent should be created successfully
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if agent == nil {
+		t.Error("expected non-nil agent")
+	}
+}
+
+func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
+	// Don't set the environment variable - should fail during auth resolution
+	// (before even attempting to resolve agent card)
+	cfg := config.A2ASubAgentConfig{
+		Name:        "auth-agent",
+		Description: "Agent with missing auth",
+		Endpoint:    "http://some-endpoint:9000",
+		Auth: config.A2AAuthConfig{
+			Type:   "api_key",
+			Header: "X-API-Key",
+			KeyEnv: "MISSING_ENV_VAR_12345",
+		},
+	}
+
+	agent, err := createRemoteAgent(cfg, true) // polling=true
+
+	// Should fail because env var is missing (auth resolution happens before card fetch)
+	if err == nil {
+		t.Error("expected error for missing auth env var")
+	}
+	if agent != nil {
+		t.Error("expected nil agent on auth failure")
+	}
 }
 
 // TestCreateSubAgentsConfigValidation tests that config validation catches issues

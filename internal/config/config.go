@@ -103,15 +103,17 @@ type A2AConfig struct {
 	Enabled      bool                `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"` // Enable A2A tool integration
 	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
 	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
+	Polling      bool                `yaml:"polling" mapstructure:"polling" default:"true"`                           // Use polling instead of streaming for sub-agents (required for large responses)
 	Agents       []A2AAgentConfig    `yaml:"agents" mapstructure:"agents"`                                            // DEPRECATED: Use sub_agents instead
 	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                    // List of remote ADK agents to integrate as sub-agents
 }
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
 type A2ASubAgentConfig struct {
-	Name        string `yaml:"name" mapstructure:"name"`               // Agent name (used in LLM instructions)
-	Description string `yaml:"description" mapstructure:"description"` // Human-readable description for LLM
-	Endpoint    string `yaml:"endpoint" mapstructure:"endpoint"`       // Agent card source URL (e.g., http://metrics-agent:9000)
+	Name        string        `yaml:"name" mapstructure:"name"`               // Agent name (used in LLM instructions)
+	Description string        `yaml:"description" mapstructure:"description"` // Human-readable description for LLM
+	Endpoint    string        `yaml:"endpoint" mapstructure:"endpoint"`       // Agent card source URL (e.g., http://metrics-agent:9000)
+	Auth        A2AAuthConfig `yaml:"auth" mapstructure:"auth"`               // Authentication configuration (api_key, bearer, or none)
 	// NOTE: Timeout is not currently supported by remoteagent.NewA2A
 	// The ADK library uses its own internal timeouts for A2A communication
 	// This field is kept for future compatibility when/if ADK adds timeout support
