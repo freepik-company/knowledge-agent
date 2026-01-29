@@ -86,12 +86,14 @@ func (a *AuthInterceptor) findAPIKeyHeader(meta *a2asrv.RequestMeta) string {
 }
 
 // validateAPIKey validates the API key using constant-time comparison to prevent timing attacks
+// Config format is client_id: secret, so we compare the secret (value) with the provided key
 func (a *AuthInterceptor) validateAPIKey(providedKey string) (callerID string, valid bool) {
 	// Iterate through all keys and use constant-time comparison
 	// This prevents timing attacks that could reveal which keys exist
-	for key, id := range a.apiKeys {
-		if subtle.ConstantTimeCompare([]byte(key), []byte(providedKey)) == 1 {
-			return id, true
+	// Map format: clientID -> secret
+	for clientID, secret := range a.apiKeys {
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(providedKey)) == 1 {
+			return clientID, true
 		}
 	}
 	return "", false
