@@ -81,6 +81,7 @@ type Agent struct {
 	promptManager     *PromptManager
 	langfuseTracer    *observability.LangfuseTracer
 	responseCleaner   *ResponseCleaner
+	contextSummarizer *ContextSummarizer
 }
 
 // New creates a new agent instance with full ADK integration
@@ -169,7 +170,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 				continue
 			}
 
-			mcpToolset, err := mcp.CreateMCPToolset(ctx, serverCfg)
+			mcpToolset, err := mcp.CreateMCPToolset(ctx, serverCfg, cfg.MCP.Retry)
 			if err != nil {
 				// Graceful degradation: log error but don't fail agent startup
 				log.Warnw("Failed to create MCP toolset, skipping",
@@ -241,6 +242,15 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		log.Infow("Response cleaner enabled", "model", cfg.ResponseCleaner.Model)
 	}
 
+	// 10b. Initialize context summarizer (uses Haiku to compress long contexts)
+	contextSummarizer := NewContextSummarizer(cfg)
+	if cfg.ContextSummarizer.Enabled {
+		log.Infow("Context summarizer enabled",
+			"model", cfg.ContextSummarizer.Model,
+			"token_threshold", cfg.ContextSummarizer.TokenThreshold,
+		)
+	}
+
 	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
@@ -292,6 +302,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		promptManager:     promptManager,
 		langfuseTracer:    langfuseTracer,
 		responseCleaner:   responseCleaner,
+		contextSummarizer: contextSummarizer,
 	}, nil
 }
 
@@ -636,6 +647,16 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		}
 	}
 
+	// Summarize context if it exceeds token threshold
+	if a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
+		summarizedContext, err := a.contextSummarizer.Summarize(ctx, contextStr)
+		if err != nil {
+			log.Warnw("Context summarization failed, using original", "error", err)
+		} else {
+			contextStr = summarizedContext
+		}
+	}
+
 	// Get current date for temporal context
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 
@@ -734,8 +755,8 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	}
 
 	// Run agent to answer the question
-	var responseText string              // Accumulates full response for final answer
-	var generationOutput string          // Tracks current generation's output only
+	var responseText string     // Accumulates full response for final answer
+	var generationOutput string // Tracks current generation's output only
 	var currentGeneration *traces.Observation
 
 	log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
@@ -845,8 +866,8 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 					completionTokens,
 				)
 
-				currentGeneration = nil    // Reset for next generation
-				generationOutput = ""      // Reset output tracker
+				currentGeneration = nil // Reset for next generation
+				generationOutput = ""   // Reset output tracker
 			}
 		}
 	}

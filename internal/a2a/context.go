@@ -23,9 +23,9 @@ const (
 type contextKey string
 
 const (
-	requestIDKey  contextKey = "a2a_request_id"
-	callChainKey  contextKey = "a2a_call_chain"
-	callDepthKey  contextKey = "a2a_call_depth"
+	requestIDKey contextKey = "a2a_request_id"
+	callChainKey contextKey = "a2a_call_chain"
+	callDepthKey contextKey = "a2a_call_depth"
 )
 
 // CallContext holds the A2A call chain tracking information

@@ -315,4 +315,3 @@ func TestJsonError(t *testing.T) {
 		t.Errorf("got message %q, want %q", response["message"], "test error message")
 	}
 }
-

@@ -12,7 +12,7 @@ func TestNewA2AHandler_ValidationErrors(t *testing.T) {
 	}{
 		{
 			name: "missing AgentURL",
-			cfg: A2AConfig{
+			cfg:  A2AConfig{
 				// AgentURL missing
 				// Agent and SessionService would need to be mocked, but we can test this first
 			},

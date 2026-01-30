@@ -130,7 +130,7 @@ func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
 		Endpoint:    "http://some-endpoint:9000",
 	}
 
-	agent, err := createRemoteAgent(cfg, true) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}) // polling=true
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -148,7 +148,7 @@ func TestCreateRemoteAgent_EmptyEndpoint(t *testing.T) {
 	}
 
 	// Empty endpoint should fail during card resolution
-	_, err := createRemoteAgent(cfg, true)
+	_, err := createRemoteAgent(cfg, true, config.RetryConfig{})
 
 	// Should fail because endpoint is empty
 	if err == nil {
@@ -274,7 +274,7 @@ func TestCreateRemoteAgent_WithAuth(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}) // polling=true
 
 	// Agent should be created successfully
 	if err != nil {
@@ -299,7 +299,7 @@ func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}) // polling=true
 
 	// Should fail because env var is missing (auth resolution happens before card fetch)
 	if err == nil {

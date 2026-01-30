@@ -53,19 +53,19 @@ func (t *LangfuseTracer) IsEnabled() bool {
 
 // QueryTrace tracks a complete query execution with ADK events
 type QueryTrace struct {
-	trace       *traces.Trace
-	tracer      *LangfuseTracer
-	startTime   time.Time
-	metadata    map[string]any
-	TraceID     string // Exported for external access
+	trace     *traces.Trace
+	tracer    *LangfuseTracer
+	startTime time.Time
+	metadata  map[string]any
+	TraceID   string // Exported for external access
 
 	// ADK event tracking
-	generations     []*traces.Observation
-	toolCalls       map[string]*traces.Observation // Map tool name to observation
-	eventCount      int
-	promptTokens    int
+	generations      []*traces.Observation
+	toolCalls        map[string]*traces.Observation // Map tool name to observation
+	eventCount       int
+	promptTokens     int
 	completionTokens int
-	totalTokens     int
+	totalTokens      int
 }
 
 // StartQueryTrace starts tracing a query

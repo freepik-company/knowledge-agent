@@ -18,7 +18,7 @@ import (
 
 // CreateMCPToolset creates an MCP toolset from configuration
 // Returns (toolset, error) where error is non-nil on failure
-func CreateMCPToolset(ctx context.Context, cfg config.MCPServerConfig) (tool.Toolset, error) {
+func CreateMCPToolset(ctx context.Context, cfg config.MCPServerConfig, retryCfg config.RetryConfig) (tool.Toolset, error) {
 	log := logger.Get()
 
 	if !cfg.Enabled {
@@ -38,9 +38,9 @@ func CreateMCPToolset(ctx context.Context, cfg config.MCPServerConfig) (tool.Too
 	case "command":
 		transport, err = createCommandTransport(cfg)
 	case "sse":
-		transport, err = createSSETransport(cfg)
+		transport, err = createSSETransport(cfg, retryCfg)
 	case "streamable":
-		transport, err = createStreamableTransport(cfg)
+		transport, err = createStreamableTransport(cfg, retryCfg)
 	default:
 		return nil, fmt.Errorf("unsupported transport type: %s", cfg.TransportType)
 	}
@@ -191,9 +191,9 @@ func createCommandTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 }
 
 // createSSETransport creates an SSE-based transport with automatic reconnection
-func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
+func createSSETransport(cfg config.MCPServerConfig, retryCfg config.RetryConfig) (mcp.Transport, error) {
 	log := logger.Get()
-	log.Infow("Creating SSE transport", "server", cfg.Name, "endpoint", cfg.Endpoint)
+	log.Infow("Creating SSE transport", "server", cfg.Name, "endpoint", cfg.Endpoint, "retry_enabled", retryCfg.Enabled)
 
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("endpoint is required for SSE transport")
@@ -210,14 +210,24 @@ func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	}
 
 	// Create custom transport with SSE-friendly timeouts
-	transport := &http.Transport{
+	var httpTransport http.RoundTripper = &http.Transport{
 		ResponseHeaderTimeout: responseHeaderTimeout, // Timeout only for headers, not body
 		IdleConnTimeout:       90 * time.Second,      // Detect broken idle connections
 		// NO DialTimeout or TLSHandshakeTimeout needed - use defaults
 	}
 
+	// Wrap with retry logic if enabled
+	if retryCfg.Enabled {
+		log.Infow("Adding HTTP retry wrapper for MCP server",
+			"server", cfg.Name,
+			"max_retries", retryCfg.MaxRetries,
+			"initial_delay", retryCfg.InitialDelay,
+		)
+		httpTransport = NewRetryRoundTripper(httpTransport, cfg.Name, retryCfg)
+	}
+
 	httpClient := &http.Client{
-		Transport: transport,
+		Transport: httpTransport,
 		Timeout:   0, // CRITICAL: No global timeout for SSE streaming connections
 	}
 
@@ -227,7 +237,7 @@ func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	}
 
 	// Create base SSE client transport
-	baseTransport := &mcp.SSEClientTransport{
+	sseTransport := &mcp.SSEClientTransport{
 		Endpoint:   cfg.Endpoint,
 		HTTPClient: httpClient,
 	}
@@ -235,16 +245,16 @@ func createSSETransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	// Wrap with retry logic for automatic reconnection
 	return &retryTransport{
 		name:          cfg.Name,
-		baseTransport: baseTransport,
+		baseTransport: sseTransport,
 		maxRetries:    5,
 		initialDelay:  500 * time.Millisecond,
 	}, nil
 }
 
 // createStreamableTransport creates a streamable HTTP transport with automatic reconnection
-func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
+func createStreamableTransport(cfg config.MCPServerConfig, retryCfg config.RetryConfig) (mcp.Transport, error) {
 	log := logger.Get()
-	log.Infow("Creating streamable transport", "server", cfg.Name, "endpoint", cfg.Endpoint)
+	log.Infow("Creating streamable transport", "server", cfg.Name, "endpoint", cfg.Endpoint, "retry_enabled", retryCfg.Enabled)
 
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("endpoint is required for streamable transport")
@@ -261,14 +271,24 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 	}
 
 	// Create custom transport with streaming-friendly timeouts
-	transport := &http.Transport{
+	var httpTransport http.RoundTripper = &http.Transport{
 		ResponseHeaderTimeout: responseHeaderTimeout, // Timeout only for headers, not body
 		IdleConnTimeout:       90 * time.Second,      // Detect broken idle connections
 		// NO DialTimeout or TLSHandshakeTimeout needed - use defaults
 	}
 
+	// Wrap with retry logic if enabled
+	if retryCfg.Enabled {
+		log.Infow("Adding HTTP retry wrapper for MCP server",
+			"server", cfg.Name,
+			"max_retries", retryCfg.MaxRetries,
+			"initial_delay", retryCfg.InitialDelay,
+		)
+		httpTransport = NewRetryRoundTripper(httpTransport, cfg.Name, retryCfg)
+	}
+
 	httpClient := &http.Client{
-		Transport: transport,
+		Transport: httpTransport,
 		Timeout:   0, // CRITICAL: No global timeout for streaming connections
 	}
 
@@ -278,7 +298,7 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 	}
 
 	// Create base streamable client transport
-	baseTransport := &mcp.StreamableClientTransport{
+	streamTransport := &mcp.StreamableClientTransport{
 		Endpoint:   cfg.Endpoint,
 		HTTPClient: httpClient,
 	}
@@ -286,7 +306,7 @@ func createStreamableTransport(cfg config.MCPServerConfig) (mcp.Transport, error
 	// Wrap with retry logic for automatic reconnection
 	return &retryTransport{
 		name:          cfg.Name,
-		baseTransport: baseTransport,
+		baseTransport: streamTransport,
 		maxRetries:    5,
 		initialDelay:  500 * time.Millisecond,
 	}, nil

@@ -10,11 +10,11 @@ import (
 
 func TestParseTrustedProxies(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    []string
-		wantLen  int
-		wantIPs  []string // IPs that should be trusted
-		wantNot  []string // IPs that should NOT be trusted
+		name    string
+		input   []string
+		wantLen int
+		wantIPs []string // IPs that should be trusted
+		wantNot []string // IPs that should NOT be trusted
 	}{
 		{
 			name:    "empty list",
@@ -228,33 +228,33 @@ func TestRateLimiter_Middleware_XForwardedForParsing(t *testing.T) {
 	defer rl.Close()
 
 	tests := []struct {
-		name         string
-		remoteAddr   string
-		forwardedFor string
+		name           string
+		remoteAddr     string
+		forwardedFor   string
 		wantLimiterKey string
 	}{
 		{
-			name:         "single IP in X-Forwarded-For",
-			remoteAddr:   "10.0.0.1:12345",
-			forwardedFor: "203.0.113.1",
+			name:           "single IP in X-Forwarded-For",
+			remoteAddr:     "10.0.0.1:12345",
+			forwardedFor:   "203.0.113.1",
 			wantLimiterKey: "203.0.113.1",
 		},
 		{
-			name:         "multiple IPs in X-Forwarded-For",
-			remoteAddr:   "10.0.0.1:12345",
-			forwardedFor: "203.0.113.1, 10.0.0.2, 10.0.0.1",
+			name:           "multiple IPs in X-Forwarded-For",
+			remoteAddr:     "10.0.0.1:12345",
+			forwardedFor:   "203.0.113.1, 10.0.0.2, 10.0.0.1",
 			wantLimiterKey: "203.0.113.1",
 		},
 		{
-			name:         "IP with spaces",
-			remoteAddr:   "10.0.0.1:12345",
-			forwardedFor: "  203.0.113.1  ",
+			name:           "IP with spaces",
+			remoteAddr:     "10.0.0.1:12345",
+			forwardedFor:   "  203.0.113.1  ",
 			wantLimiterKey: "203.0.113.1",
 		},
 		{
-			name:         "not from trusted proxy",
-			remoteAddr:   "1.2.3.4:12345",
-			forwardedFor: "spoofed",
+			name:           "not from trusted proxy",
+			remoteAddr:     "1.2.3.4:12345",
+			forwardedFor:   "spoofed",
 			wantLimiterKey: "1.2.3.4",
 		},
 	}

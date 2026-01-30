@@ -120,7 +120,7 @@ func validateURL(rawURL string) error {
 		"0.0.0.0",
 		"[::1]",
 		"metadata.google.internal", // GCP metadata service
-		"169.254.169.254",           // AWS/Azure metadata service
+		"169.254.169.254",          // AWS/Azure metadata service
 	}
 	for _, blocked := range blockedHosts {
 		if strings.EqualFold(hostname, blocked) {
@@ -155,20 +155,20 @@ func validateURL(rawURL string) error {
 func isPrivateIP(ip net.IP) bool {
 	// Private IPv4 ranges
 	privateIPv4Ranges := []string{
-		"10.0.0.0/8",        // Private network
-		"172.16.0.0/12",     // Private network
-		"192.168.0.0/16",    // Private network
-		"127.0.0.0/8",       // Loopback
-		"169.254.0.0/16",    // Link-local (AWS/Azure metadata)
-		"0.0.0.0/8",         // Current network
-		"100.64.0.0/10",     // Shared address space (Carrier-grade NAT)
-		"192.0.0.0/24",      // IETF Protocol Assignments
-		"192.0.2.0/24",      // Documentation (TEST-NET-1)
-		"198.18.0.0/15",     // Benchmarking
-		"198.51.100.0/24",   // Documentation (TEST-NET-2)
-		"203.0.113.0/24",    // Documentation (TEST-NET-3)
-		"224.0.0.0/4",       // Multicast
-		"240.0.0.0/4",       // Reserved
+		"10.0.0.0/8",         // Private network
+		"172.16.0.0/12",      // Private network
+		"192.168.0.0/16",     // Private network
+		"127.0.0.0/8",        // Loopback
+		"169.254.0.0/16",     // Link-local (AWS/Azure metadata)
+		"0.0.0.0/8",          // Current network
+		"100.64.0.0/10",      // Shared address space (Carrier-grade NAT)
+		"192.0.0.0/24",       // IETF Protocol Assignments
+		"192.0.2.0/24",       // Documentation (TEST-NET-1)
+		"198.18.0.0/15",      // Benchmarking
+		"198.51.100.0/24",    // Documentation (TEST-NET-2)
+		"203.0.113.0/24",     // Documentation (TEST-NET-3)
+		"224.0.0.0/4",        // Multicast
+		"240.0.0.0/4",        // Reserved
 		"255.255.255.255/32", // Broadcast
 	}
 

@@ -595,6 +595,151 @@ response_cleaner:
 
 ---
 
+## Context Summarizer Configuration
+
+The Context Summarizer uses Claude Haiku to compress long conversation contexts before sending them to the main LLM. This prevents context window issues and reduces token costs when threads get very long.
+
+### Basic Setup
+
+```yaml
+context_summarizer:
+  enabled: true
+  model: claude-haiku-4-5-20251001  # Default model
+  token_threshold: 100000  # Summarize contexts above this estimated token count
+```
+
+### Configuration Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable context summarization |
+| `model` | string | `claude-haiku-4-5-20251001` | Claude model to use for summarization |
+| `token_threshold` | int | `8000` | Token threshold above which context is summarized |
+
+### How It Works
+
+1. Thread context is built from conversation messages
+2. Token count is estimated (~4 characters per token)
+3. If estimated tokens exceed threshold, summarizer is invoked
+4. Haiku compresses context while preserving critical information
+5. Compressed context is used in the LLM instruction
+
+### What Gets Preserved
+
+- Decisions and conclusions
+- Technical details: configs, IPs, ports, service names
+- Error messages and resolutions
+- Numerical data and metrics
+- Code snippets, commands, file paths
+- Names, dates, and deadlines
+- Action items and commitments
+
+### What Gets Removed
+
+- Repetitive greetings and pleasantries
+- Redundant back-and-forth exchanges
+- Filler text and conversational padding
+- Duplicate information
+- Meta-discussion about the conversation
+
+### Requirements
+
+- `ANTHROPIC_API_KEY` must be set
+- Adds latency for contexts above threshold (typically 2-5 seconds)
+- Uses Haiku tokens (cost-effective for compression)
+
+### Graceful Degradation
+
+- If API key is not set, summarizer is disabled with a warning
+- If summarization fails, original context is used
+- If summarizer returns empty response, original is used
+- Contexts below threshold are passed through unchanged
+
+---
+
+## Retry Configuration
+
+Both A2A and MCP integrations support configurable retry behavior for transient failures (502, 503, 504, 429, timeouts, connection errors).
+
+### Basic Setup
+
+```yaml
+# A2A retry configuration
+a2a:
+  enabled: true
+  retry:
+    enabled: true
+    max_retries: 3
+    initial_delay: 500ms
+    max_delay: 30s
+    backoff_multiplier: 2.0
+  sub_agents:
+    - name: metrics_agent
+      # ...
+
+# MCP retry configuration
+mcp:
+  enabled: true
+  retry:
+    enabled: true
+    max_retries: 3
+    initial_delay: 500ms
+    max_delay: 30s
+    backoff_multiplier: 2.0
+  servers:
+    - name: github
+      # ...
+```
+
+### Configuration Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable retry logic |
+| `max_retries` | int | `3` | Maximum number of retry attempts |
+| `initial_delay` | duration | `500ms` | Initial delay before first retry |
+| `max_delay` | duration | `30s` | Maximum delay between retries |
+| `backoff_multiplier` | float | `2.0` | Multiplier for exponential backoff |
+
+### Retryable Errors
+
+The retry logic automatically retries on:
+
+**HTTP Status Codes:**
+- 502 Bad Gateway
+- 503 Service Unavailable
+- 504 Gateway Timeout
+- 429 Too Many Requests
+
+**Network Errors:**
+- Connection refused
+- Connection reset
+- Connection timeout
+- DNS resolution failures
+- I/O timeouts
+- Broken pipe / EOF
+
+### Backoff Strategy
+
+Uses exponential backoff with jitter:
+1. First retry: `initial_delay` (e.g., 500ms)
+2. Second retry: `initial_delay * backoff_multiplier` (e.g., 1s)
+3. Third retry: `initial_delay * backoff_multiplier²` (e.g., 2s)
+4. ...capped at `max_delay`
+
+Jitter of ±25% is added to prevent thundering herd.
+
+### Logging
+
+Retry attempts are logged for observability:
+```
+INFO  A2A retry attempt  agent=metrics_agent attempt=1 max_retries=3 delay_ms=500
+WARN  A2A request failed with retryable status  agent=metrics_agent status_code=503
+INFO  MCP HTTP retry attempt  server=github attempt=2 max_retries=3 delay_ms=1000
+```
+
+---
+
 ## A2A Inbound Configuration
 
 The A2A (Agent-to-Agent) protocol endpoints are integrated into the main HTTP server on port 8081, allowing other ADK agents to call this agent.

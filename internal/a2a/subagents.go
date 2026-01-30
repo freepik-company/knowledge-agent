@@ -34,12 +34,13 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 		"self_name", cfg.SelfName,
 		"sub_agents_count", len(cfg.SubAgents),
 		"polling", cfg.Polling,
+		"retry_enabled", cfg.Retry.Enabled,
 	)
 
 	var subAgents []agent.Agent
 
 	for _, subAgentCfg := range cfg.SubAgents {
-		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling)
+		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.Retry)
 		if err != nil {
 			// Graceful degradation: log warning but continue with other agents
 			log.Warnw("Failed to create remote agent, skipping",
@@ -70,7 +71,7 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 }
 
 // createRemoteAgent creates a single remote agent using ADK's remoteagent package
-func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool) (agent.Agent, error) {
+func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg config.RetryConfig) (agent.Agent, error) {
 	log := logger.Get()
 
 	log.Debugw("Creating remote agent",
@@ -79,6 +80,7 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool) (agent.Agent,
 		"description", cfg.Description,
 		"auth_type", cfg.Auth.Type,
 		"polling", polling,
+		"retry_enabled", retryCfg.Enabled,
 	)
 
 	// Prepare auth headers if needed
@@ -128,6 +130,18 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool) (agent.Agent,
 		a2aclient.WithConfig(a2aclient.Config{
 			Polling: polling,
 		}),
+	}
+
+	// Add retry interceptor if enabled (before logging to capture retry attempts)
+	if retryCfg.Enabled {
+		log.Debugw("Adding retry interceptor for sub-agent",
+			"agent", cfg.Name,
+			"max_retries", retryCfg.MaxRetries,
+			"initial_delay", retryCfg.InitialDelay,
+		)
+		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
+			NewRetryInterceptor(cfg.Name, retryCfg),
+		))
 	}
 
 	// Always add logging interceptor for debugging A2A calls

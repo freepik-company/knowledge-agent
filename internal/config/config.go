@@ -8,24 +8,25 @@ import (
 
 // Config holds all configuration for the application
 type Config struct {
-	AgentName       string                `yaml:"agent_name" mapstructure:"agent_name" envconfig:"AGENT_NAME" default:"Knowledge Agent"` // Custom name for this agent instance (e.g., "Anton", "Ghost", etc.)
-	Anthropic       AnthropicConfig       `yaml:"anthropic" mapstructure:"anthropic"`
-	Slack           SlackConfig           `yaml:"slack" mapstructure:"slack"`
-	Postgres        PostgresConfig        `yaml:"postgres" mapstructure:"postgres"`
-	Redis           RedisConfig           `yaml:"redis" mapstructure:"redis"`
-	Ollama          OllamaConfig          `yaml:"ollama" mapstructure:"ollama"`
-	RAG             RAGConfig             `yaml:"rag" mapstructure:"rag"`
-	Server          ServerConfig          `yaml:"server" mapstructure:"server"`
-	Log             LogConfig             `yaml:"log" mapstructure:"log"`
-	Auth            AuthConfig            `yaml:"auth" mapstructure:"auth"`
-	Permissions     PermissionsConfig     `yaml:"permissions" mapstructure:"permissions"`
-	Prompt          PromptConfig          `yaml:"prompt" mapstructure:"prompt"`
-	Langfuse        LangfuseConfig        `yaml:"langfuse" mapstructure:"langfuse"`
-	MCP             MCPConfig             `yaml:"mcp" mapstructure:"mcp"`
-	A2A             A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                           // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
-	ResponseCleaner ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"` // Clean responses before sending to user
-	APIKeys         map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                 // API keys with caller_id and role for authentication
-	Tools           ToolsConfig             `yaml:"tools" mapstructure:"tools"`                       // Tool-specific configuration
+	AgentName         string                  `yaml:"agent_name" mapstructure:"agent_name" envconfig:"AGENT_NAME" default:"Knowledge Agent"` // Custom name for this agent instance (e.g., "Anton", "Ghost", etc.)
+	Anthropic         AnthropicConfig         `yaml:"anthropic" mapstructure:"anthropic"`
+	Slack             SlackConfig             `yaml:"slack" mapstructure:"slack"`
+	Postgres          PostgresConfig          `yaml:"postgres" mapstructure:"postgres"`
+	Redis             RedisConfig             `yaml:"redis" mapstructure:"redis"`
+	Ollama            OllamaConfig            `yaml:"ollama" mapstructure:"ollama"`
+	RAG               RAGConfig               `yaml:"rag" mapstructure:"rag"`
+	Server            ServerConfig            `yaml:"server" mapstructure:"server"`
+	Log               LogConfig               `yaml:"log" mapstructure:"log"`
+	Auth              AuthConfig              `yaml:"auth" mapstructure:"auth"`
+	Permissions       PermissionsConfig       `yaml:"permissions" mapstructure:"permissions"`
+	Prompt            PromptConfig            `yaml:"prompt" mapstructure:"prompt"`
+	Langfuse          LangfuseConfig          `yaml:"langfuse" mapstructure:"langfuse"`
+	MCP               MCPConfig               `yaml:"mcp" mapstructure:"mcp"`
+	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                               // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
+	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"`     // Clean responses before sending to user
+	ContextSummarizer ContextSummarizerConfig `yaml:"context_summarizer" mapstructure:"context_summarizer"` // Summarize long contexts before sending to LLM
+	APIKeys           map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                     // API keys with caller_id and role for authentication
+	Tools             ToolsConfig             `yaml:"tools" mapstructure:"tools"`                           // Tool-specific configuration
 }
 
 // ToolsConfig holds configuration for agent tools
@@ -33,16 +34,32 @@ type ToolsConfig struct {
 	WebFetch WebFetchConfig `yaml:"web_fetch" mapstructure:"web_fetch"` // Web fetch tool configuration
 }
 
+// RetryConfig configures retry behavior for transient failures
+type RetryConfig struct {
+	Enabled           bool          `yaml:"enabled" mapstructure:"enabled" default:"true"`                      // Enable retry logic
+	MaxRetries        int           `yaml:"max_retries" mapstructure:"max_retries" default:"3"`                 // Maximum number of retry attempts
+	InitialDelay      time.Duration `yaml:"initial_delay" mapstructure:"initial_delay" default:"500ms"`         // Initial delay before first retry
+	MaxDelay          time.Duration `yaml:"max_delay" mapstructure:"max_delay" default:"30s"`                   // Maximum delay between retries
+	BackoffMultiplier float64       `yaml:"backoff_multiplier" mapstructure:"backoff_multiplier" default:"2.0"` // Multiplier for exponential backoff
+}
+
 // WebFetchConfig holds configuration for the web fetch tool
 type WebFetchConfig struct {
-	Timeout          time.Duration `yaml:"timeout" mapstructure:"timeout" envconfig:"WEBFETCH_TIMEOUT" default:"30s"`                                  // HTTP request timeout
+	Timeout          time.Duration `yaml:"timeout" mapstructure:"timeout" envconfig:"WEBFETCH_TIMEOUT" default:"30s"`                                    // HTTP request timeout
 	DefaultMaxLength int           `yaml:"default_max_length" mapstructure:"default_max_length" envconfig:"WEBFETCH_DEFAULT_MAX_LENGTH" default:"10000"` // Default max content length
 }
 
 // ResponseCleanerConfig holds configuration for cleaning responses before sending to users
 type ResponseCleanerConfig struct {
-	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                                      // Enable response cleaning
-	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"`                      // Model to use for cleaning (default: Haiku for speed/cost)
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                 // Enable response cleaning
+	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for cleaning (default: Haiku for speed/cost)
+}
+
+// ContextSummarizerConfig holds configuration for summarizing long conversation contexts
+type ContextSummarizerConfig struct {
+	Enabled        bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                 // Enable context summarization
+	Model          string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for summarization (default: Haiku for speed/cost)
+	TokenThreshold int    `yaml:"token_threshold" mapstructure:"token_threshold" default:"8000"`  // Token threshold above which context is summarized
 }
 
 // AuthConfig holds authentication configuration
@@ -71,58 +88,60 @@ type PromptConfig struct {
 
 // LangfuseConfig holds Langfuse observability configuration
 type LangfuseConfig struct {
-	Enabled         bool    `yaml:"enabled" mapstructure:"enabled" envconfig:"LANGFUSE_ENABLED" default:"false"`                             // Enable Langfuse integration
-	PublicKey       string  `yaml:"public_key" mapstructure:"public_key" envconfig:"LANGFUSE_PUBLIC_KEY"`                                    // Langfuse public key
-	SecretKey       string  `yaml:"secret_key" mapstructure:"secret_key" envconfig:"LANGFUSE_SECRET_KEY"`                                    // Langfuse secret key
-	Host            string  `yaml:"host" mapstructure:"host" envconfig:"LANGFUSE_HOST" default:"https://cloud.langfuse.com"`                 // Langfuse host URL
-	InputCostPer1M  float64 `yaml:"input_cost_per_1m" mapstructure:"input_cost_per_1m" default:"3.0"`                                        // Cost per 1M input tokens in USD (default: Claude Sonnet 4.5)
-	OutputCostPer1M float64 `yaml:"output_cost_per_1m" mapstructure:"output_cost_per_1m" default:"15.0"`                                     // Cost per 1M output tokens in USD (default: Claude Sonnet 4.5)
+	Enabled         bool    `yaml:"enabled" mapstructure:"enabled" envconfig:"LANGFUSE_ENABLED" default:"false"`             // Enable Langfuse integration
+	PublicKey       string  `yaml:"public_key" mapstructure:"public_key" envconfig:"LANGFUSE_PUBLIC_KEY"`                    // Langfuse public key
+	SecretKey       string  `yaml:"secret_key" mapstructure:"secret_key" envconfig:"LANGFUSE_SECRET_KEY"`                    // Langfuse secret key
+	Host            string  `yaml:"host" mapstructure:"host" envconfig:"LANGFUSE_HOST" default:"https://cloud.langfuse.com"` // Langfuse host URL
+	InputCostPer1M  float64 `yaml:"input_cost_per_1m" mapstructure:"input_cost_per_1m" default:"3.0"`                        // Cost per 1M input tokens in USD (default: Claude Sonnet 4.5)
+	OutputCostPer1M float64 `yaml:"output_cost_per_1m" mapstructure:"output_cost_per_1m" default:"15.0"`                     // Cost per 1M output tokens in USD (default: Claude Sonnet 4.5)
 }
 
 // MCPConfig holds Model Context Protocol configuration
 type MCPConfig struct {
 	Enabled bool              `yaml:"enabled" mapstructure:"enabled" envconfig:"MCP_ENABLED" default:"false"` // Enable MCP integration
+	Retry   RetryConfig       `yaml:"retry" mapstructure:"retry"`                                             // Retry configuration for MCP tool calls
 	Servers []MCPServerConfig `yaml:"servers" mapstructure:"servers"`                                         // List of MCP servers to connect to
 }
 
 // MCPServerConfig holds configuration for a single MCP server
 type MCPServerConfig struct {
-	Name          string            `yaml:"name" mapstructure:"name"`                                 // Server name (for logging and identification)
-	Description   string            `yaml:"description" mapstructure:"description"`                   // Human-readable description
-	Enabled       bool              `yaml:"enabled" mapstructure:"enabled" default:"true"`            // Enable this server
-	TransportType string            `yaml:"transport_type" mapstructure:"transport_type"`             // "command", "sse", or "streamable"
-	Command       *MCPCommandConfig `yaml:"command,omitempty" mapstructure:"command"`                 // Command configuration (for command transport)
-	Endpoint      string            `yaml:"endpoint,omitempty" mapstructure:"endpoint"`               // HTTP endpoint (for sse/streamable transport)
-	Auth          *MCPAuthConfig    `yaml:"auth,omitempty" mapstructure:"auth"`                       // Authentication configuration
-	ToolFilter    []string          `yaml:"tool_filter,omitempty" mapstructure:"tool_filter"`         // List of tool names to include (empty = all tools)
-	Timeout       int               `yaml:"timeout" mapstructure:"timeout" default:"30"`              // Connection timeout in seconds
+	Name          string            `yaml:"name" mapstructure:"name"`                         // Server name (for logging and identification)
+	Description   string            `yaml:"description" mapstructure:"description"`           // Human-readable description
+	Enabled       bool              `yaml:"enabled" mapstructure:"enabled" default:"true"`    // Enable this server
+	TransportType string            `yaml:"transport_type" mapstructure:"transport_type"`     // "command", "sse", or "streamable"
+	Command       *MCPCommandConfig `yaml:"command,omitempty" mapstructure:"command"`         // Command configuration (for command transport)
+	Endpoint      string            `yaml:"endpoint,omitempty" mapstructure:"endpoint"`       // HTTP endpoint (for sse/streamable transport)
+	Auth          *MCPAuthConfig    `yaml:"auth,omitempty" mapstructure:"auth"`               // Authentication configuration
+	ToolFilter    []string          `yaml:"tool_filter,omitempty" mapstructure:"tool_filter"` // List of tool names to include (empty = all tools)
+	Timeout       int               `yaml:"timeout" mapstructure:"timeout" default:"30"`      // Connection timeout in seconds
 }
 
 // MCPCommandConfig holds configuration for command-based MCP transport
 type MCPCommandConfig struct {
-	Path       string            `yaml:"path" mapstructure:"path"`                     // Executable path
-	Args       []string          `yaml:"args,omitempty" mapstructure:"args"`           // Command arguments
-	Env        map[string]string `yaml:"env,omitempty" mapstructure:"env"`             // Additional environment variables (static values)
+	Path       string            `yaml:"path" mapstructure:"path"`                         // Executable path
+	Args       []string          `yaml:"args,omitempty" mapstructure:"args"`               // Command arguments
+	Env        map[string]string `yaml:"env,omitempty" mapstructure:"env"`                 // Additional environment variables (static values)
 	InheritEnv []string          `yaml:"inherit_env,omitempty" mapstructure:"inherit_env"` // Env var names to inherit from pod environment
 }
 
 // MCPAuthConfig holds authentication configuration for MCP servers
 type MCPAuthConfig struct {
-	Type     string `yaml:"type" mapstructure:"type"`                             // "bearer", "basic", or "oauth2"
-	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"`         // Environment variable containing token
-	Token    string `yaml:"token,omitempty" mapstructure:"token"`                 // Token value (not recommended, use token_env instead)
-	Username string `yaml:"username,omitempty" mapstructure:"username"`           // Username (for basic auth)
-	Password string `yaml:"password,omitempty" mapstructure:"password"`           // Password (for basic auth)
+	Type     string `yaml:"type" mapstructure:"type"`                     // "bearer", "basic", or "oauth2"
+	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"` // Environment variable containing token
+	Token    string `yaml:"token,omitempty" mapstructure:"token"`         // Token value (not recommended, use token_env instead)
+	Username string `yaml:"username,omitempty" mapstructure:"username"`   // Username (for basic auth)
+	Password string `yaml:"password,omitempty" mapstructure:"password"`   // Password (for basic auth)
 }
 
 // A2AConfig holds Agent-to-Agent tool integration configuration
 type A2AConfig struct {
 	Enabled      bool                `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"` // Enable A2A tool integration
-	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                      // This agent's identifier for loop prevention
-	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                // Maximum call chain depth
-	Polling      bool                `yaml:"polling" mapstructure:"polling" default:"true"`                           // Use polling instead of streaming for sub-agents (required for large responses)
-	AgentURL     string              `yaml:"agent_url" mapstructure:"agent_url"`                                      // Public URL for this agent (for A2A discovery/agent card)
-	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                    // List of remote ADK agents to integrate as sub-agents
+	SelfName     string              `yaml:"self_name" mapstructure:"self_name"`                                     // This agent's identifier for loop prevention
+	MaxCallDepth int                 `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`               // Maximum call chain depth
+	Polling      bool                `yaml:"polling" mapstructure:"polling" default:"true"`                          // Use polling instead of streaming for sub-agents (required for large responses)
+	AgentURL     string              `yaml:"agent_url" mapstructure:"agent_url"`                                     // Public URL for this agent (for A2A discovery/agent card)
+	Retry        RetryConfig         `yaml:"retry" mapstructure:"retry"`                                             // Retry configuration for A2A calls
+	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                   // List of remote ADK agents to integrate as sub-agents
 }
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
@@ -153,14 +172,14 @@ type AnthropicConfig struct {
 
 // SlackConfig holds Slack API configuration
 type SlackConfig struct {
-	BotToken            string        `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN" required:"true"`
-	SigningSecret       string        `yaml:"signing_secret" mapstructure:"signing_secret" envconfig:"SLACK_SIGNING_SECRET"`                        // Only required for webhook mode
-	AppToken            string        `yaml:"app_token" mapstructure:"app_token" envconfig:"SLACK_APP_TOKEN"`                                       // Only required for socket mode
-	Mode                string        `yaml:"mode" mapstructure:"mode" envconfig:"SLACK_MODE" default:"webhook"`                                    // "webhook" or "socket"
-	MaxFileSize         int64         `yaml:"max_file_size" mapstructure:"max_file_size" envconfig:"SLACK_MAX_FILE_SIZE" default:"10485760"`        // 10 MB default
-	ThreadCacheTTL      time.Duration `yaml:"thread_cache_ttl" mapstructure:"thread_cache_ttl" envconfig:"SLACK_THREAD_CACHE_TTL" default:"5m"`     // How long to cache thread messages
-	ThreadCacheMaxSize  int           `yaml:"thread_cache_max_size" mapstructure:"thread_cache_max_size" envconfig:"SLACK_THREAD_CACHE_MAX_SIZE" default:"100"` // Max threads to keep in cache
-	MaxImagesPerThread  int           `yaml:"max_images_per_thread" mapstructure:"max_images_per_thread" envconfig:"SLACK_MAX_IMAGES_PER_THREAD" default:"10"`   // Max images to download per thread
+	BotToken           string        `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN" required:"true"`
+	SigningSecret      string        `yaml:"signing_secret" mapstructure:"signing_secret" envconfig:"SLACK_SIGNING_SECRET"`                                    // Only required for webhook mode
+	AppToken           string        `yaml:"app_token" mapstructure:"app_token" envconfig:"SLACK_APP_TOKEN"`                                                   // Only required for socket mode
+	Mode               string        `yaml:"mode" mapstructure:"mode" envconfig:"SLACK_MODE" default:"webhook"`                                                // "webhook" or "socket"
+	MaxFileSize        int64         `yaml:"max_file_size" mapstructure:"max_file_size" envconfig:"SLACK_MAX_FILE_SIZE" default:"10485760"`                    // 10 MB default
+	ThreadCacheTTL     time.Duration `yaml:"thread_cache_ttl" mapstructure:"thread_cache_ttl" envconfig:"SLACK_THREAD_CACHE_TTL" default:"5m"`                 // How long to cache thread messages
+	ThreadCacheMaxSize int           `yaml:"thread_cache_max_size" mapstructure:"thread_cache_max_size" envconfig:"SLACK_THREAD_CACHE_MAX_SIZE" default:"100"` // Max threads to keep in cache
+	MaxImagesPerThread int           `yaml:"max_images_per_thread" mapstructure:"max_images_per_thread" envconfig:"SLACK_MAX_IMAGES_PER_THREAD" default:"10"`  // Max images to download per thread
 }
 
 // PostgresConfig holds PostgreSQL configuration
@@ -195,10 +214,10 @@ type RAGConfig struct {
 type ServerConfig struct {
 	AgentPort      int      `yaml:"agent_port" mapstructure:"agent_port" envconfig:"AGENT_PORT" default:"8081"`
 	SlackBotPort   int      `yaml:"slack_bot_port" mapstructure:"slack_bot_port" envconfig:"SLACK_BOT_PORT" default:"8080"`
-	ReadTimeout    int      `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`       // seconds
-	WriteTimeout   int      `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"`   // seconds (3 minutes for long operations)
+	ReadTimeout    int      `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`           // seconds
+	WriteTimeout   int      `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"`       // seconds (3 minutes for long operations)
 	RequestTimeout int      `yaml:"request_timeout" mapstructure:"request_timeout" envconfig:"SERVER_REQUEST_TIMEOUT" default:"120"` // seconds (2 minutes for agent operations)
-	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                              // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
+	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                                  // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
 }
 
 // LogConfig holds logging configuration
