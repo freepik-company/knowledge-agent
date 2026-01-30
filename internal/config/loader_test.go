@@ -129,3 +129,86 @@ postgres:
 		t.Errorf("Expected APIKey 'sk-ant-from-env' (from env), got '%s'", cfg.Anthropic.APIKey)
 	}
 }
+
+func TestParseAPIKeysJSON_NewFormat(t *testing.T) {
+	jsonStr := `{
+		"secret-key-1": {"caller_id": "client-1", "role": "write"},
+		"secret-key-2": {"caller_id": "client-2", "role": "read"}
+	}`
+
+	result, err := parseAPIKeysJSON(jsonStr)
+	if err != nil {
+		t.Fatalf("parseAPIKeysJSON failed: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Errorf("Expected 2 keys, got %d", len(result))
+	}
+
+	key1 := result["secret-key-1"]
+	if key1.CallerID != "client-1" || key1.Role != "write" {
+		t.Errorf("key1: expected caller_id=client-1, role=write, got %+v", key1)
+	}
+
+	key2 := result["secret-key-2"]
+	if key2.CallerID != "client-2" || key2.Role != "read" {
+		t.Errorf("key2: expected caller_id=client-2, role=read, got %+v", key2)
+	}
+}
+
+func TestParseAPIKeysJSON_LegacyFormat(t *testing.T) {
+	// Legacy format: {"key": "caller_id"} should default to role="write"
+	jsonStr := `{"ka_abc123": "root-agent", "ka_xyz": "slack-bridge"}`
+
+	result, err := parseAPIKeysJSON(jsonStr)
+	if err != nil {
+		t.Fatalf("parseAPIKeysJSON failed: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Errorf("Expected 2 keys, got %d", len(result))
+	}
+
+	key1 := result["ka_abc123"]
+	if key1.CallerID != "root-agent" || key1.Role != "write" {
+		t.Errorf("key1: expected caller_id=root-agent, role=write (default), got %+v", key1)
+	}
+
+	key2 := result["ka_xyz"]
+	if key2.CallerID != "slack-bridge" || key2.Role != "write" {
+		t.Errorf("key2: expected caller_id=slack-bridge, role=write (default), got %+v", key2)
+	}
+}
+
+func TestParseAPIKeysJSON_DefaultRole(t *testing.T) {
+	// New format without role should default to "write"
+	jsonStr := `{"secret-key": {"caller_id": "client-1"}}`
+
+	result, err := parseAPIKeysJSON(jsonStr)
+	if err != nil {
+		t.Fatalf("parseAPIKeysJSON failed: %v", err)
+	}
+
+	key := result["secret-key"]
+	if key.Role != "write" {
+		t.Errorf("Expected default role 'write', got '%s'", key.Role)
+	}
+}
+
+func TestParseAPIKeysJSON_InvalidRole(t *testing.T) {
+	jsonStr := `{"secret-key": {"caller_id": "client-1", "role": "admin"}}`
+
+	_, err := parseAPIKeysJSON(jsonStr)
+	if err == nil {
+		t.Error("Expected error for invalid role 'admin', got nil")
+	}
+}
+
+func TestParseAPIKeysJSON_MissingCallerID(t *testing.T) {
+	jsonStr := `{"secret-key": {"role": "write"}}`
+
+	_, err := parseAPIKeysJSON(jsonStr)
+	if err == nil {
+		t.Error("Expected error for missing caller_id, got nil")
+	}
+}

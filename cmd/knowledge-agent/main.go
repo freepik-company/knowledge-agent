@@ -140,8 +140,14 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 		}
 	}()
 
+	// Mark server as ready to accept traffic (for Kubernetes readiness probe)
+	agentServer.SetReady()
+
 	<-done
 	log.Info("Shutdown signal received, starting graceful shutdown...")
+
+	// Mark server as not ready immediately (stop accepting new traffic)
+	agentServer.SetNotReady()
 
 	// 1. Shutdown HTTP server (with timeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -331,6 +337,9 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 	// Give agent a moment to start
 	time.Sleep(500 * time.Millisecond)
 
+	// Mark agent server as ready to accept traffic (for Kubernetes readiness probe)
+	agentServer.SetReady()
+
 	// Initialize Slack handler
 	slackHandler := slack.NewHandler(cfg, agentURL)
 
@@ -386,6 +395,9 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 			log.Errorw("Service error", "error", err)
 		}
 
+		// Mark server as not ready immediately (stop accepting new traffic)
+		agentServer.SetNotReady()
+
 		// Shutdown both servers
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -428,6 +440,9 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 	case err := <-errors:
 		log.Errorw("Service error", "error", err)
 	}
+
+	// Mark server as not ready immediately (stop accepting new traffic)
+	agentServer.SetNotReady()
 
 	// Cancel context to stop socket handler
 	log.Info("Cancelling socket handler...")

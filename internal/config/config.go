@@ -22,9 +22,21 @@ type Config struct {
 	Prompt          PromptConfig          `yaml:"prompt" mapstructure:"prompt"`
 	Langfuse        LangfuseConfig        `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP             MCPConfig             `yaml:"mcp" mapstructure:"mcp"`
-	A2A             A2AConfig             `yaml:"a2a" mapstructure:"a2a"`                             // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
-	ResponseCleaner ResponseCleanerConfig `yaml:"response_cleaner" mapstructure:"response_cleaner"`   // Clean responses before sending to user
-	APIKeys         map[string]string     `yaml:"a2a_api_keys" mapstructure:"a2a_api_keys"`           // Maps client ID to secret token for external A2A access (e.g., "root-agent" -> "ka_secret_abc123")
+	A2A             A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                           // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
+	ResponseCleaner ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"` // Clean responses before sending to user
+	APIKeys         map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                 // API keys with caller_id and role for authentication
+	Tools           ToolsConfig             `yaml:"tools" mapstructure:"tools"`                       // Tool-specific configuration
+}
+
+// ToolsConfig holds configuration for agent tools
+type ToolsConfig struct {
+	WebFetch WebFetchConfig `yaml:"web_fetch" mapstructure:"web_fetch"` // Web fetch tool configuration
+}
+
+// WebFetchConfig holds configuration for the web fetch tool
+type WebFetchConfig struct {
+	Timeout          time.Duration `yaml:"timeout" mapstructure:"timeout" envconfig:"WEBFETCH_TIMEOUT" default:"30s"`                                  // HTTP request timeout
+	DefaultMaxLength int           `yaml:"default_max_length" mapstructure:"default_max_length" envconfig:"WEBFETCH_DEFAULT_MAX_LENGTH" default:"10000"` // Default max content length
 }
 
 // ResponseCleanerConfig holds configuration for cleaning responses before sending to users
@@ -36,6 +48,12 @@ type ResponseCleanerConfig struct {
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
 	InternalToken string `yaml:"internal_token" mapstructure:"internal_token" envconfig:"INTERNAL_AUTH_TOKEN"` // Shared secret between slack-bot and agent
+}
+
+// APIKeyConfig holds configuration for a single API key
+type APIKeyConfig struct {
+	CallerID string `yaml:"caller_id" mapstructure:"caller_id" json:"caller_id"` // Identifier for this caller (used in logs and permissions)
+	Role     string `yaml:"role" mapstructure:"role" json:"role"`                // "write" (read+write) or "read" (read-only, no save_to_memory)
 }
 
 // PermissionsConfig holds permissions configuration for memory operations
@@ -134,11 +152,14 @@ type AnthropicConfig struct {
 
 // SlackConfig holds Slack API configuration
 type SlackConfig struct {
-	BotToken      string `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN" required:"true"`
-	SigningSecret string `yaml:"signing_secret" mapstructure:"signing_secret" envconfig:"SLACK_SIGNING_SECRET"`                 // Only required for webhook mode
-	AppToken      string `yaml:"app_token" mapstructure:"app_token" envconfig:"SLACK_APP_TOKEN"`                                // Only required for socket mode
-	Mode          string `yaml:"mode" mapstructure:"mode" envconfig:"SLACK_MODE" default:"webhook"`                             // "webhook" or "socket"
-	MaxFileSize   int64  `yaml:"max_file_size" mapstructure:"max_file_size" envconfig:"SLACK_MAX_FILE_SIZE" default:"10485760"` // 10 MB default
+	BotToken            string        `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN" required:"true"`
+	SigningSecret       string        `yaml:"signing_secret" mapstructure:"signing_secret" envconfig:"SLACK_SIGNING_SECRET"`                        // Only required for webhook mode
+	AppToken            string        `yaml:"app_token" mapstructure:"app_token" envconfig:"SLACK_APP_TOKEN"`                                       // Only required for socket mode
+	Mode                string        `yaml:"mode" mapstructure:"mode" envconfig:"SLACK_MODE" default:"webhook"`                                    // "webhook" or "socket"
+	MaxFileSize         int64         `yaml:"max_file_size" mapstructure:"max_file_size" envconfig:"SLACK_MAX_FILE_SIZE" default:"10485760"`        // 10 MB default
+	ThreadCacheTTL      time.Duration `yaml:"thread_cache_ttl" mapstructure:"thread_cache_ttl" envconfig:"SLACK_THREAD_CACHE_TTL" default:"5m"`     // How long to cache thread messages
+	ThreadCacheMaxSize  int           `yaml:"thread_cache_max_size" mapstructure:"thread_cache_max_size" envconfig:"SLACK_THREAD_CACHE_MAX_SIZE" default:"100"` // Max threads to keep in cache
+	MaxImagesPerThread  int           `yaml:"max_images_per_thread" mapstructure:"max_images_per_thread" envconfig:"SLACK_MAX_IMAGES_PER_THREAD" default:"10"`   // Max images to download per thread
 }
 
 // PostgresConfig holds PostgreSQL configuration

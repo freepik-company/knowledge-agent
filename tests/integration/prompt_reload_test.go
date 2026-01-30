@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
-	"knowledge-agent/internal/prompt"
 )
 
 // TestPromptHotReload verifies that prompt hot reload works in development mode
@@ -35,7 +35,7 @@ func TestPromptHotReload(t *testing.T) {
 	}
 
 	// Create prompt manager
-	manager, err := prompt.NewManager(cfg)
+	manager, err := agent.NewPromptManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create prompt manager: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPromptManagerWithoutHotReload(t *testing.T) {
 		EnableHotReload: false, // Hot reload disabled
 	}
 
-	manager, err := prompt.NewManager(cfg)
+	manager, err := agent.NewPromptManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create prompt manager: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestPromptManagerBasePrompt(t *testing.T) {
 		EnableHotReload: false,
 	}
 
-	manager, err := prompt.NewManager(cfg)
+	manager, err := agent.NewPromptManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create prompt manager: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestPromptManagerPriority(t *testing.T) {
 		EnableHotReload: false,
 	}
 
-	manager, err := prompt.NewManager(cfg)
+	manager, err := agent.NewPromptManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create prompt manager: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPromptManagerConcurrentAccess(t *testing.T) {
 		EnableHotReload: false,
 	}
 
-	manager, err := prompt.NewManager(cfg)
+	manager, err := agent.NewPromptManager(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create prompt manager: %v", err)
 	}

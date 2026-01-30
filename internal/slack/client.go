@@ -61,15 +61,33 @@ type User struct {
 	RealName string `json:"real_name"`
 }
 
+// ClientConfig holds configuration for the Slack client
+type ClientConfig struct {
+	Token           string
+	MaxFileSize     int64
+	ThreadCacheTTL  time.Duration // How long to cache thread messages (default: 5m)
+	ThreadCacheSize int           // Max threads to keep in cache (default: 100)
+}
+
 // NewClient creates a new Slack client with thread message caching
-func NewClient(token string, maxFileSize int64) *Client {
+func NewClient(cfg ClientConfig) *Client {
+	// Apply defaults if not specified
+	cacheTTL := cfg.ThreadCacheTTL
+	if cacheTTL <= 0 {
+		cacheTTL = 5 * time.Minute
+	}
+	cacheMaxSize := cfg.ThreadCacheSize
+	if cacheMaxSize <= 0 {
+		cacheMaxSize = 100
+	}
+
 	c := &Client{
-		api:           slack.New(token),
-		token:         token,
-		maxFileSize:   maxFileSize,
+		api:           slack.New(cfg.Token),
+		token:         cfg.Token,
+		maxFileSize:   cfg.MaxFileSize,
 		threadCache:   make(map[string]*threadCacheEntry),
-		cacheTTL:      5 * time.Minute,  // Cache thread messages for 5 minutes
-		cacheMaxSize:  100,               // Max 100 threads cached
+		cacheTTL:      cacheTTL,
+		cacheMaxSize:  cacheMaxSize,
 		cleanupTicker: time.NewTicker(1 * time.Minute),
 		cleanupDone:   make(chan struct{}),
 	}

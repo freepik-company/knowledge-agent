@@ -15,7 +15,7 @@ import (
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
-	"knowledge-agent/internal/metrics"
+	"knowledge-agent/internal/observability"
 )
 
 // MaxRequestBodySize is the maximum allowed request body size (1MB)
@@ -36,25 +36,37 @@ type A2AAgentProvider interface {
 
 // AgentServer handles HTTP requests for the Knowledge Agent service
 type AgentServer struct {
-	agent       AgentInterface
-	config      *config.Config
-	mux         *http.ServeMux
-	rateLimiter *RateLimiter
-	a2aHandler  *A2AHandler
+	agent          AgentInterface
+	config         *config.Config
+	mux            *http.ServeMux
+	rateLimiter    *RateLimiter
+	a2aHandler     *A2AHandler
+	readinessState *ReadinessState
 }
 
 // NewAgentServer creates a new HTTP server for the agent service
 func NewAgentServer(agnt AgentInterface, cfg *config.Config) *AgentServer {
 	s := &AgentServer{
-		agent:  agnt,
-		config: cfg,
-		mux:    http.NewServeMux(),
+		agent:          agnt,
+		config:         cfg,
+		mux:            http.NewServeMux(),
+		readinessState: NewReadinessState(),
 	}
 
 	// Register routes
 	s.registerRoutes()
 
 	return s
+}
+
+// SetReady marks the server as ready to accept traffic
+func (s *AgentServer) SetReady() {
+	s.readinessState.SetReady()
+}
+
+// SetNotReady marks the server as not ready (shutting down)
+func (s *AgentServer) SetNotReady() {
+	s.readinessState.SetNotReady()
 }
 
 // SetupA2A configures A2A protocol endpoints on this server
@@ -96,7 +108,9 @@ func (s *AgentServer) SetupA2A(llmAgent adkagent.Agent, sessionSvc session.Servi
 func (s *AgentServer) registerRoutes() {
 	// Public endpoints (no authentication)
 	s.mux.HandleFunc("/health", HealthCheckHandler("knowledge-agent", ""))
-	s.mux.Handle("/metrics", promhttp.Handler()) // Prometheus metrics
+	s.mux.HandleFunc("/ready", ReadinessHandler(s.readinessState)) // Kubernetes readiness probe
+	s.mux.HandleFunc("/live", LivenessHandler())                   // Kubernetes liveness probe
+	s.mux.Handle("/metrics", promhttp.Handler())                   // Prometheus metrics
 
 	// Create rate limiter (10 requests/second, burst of 20)
 	// TrustedProxies controls X-Forwarded-For handling - only trust it from configured proxies
@@ -257,7 +271,7 @@ func (s *AgentServer) handleMetricsJSON(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	stats := metrics.Get().GetStats()
+	stats := observability.GetMetrics().GetStats()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

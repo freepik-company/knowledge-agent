@@ -217,16 +217,24 @@ API key authentication for direct API access from external services.
 
 ```bash
 # Knowledge Agent .env
-A2A_API_KEYS='{"root-agent":"ka_secret_abc123","external-service":"ka_secret_def456"}'
+# Format: {"api_key_secret":{"caller_id":"name","role":"write|read"}}
+A2A_API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
+
+# Legacy format (assumes role="write"):
+# A2A_API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
 ```
 
 **Authentication Modes**:
 - **Production** (recommended): Set both `INTERNAL_AUTH_TOKEN` and `A2A_API_KEYS`
 - **Development** (open access): Leave both empty
 
+**Roles**:
+- `write`: Full access (can use all tools including save_to_memory)
+- `read`: Read-only (cannot use save_to_memory)
+
 **Example A2A Usage**:
 ```bash
-# External service accessing agent (use the secret from config)
+# External service accessing agent (use the API key secret)
 curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_secret_abc123" \

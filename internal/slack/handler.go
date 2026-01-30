@@ -15,7 +15,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
-	"knowledge-agent/internal/metrics"
+	"knowledge-agent/internal/observability"
 )
 
 // Handler handles Slack events and bridges them to the Knowledge Agent
@@ -29,8 +29,13 @@ type Handler struct {
 // NewHandler creates a new Slack event handler
 func NewHandler(cfg *config.Config, agentURL string) *Handler {
 	return &Handler{
-		config:        cfg,
-		client:        NewClient(cfg.Slack.BotToken, cfg.Slack.MaxFileSize),
+		config: cfg,
+		client: NewClient(ClientConfig{
+			Token:           cfg.Slack.BotToken,
+			MaxFileSize:     cfg.Slack.MaxFileSize,
+			ThreadCacheTTL:  cfg.Slack.ThreadCacheTTL,
+			ThreadCacheSize: cfg.Slack.ThreadCacheMaxSize,
+		}),
 		agentURL:      agentURL,
 		internalToken: cfg.Auth.InternalToken,
 	}
@@ -100,11 +105,11 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 				"channel", ev.Channel,
 				"text", ev.Text,
 			)
-			metrics.RecordSlackEvent("app_mention", true)
+			observability.RecordSlackEvent("app_mention", true)
 			go h.handleAppMention(ev)
 		default:
 			log.Debugw("Unhandled event type", "type", innerEvent.Type)
-			metrics.RecordSlackEvent(innerEvent.Type, true)
+			observability.RecordSlackEvent(innerEvent.Type, true)
 		}
 	}
 
@@ -156,7 +161,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"user_id", event.User,
 			"error", err,
 		)
-		metrics.RecordSlackAPICall("users.info", false)
+		observability.RecordSlackAPICall("users.info", false)
 	} else {
 		userName = userInfo.Name         // @username
 		userRealName = userInfo.RealName // John Doe
@@ -165,7 +170,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"name", userName,
 			"real_name", userRealName,
 		)
-		metrics.RecordSlackAPICall("users.info", true)
+		observability.RecordSlackAPICall("users.info", true)
 	}
 
 	// 2. Fetch current thread for context
@@ -173,18 +178,21 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	messages, err := h.client.FetchThreadMessages(event.Channel, threadTS)
 	if err != nil {
 		log.Errorw("Failed to fetch thread", "error", err, "channel", event.Channel, "thread_ts", threadTS)
-		metrics.RecordSlackAPICall("conversations.replies", false)
+		observability.RecordSlackAPICall("conversations.replies", false)
 		h.client.PostMessage(event.Channel, threadTS,
 			fmt.Sprintf("Error: Could not fetch thread messages: %v", err))
 		return
 	}
-	metrics.RecordSlackAPICall("conversations.replies", true)
+	observability.RecordSlackAPICall("conversations.replies", true)
 
 	log.Debugw("Fetched thread messages", "count", len(messages))
 
 	// 3. Transform messages to format for agent
 	// Track image stats for logging
-	const maxImagesPerThread = 10 // Limit to prevent payload bloat
+	maxImagesPerThread := h.config.Slack.MaxImagesPerThread
+	if maxImagesPerThread <= 0 {
+		maxImagesPerThread = 10 // Default limit to prevent payload bloat
+	}
 	totalImagesFound := 0
 	totalImagesDownloaded := 0
 	totalImageBytes := 0
@@ -383,7 +391,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 				"payload_kb", payloadSize/1024,
 			)
 		}
-		metrics.RecordAgentForward(false)
+		observability.RecordAgentForward(false)
 		h.client.PostMessage(event.Channel, threadTS,
 			fmt.Sprintf("Error: %s: %v", errMsg, err))
 		return
@@ -392,9 +400,9 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 
 	// Record successful forward (will record error later if status != 200)
 	if resp.StatusCode == http.StatusOK {
-		metrics.RecordAgentForward(true)
+		observability.RecordAgentForward(true)
 	} else {
-		metrics.RecordAgentForward(false)
+		observability.RecordAgentForward(false)
 	}
 
 	// Log response status

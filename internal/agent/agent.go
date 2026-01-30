@@ -23,10 +23,7 @@ import (
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
 	"knowledge-agent/internal/mcp"
-	"knowledge-agent/internal/metrics"
 	"knowledge-agent/internal/observability"
-	"knowledge-agent/internal/permissions"
-	"knowledge-agent/internal/prompt"
 	"knowledge-agent/internal/tools"
 )
 
@@ -34,9 +31,9 @@ const (
 	appName = "knowledge-agent"
 )
 
-// init registers the default knowledge agent prompt with the prompt package
+// init registers the default knowledge agent prompt
 func init() {
-	prompt.SetDefaultPrompt(SystemPrompt)
+	SetDefaultPrompt(SystemPrompt)
 }
 
 // truncateString truncates a string to maxLen and adds ellipsis if needed
@@ -80,8 +77,8 @@ type Agent struct {
 	sessionService    *sessionredis.RedisSessionService
 	memoryService     *memorypostgres.PostgresMemoryService
 	contextHolder     *contextHolder
-	permissionChecker *permissions.MemoryPermissionChecker
-	promptManager     *prompt.Manager
+	permissionChecker *MemoryPermissionChecker
+	promptManager     *PromptManager
 	langfuseTracer    *observability.LangfuseTracer
 	responseCleaner   *ResponseCleaner
 }
@@ -131,7 +128,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 
 	// 4. Initialize context holder and permission checker EARLY
 	contextHolder := &contextHolder{}
-	permChecker := permissions.NewMemoryPermissionChecker(&cfg.Permissions)
+	permChecker := NewMemoryPermissionChecker(&cfg.Permissions)
 
 	// 5. Wrap memory service with permission checking
 	// This intercepts AddSession calls to enforce save_to_memory permissions
@@ -152,7 +149,10 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 
 	// 7. Create web fetch toolset
 	log.Info("Creating web fetch toolset")
-	webToolset, err := tools.NewWebFetchToolset()
+	webToolset, err := tools.NewWebFetchToolset(tools.WebFetchConfig{
+		Timeout:          cfg.Tools.WebFetch.Timeout,
+		DefaultMaxLength: cfg.Tools.WebFetch.DefaultMaxLength,
+	})
 	if err != nil {
 		memoryService.Close()
 		sessionService.Close()
@@ -212,7 +212,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 
 	// 9. Initialize prompt manager
 	log.Info("Initializing prompt manager")
-	promptManager, err := prompt.NewManager(&cfg.Prompt)
+	promptManager, err := NewPromptManager(&cfg.Prompt)
 	if err != nil {
 		memoryService.Close()
 		sessionService.Close()
@@ -295,54 +295,83 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 	}, nil
 }
 
-// Close closes all agent resources
+// Close closes all agent resources with parallel shutdown and global timeout
 func (a *Agent) Close() error {
 	log := logger.Get()
-	log.Info("Shutting down agent resources")
+	log.Info("Shutting down agent resources (parallel)")
 
+	// Global timeout for all resource closures
+	const shutdownTimeout = 5 * time.Second
+
+	type closeResult struct {
+		name string
+		err  error
+	}
+
+	// Collect resources to close
+	type resource struct {
+		name    string
+		closeFn func() error
+	}
+	var resources []resource
+
+	if a.langfuseTracer != nil {
+		resources = append(resources, resource{"langfuse_tracer", a.langfuseTracer.Close})
+	}
+	if a.promptManager != nil {
+		resources = append(resources, resource{"prompt_manager", a.promptManager.Close})
+	}
+	if a.sessionService != nil {
+		resources = append(resources, resource{"session_service", a.sessionService.Close})
+	}
+	if a.memoryService != nil {
+		resources = append(resources, resource{"memory_service", a.memoryService.Close})
+	}
+
+	if len(resources) == 0 {
+		log.Info("No resources to close")
+		return nil
+	}
+
+	// Close all resources in parallel
+	resultCh := make(chan closeResult, len(resources))
+	for _, r := range resources {
+		go func(res resource) {
+			err := res.closeFn()
+			resultCh <- closeResult{name: res.name, err: err}
+		}(r)
+	}
+
+	// Wait for all closures with global timeout
 	var errors []error
+	timeout := time.After(shutdownTimeout)
+	completed := 0
 
-	// Close each resource with individual timeout to prevent blocking
-	closeWithTimeout := func(name string, closeFn func() error) {
-		done := make(chan error, 1)
-		go func() {
-			done <- closeFn()
-		}()
-
+	for completed < len(resources) {
 		select {
-		case err := <-done:
-			if err != nil {
-				log.Warnw("Error closing resource", "resource", name, "error", err)
-				errors = append(errors, fmt.Errorf("%s close error: %w", name, err))
+		case result := <-resultCh:
+			completed++
+			if result.err != nil {
+				log.Warnw("Error closing resource", "resource", result.name, "error", result.err)
+				errors = append(errors, fmt.Errorf("%s: %w", result.name, result.err))
 			} else {
-				log.Infow("Resource closed successfully", "resource", name)
+				log.Infow("Resource closed successfully", "resource", result.name)
 			}
-		case <-time.After(2 * time.Second):
-			log.Warnw("Resource close timeout", "resource", name)
-			errors = append(errors, fmt.Errorf("%s close timeout after 2s", name))
+		case <-timeout:
+			remaining := len(resources) - completed
+			log.Errorw("Shutdown timeout - some resources did not close",
+				"timeout", shutdownTimeout,
+				"remaining", remaining,
+			)
+			errors = append(errors, fmt.Errorf("shutdown timeout: %d resources did not close within %v", remaining, shutdownTimeout))
+			// Break out of the loop - don't wait for remaining resources
+			completed = len(resources)
 		}
 	}
 
-	// Close resources in reverse order of initialization
-	if a.langfuseTracer != nil {
-		closeWithTimeout("langfuse_tracer", a.langfuseTracer.Close)
-	}
-
-	if a.promptManager != nil {
-		closeWithTimeout("prompt_manager", a.promptManager.Close)
-	}
-
-	if a.sessionService != nil {
-		closeWithTimeout("session_service", a.sessionService.Close)
-	}
-
-	if a.memoryService != nil {
-		closeWithTimeout("memory_service", a.memoryService.Close)
-	}
-
 	if len(errors) > 0 {
-		log.Warnw("Some errors during shutdown", "errors", errors)
-		return fmt.Errorf("errors during shutdown: %v", errors)
+		log.Warnw("Shutdown completed with errors", "error_count", len(errors))
+		return fmt.Errorf("shutdown errors: %v", errors)
 	}
 
 	log.Info("Agent resources closed successfully")
@@ -576,7 +605,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 	// Record query metrics
 	defer func() {
-		metrics.Get().RecordQuery(time.Since(startTime), nil)
+		observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
 	}()
 
 	// Create a unique session for this query

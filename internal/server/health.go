@@ -6,12 +6,75 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"knowledge-agent/internal/logger"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// ReadinessState tracks whether the server is ready to accept traffic
+type ReadinessState struct {
+	ready atomic.Bool
+}
+
+// NewReadinessState creates a new readiness state (starts as not ready)
+func NewReadinessState() *ReadinessState {
+	return &ReadinessState{}
+}
+
+// SetReady marks the server as ready to accept traffic
+func (r *ReadinessState) SetReady() {
+	r.ready.Store(true)
+}
+
+// SetNotReady marks the server as not ready (shutting down)
+func (r *ReadinessState) SetNotReady() {
+	r.ready.Store(false)
+}
+
+// IsReady returns whether the server is ready
+func (r *ReadinessState) IsReady() bool {
+	return r.ready.Load()
+}
+
+// ReadinessHandler returns an HTTP handler for readiness checks
+// Returns 200 if ready, 503 if not ready (shutting down or starting up)
+func ReadinessHandler(state *ReadinessState) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		response := map[string]any{
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+
+		if state.IsReady() {
+			response["ready"] = true
+			response["status"] = "accepting_traffic"
+			w.WriteHeader(http.StatusOK)
+		} else {
+			response["ready"] = false
+			response["status"] = "not_accepting_traffic"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// LivenessHandler returns an HTTP handler for liveness checks
+// Always returns 200 if the process is running (not deadlocked)
+func LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"alive":     true,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+}
 
 // HealthChecker interface for checking health of a dependency
 type HealthChecker interface {

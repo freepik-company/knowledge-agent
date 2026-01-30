@@ -1,4 +1,4 @@
-package metrics
+package observability
 
 import (
 	"sync"
@@ -33,11 +33,11 @@ type Metrics struct {
 
 // global singleton instance
 var globalMetrics *Metrics
-var once sync.Once
+var metricsOnce sync.Once
 
-// Get returns the global metrics instance
-func Get() *Metrics {
-	once.Do(func() {
+// GetMetrics returns the global metrics instance
+func GetMetrics() *Metrics {
+	metricsOnce.Do(func() {
 		globalMetrics = &Metrics{
 			startTime: time.Now(),
 		}

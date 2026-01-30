@@ -15,14 +15,35 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 )
 
+// WebFetchConfig holds configuration for the web fetch toolset
+type WebFetchConfig struct {
+	Timeout          time.Duration // HTTP request timeout (default: 30s)
+	DefaultMaxLength int           // Default max content length (default: 10000)
+}
+
 // WebFetchToolset provides tools for fetching and analyzing web content
 type WebFetchToolset struct {
-	tools []tool.Tool
+	tools            []tool.Tool
+	timeout          time.Duration
+	defaultMaxLength int
 }
 
 // NewWebFetchToolset creates a new web fetch toolset
-func NewWebFetchToolset() (*WebFetchToolset, error) {
-	ts := &WebFetchToolset{}
+func NewWebFetchToolset(cfg WebFetchConfig) (*WebFetchToolset, error) {
+	// Apply defaults
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	defaultMaxLength := cfg.DefaultMaxLength
+	if defaultMaxLength <= 0 {
+		defaultMaxLength = 10000
+	}
+
+	ts := &WebFetchToolset{
+		timeout:          timeout,
+		defaultMaxLength: defaultMaxLength,
+	}
 
 	// Create fetch_url tool
 	fetchTool, err := functiontool.New(
@@ -199,7 +220,7 @@ func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchU
 	// Set default max length
 	maxLength := args.MaxLength
 	if maxLength <= 0 {
-		maxLength = 10000
+		maxLength = ts.defaultMaxLength
 	}
 
 	// Create HTTP client with timeout and custom transport to prevent header leakage
@@ -217,13 +238,13 @@ func (ts *WebFetchToolset) fetchURL(ctx tool.Context, args FetchURLArgs) (FetchU
 	}
 
 	client := &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   ts.timeout,
 		Transport: transport,
 	}
 
 	// Create request with a clean context (not propagating any metadata)
 	// Use context.Background() to ensure no metadata from the incoming request is leaked
-	cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanCtx, cancel := context.WithTimeout(context.Background(), ts.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(cleanCtx, "GET", args.URL, nil)

@@ -19,20 +19,21 @@ func TestAuthMiddleware_InternalToken(t *testing.T) {
 
 	handler := AuthMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callerID := ctxutil.CallerID(r.Context())
-		w.Write([]byte(callerID))
+		role := ctxutil.Role(r.Context())
+		w.Write([]byte(callerID + ":" + role))
 	}))
 
 	tests := []struct {
-		name           string
-		token          string
-		wantStatus     int
-		wantCallerID   string
+		name       string
+		token      string
+		wantStatus int
+		wantBody   string
 	}{
 		{
-			name:         "valid internal token",
-			token:        "test-internal-token",
-			wantStatus:   http.StatusOK,
-			wantCallerID: "slack-bridge",
+			name:       "valid internal token",
+			token:      "test-internal-token",
+			wantStatus: http.StatusOK,
+			wantBody:   "slack-bridge:write",
 		},
 		{
 			name:       "invalid internal token",
@@ -60,8 +61,8 @@ func TestAuthMiddleware_InternalToken(t *testing.T) {
 				t.Errorf("got status %d, want %d", rec.Code, tt.wantStatus)
 			}
 
-			if tt.wantStatus == http.StatusOK && rec.Body.String() != tt.wantCallerID {
-				t.Errorf("got callerID %q, want %q", rec.Body.String(), tt.wantCallerID)
+			if tt.wantStatus == http.StatusOK && rec.Body.String() != tt.wantBody {
+				t.Errorf("got body %q, want %q", rec.Body.String(), tt.wantBody)
 			}
 		})
 	}
@@ -96,34 +97,35 @@ func TestAuthMiddleware_InternalTokenWithSlackUserID(t *testing.T) {
 
 func TestAuthMiddleware_APIKey(t *testing.T) {
 	cfg := &config.Config{
-		APIKeys: map[string]string{
-			"client-1": "secret-key-1",
-			"client-2": "secret-key-2",
+		APIKeys: map[string]config.APIKeyConfig{
+			"secret-key-1": {CallerID: "client-1", Role: "write"},
+			"secret-key-2": {CallerID: "client-2", Role: "read"},
 		},
 	}
 
 	handler := AuthMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callerID := ctxutil.CallerID(r.Context())
-		w.Write([]byte(callerID))
+		role := ctxutil.Role(r.Context())
+		w.Write([]byte(callerID + ":" + role))
 	}))
 
 	tests := []struct {
-		name         string
-		apiKey       string
-		wantStatus   int
-		wantCallerID string
+		name       string
+		apiKey     string
+		wantStatus int
+		wantBody   string
 	}{
 		{
-			name:         "valid API key for client-1",
-			apiKey:       "secret-key-1",
-			wantStatus:   http.StatusOK,
-			wantCallerID: "client-1",
+			name:       "valid API key for client-1 (write role)",
+			apiKey:     "secret-key-1",
+			wantStatus: http.StatusOK,
+			wantBody:   "client-1:write",
 		},
 		{
-			name:         "valid API key for client-2",
-			apiKey:       "secret-key-2",
-			wantStatus:   http.StatusOK,
-			wantCallerID: "client-2",
+			name:       "valid API key for client-2 (read role)",
+			apiKey:     "secret-key-2",
+			wantStatus: http.StatusOK,
+			wantBody:   "client-2:read",
 		},
 		{
 			name:       "invalid API key",
@@ -151,10 +153,43 @@ func TestAuthMiddleware_APIKey(t *testing.T) {
 				t.Errorf("got status %d, want %d", rec.Code, tt.wantStatus)
 			}
 
-			if tt.wantStatus == http.StatusOK && rec.Body.String() != tt.wantCallerID {
-				t.Errorf("got callerID %q, want %q", rec.Body.String(), tt.wantCallerID)
+			if tt.wantStatus == http.StatusOK && rec.Body.String() != tt.wantBody {
+				t.Errorf("got body %q, want %q", rec.Body.String(), tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestAuthMiddleware_APIKeyWithSlackUserID(t *testing.T) {
+	// SECURITY: External API keys should NOT be able to pass Slack User ID
+	// This prevents external agents from spoofing Slack user identity
+	cfg := &config.Config{
+		APIKeys: map[string]config.APIKeyConfig{
+			"secret-key": {CallerID: "external-agent", Role: "read"},
+		},
+	}
+
+	handler := AuthMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackUserID := ctxutil.SlackUserID(r.Context())
+		callerID := ctxutil.CallerID(r.Context())
+		role := ctxutil.Role(r.Context())
+		w.Write([]byte(callerID + ":" + role + ":" + slackUserID))
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("X-API-Key", "secret-key")
+	req.Header.Set("X-Slack-User-Id", "U1234567890") // This should be IGNORED for external API keys
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
+	}
+	// Slack User ID should be empty - external API keys cannot spoof user identity
+	if rec.Body.String() != "external-agent:read:" {
+		t.Errorf("got body %q, want %q (Slack User ID should be ignored for external API keys)", rec.Body.String(), "external-agent:read:")
 	}
 }
 
@@ -164,7 +199,8 @@ func TestAuthMiddleware_OpenMode(t *testing.T) {
 
 	handler := AuthMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callerID := ctxutil.CallerID(r.Context())
-		w.Write([]byte(callerID))
+		role := ctxutil.Role(r.Context())
+		w.Write([]byte(callerID + ":" + role))
 	}))
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -175,8 +211,8 @@ func TestAuthMiddleware_OpenMode(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
-	if rec.Body.String() != "unauthenticated" {
-		t.Errorf("got callerID %q, want %q", rec.Body.String(), "unauthenticated")
+	if rec.Body.String() != "unauthenticated:write" {
+		t.Errorf("got body %q, want %q", rec.Body.String(), "unauthenticated:write")
 	}
 }
 
@@ -186,14 +222,15 @@ func TestAuthMiddleware_PriorityOrder(t *testing.T) {
 		Auth: config.AuthConfig{
 			InternalToken: "internal-token",
 		},
-		APIKeys: map[string]string{
-			"client-1": "api-key-1",
+		APIKeys: map[string]config.APIKeyConfig{
+			"api-key-1": {CallerID: "client-1", Role: "read"},
 		},
 	}
 
 	handler := AuthMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callerID := ctxutil.CallerID(r.Context())
-		w.Write([]byte(callerID))
+		role := ctxutil.Role(r.Context())
+		w.Write([]byte(callerID + ":" + role))
 	}))
 
 	// Test that internal token takes priority
@@ -207,9 +244,9 @@ func TestAuthMiddleware_PriorityOrder(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
-	// Internal token should win
-	if rec.Body.String() != "slack-bridge" {
-		t.Errorf("got callerID %q, want %q", rec.Body.String(), "slack-bridge")
+	// Internal token should win with write role
+	if rec.Body.String() != "slack-bridge:write" {
+		t.Errorf("got body %q, want %q", rec.Body.String(), "slack-bridge:write")
 	}
 }
 
@@ -278,3 +315,4 @@ func TestJsonError(t *testing.T) {
 		t.Errorf("got message %q, want %q", response["message"], "test error message")
 	}
 }
+

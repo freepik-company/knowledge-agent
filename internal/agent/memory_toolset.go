@@ -3,8 +3,6 @@ package agent
 import (
 	"context"
 	"sync"
-
-	"knowledge-agent/internal/permissions"
 )
 
 // contextHolder holds the current request context for permission checks
@@ -31,5 +29,5 @@ func (c *contextHolder) SetContext(ctx context.Context) {
 // PermissionEnforcedAgent wraps agent functionality with permission checking
 type PermissionEnforcedAgent struct {
 	contextHolder     *contextHolder
-	permissionChecker *permissions.MemoryPermissionChecker
+	permissionChecker *MemoryPermissionChecker
 }

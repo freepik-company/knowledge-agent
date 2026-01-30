@@ -39,19 +39,21 @@ func LoadFromYAML(path string) (*Config, error) {
 	// Apply default values for empty fields
 	applyDefaults(&cfg)
 
-	// Parse A2A API keys if provided as JSON string
-	// This handles the case where a2a_api_keys: ${ENV:A2A_API_KEYS} expands to JSON
-	if apiKeysStr := v.GetString("a2a_api_keys"); apiKeysStr != "" && strings.HasPrefix(strings.TrimSpace(apiKeysStr), "{") {
-		var apiKeys map[string]string
-		if err := json.Unmarshal([]byte(apiKeysStr), &apiKeys); err != nil {
-			return nil, fmt.Errorf("failed to parse a2a_api_keys JSON: %w", err)
+	// Parse API keys if provided as JSON string from environment variable
+	// Supports two formats:
+	// New format: {"ka_key": {"caller_id": "name", "role": "write"}}
+	// Legacy format: {"ka_key": "caller_id"} (assumes role="write")
+	if apiKeysStr := v.GetString("api_keys"); apiKeysStr != "" && strings.HasPrefix(strings.TrimSpace(apiKeysStr), "{") {
+		apiKeys, err := parseAPIKeysJSON(apiKeysStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse api_keys JSON: %w", err)
 		}
 		cfg.APIKeys = apiKeys
 	}
 
 	// Initialize empty map if not set
 	if cfg.APIKeys == nil {
-		cfg.APIKeys = make(map[string]string)
+		cfg.APIKeys = make(map[string]APIKeyConfig)
 	}
 
 	return &cfg, nil
@@ -173,13 +175,57 @@ func LoadFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("failed to process config: %w", err)
 	}
 
-	// Parse A2A API keys from environment variable (JSON format)
-	// Example: A2A_API_KEYS='{"ka_abc123":"root-agent","ka_xyz":"slack-bridge"}'
-	if keysJSON := os.Getenv("A2A_API_KEYS"); keysJSON != "" {
-		if err := json.Unmarshal([]byte(keysJSON), &cfg.APIKeys); err != nil {
-			return nil, fmt.Errorf("failed to parse A2A_API_KEYS: %w", err)
+	// Parse API keys from environment variable (JSON format)
+	// Supports both new and legacy formats
+	if keysJSON := os.Getenv("API_KEYS"); keysJSON != "" {
+		apiKeys, err := parseAPIKeysJSON(keysJSON)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse API_KEYS: %w", err)
 		}
+		cfg.APIKeys = apiKeys
 	}
 
 	return &cfg, nil
+}
+
+// parseAPIKeysJSON parses API keys from JSON, supporting both formats:
+// New format: {"ka_key": {"caller_id": "name", "role": "write"}}
+// Legacy format: {"ka_key": "caller_id"} (assumes role="write" for backwards compatibility)
+func parseAPIKeysJSON(jsonStr string) (map[string]APIKeyConfig, error) {
+	result := make(map[string]APIKeyConfig)
+
+	// First try to parse as new format
+	var newFormat map[string]APIKeyConfig
+	if err := json.Unmarshal([]byte(jsonStr), &newFormat); err == nil {
+		// Validate and set defaults
+		for key, cfg := range newFormat {
+			if cfg.CallerID == "" {
+				return nil, fmt.Errorf("api_keys[%s]: caller_id is required", key)
+			}
+			if cfg.Role == "" {
+				cfg.Role = "write" // Default to write for backwards compatibility
+			}
+			if cfg.Role != "read" && cfg.Role != "write" {
+				return nil, fmt.Errorf("api_keys[%s]: role must be 'read' or 'write', got '%s'", key, cfg.Role)
+			}
+			result[key] = cfg
+		}
+		return result, nil
+	}
+
+	// Try legacy format: {"key": "caller_id"}
+	var legacyFormat map[string]string
+	if err := json.Unmarshal([]byte(jsonStr), &legacyFormat); err != nil {
+		return nil, fmt.Errorf("invalid JSON format: %w", err)
+	}
+
+	// Convert legacy format to new format (assume role="write")
+	for key, callerID := range legacyFormat {
+		result[key] = APIKeyConfig{
+			CallerID: callerID,
+			Role:     "write", // Legacy keys get write access for backwards compatibility
+		}
+	}
+
+	return result, nil
 }

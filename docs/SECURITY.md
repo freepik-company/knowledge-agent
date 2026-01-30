@@ -44,17 +44,24 @@ INTERNAL_AUTH_TOKEN=$(openssl rand -hex 32)
 
 **Configuration**:
 ```yaml
-# config.yaml
-a2a_api_keys:
-  root-agent: ka_secret_abc123
-  external-service: ka_secret_def456
-  monitoring: ka_secret_ghi789
+# config.yaml - New format with roles
+api_keys:
+  ka_secret_abc123:
+    caller_id: root-agent
+    role: write
+  ka_secret_def456:
+    caller_id: external-service
+    role: read  # Read-only (cannot save_to_memory)
 ```
 
 **Environment Variable**:
 ```bash
-# JSON format - Maps client_id to secret
-A2A_API_KEYS='{"root-agent":"ka_secret_abc123","external-service":"ka_secret_def456"}'
+# JSON format - Maps API key (secret) to config
+# New format with roles:
+A2A_API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
+
+# Legacy format (assumes role="write"):
+A2A_API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
 ```
 
 **How it works**:
@@ -77,9 +84,13 @@ A2A_API_KEYS='{"root-agent":"ka_secret_abc123","external-service":"ka_secret_def
 
 **Configuration**:
 ```yaml
-a2a_api_keys:
-  root-agent: ka_secret_abc123
-  metrics-agent: ka_secret_def456
+api_keys:
+  ka_secret_abc123:
+    caller_id: root-agent
+    role: write
+  ka_secret_def456:
+    caller_id: metrics-agent
+    role: write
 ```
 
 **How it works**:

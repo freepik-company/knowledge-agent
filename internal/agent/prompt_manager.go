@@ -1,4 +1,4 @@
-package prompt
+package agent
 
 import (
 	"fmt"
@@ -11,8 +11,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// Manager manages system prompts with support for hot reload
-type Manager struct {
+// PromptManager manages system prompts with support for hot reload
+type PromptManager struct {
 	config        *config.PromptConfig
 	currentPrompt string
 	mu            sync.RWMutex
@@ -20,11 +20,11 @@ type Manager struct {
 	stopChan      chan struct{}
 }
 
-// NewManager creates a new prompt manager
-func NewManager(cfg *config.PromptConfig) (*Manager, error) {
+// NewPromptManager creates a new prompt manager
+func NewPromptManager(cfg *config.PromptConfig) (*PromptManager, error) {
 	log := logger.Get()
 
-	m := &Manager{
+	m := &PromptManager{
 		config:   cfg,
 		stopChan: make(chan struct{}),
 	}
@@ -60,7 +60,7 @@ func NewManager(cfg *config.PromptConfig) (*Manager, error) {
 }
 
 // loadPrompt loads the prompt from file or config
-func (m *Manager) loadPrompt() error {
+func (m *PromptManager) loadPrompt() error {
 	log := logger.Get()
 
 	var prompt string
@@ -102,7 +102,7 @@ func (m *Manager) loadPrompt() error {
 }
 
 // watchFile watches for changes to the template file
-func (m *Manager) watchFile() {
+func (m *PromptManager) watchFile() {
 	log := logger.Get()
 
 	for {
@@ -138,19 +138,19 @@ func (m *Manager) watchFile() {
 }
 
 // GetPrompt returns the current prompt (thread-safe)
-func (m *Manager) GetPrompt() string {
+func (m *PromptManager) GetPrompt() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currentPrompt
 }
 
 // Reload manually reloads the prompt
-func (m *Manager) Reload() error {
+func (m *PromptManager) Reload() error {
 	return m.loadPrompt()
 }
 
 // Close stops the file watcher and cleanup
-func (m *Manager) Close() error {
+func (m *PromptManager) Close() error {
 	if m.watcher != nil {
 		close(m.stopChan)
 		return m.watcher.Close()
