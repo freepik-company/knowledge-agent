@@ -147,10 +147,27 @@ func createCommandTransport(cfg config.MCPServerConfig) (mcp.Transport, error) {
 	// Start with safe environment variables (no secrets)
 	env := getSafeEnvironmentVariables()
 
-	// Add server-specific environment variables from config
-	// These are explicitly configured per-server, not inherited
+	// Add inherited environment variables from pod (by name)
+	// These are explicitly listed in config, read from current environment
+	if len(cfg.Command.InheritEnv) > 0 {
+		log.Infow("Inheriting environment variables from pod",
+			"server", cfg.Name,
+			"vars", cfg.Command.InheritEnv)
+		for _, varName := range cfg.Command.InheritEnv {
+			if value, ok := os.LookupEnv(varName); ok {
+				env = append(env, fmt.Sprintf("%s=%s", varName, value))
+			} else {
+				log.Warnw("Inherited env var not found in environment",
+					"server", cfg.Name,
+					"var", varName)
+			}
+		}
+	}
+
+	// Add server-specific environment variables from config (static values)
+	// These are explicitly configured per-server with literal values
 	if len(cfg.Command.Env) > 0 {
-		log.Infow("Adding server-specific environment variables",
+		log.Infow("Adding static environment variables",
 			"server", cfg.Name,
 			"count", len(cfg.Command.Env))
 		for key, value := range cfg.Command.Env {

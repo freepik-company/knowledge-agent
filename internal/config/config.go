@@ -100,9 +100,10 @@ type MCPServerConfig struct {
 
 // MCPCommandConfig holds configuration for command-based MCP transport
 type MCPCommandConfig struct {
-	Path string            `yaml:"path" mapstructure:"path"`         // Executable path
-	Args []string          `yaml:"args,omitempty" mapstructure:"args"` // Command arguments
-	Env  map[string]string `yaml:"env,omitempty" mapstructure:"env"`   // Additional environment variables
+	Path       string            `yaml:"path" mapstructure:"path"`                     // Executable path
+	Args       []string          `yaml:"args,omitempty" mapstructure:"args"`           // Command arguments
+	Env        map[string]string `yaml:"env,omitempty" mapstructure:"env"`             // Additional environment variables (static values)
+	InheritEnv []string          `yaml:"inherit_env,omitempty" mapstructure:"inherit_env"` // Env var names to inherit from pod environment
 }
 
 // MCPAuthConfig holds authentication configuration for MCP servers
