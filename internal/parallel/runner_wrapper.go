@@ -15,8 +15,7 @@ import (
 	"knowledge-agent/internal/logger"
 )
 
-// RunnerWrapper wraps an ADK runner to provide parallel execution capabilities
-// and metrics for tool calls
+// RunnerWrapper wraps an ADK runner to provide parallel execution metrics
 type RunnerWrapper struct {
 	baseRunner *runner.Runner
 	executor   *Executor
@@ -31,7 +30,7 @@ type RunnerWrapper struct {
 
 // NewRunnerWrapper creates a new runner wrapper with parallel execution support
 func NewRunnerWrapper(baseRunner *runner.Runner, cfg *config.ParallelConfig) *RunnerWrapper {
-	if cfg == nil {
+	if cfg == nil || !cfg.Enabled {
 		return &RunnerWrapper{
 			baseRunner: baseRunner,
 			enabled:    false,
@@ -47,15 +46,19 @@ func NewRunnerWrapper(baseRunner *runner.Runner, cfg *config.ParallelConfig) *Ru
 	return &RunnerWrapper{
 		baseRunner: baseRunner,
 		executor:   executor,
-		enabled:    cfg.Enabled,
+		enabled:    true,
 	}
 }
 
 // Run executes the runner and tracks parallel execution opportunities
 func (rw *RunnerWrapper) Run(ctx context.Context, userID, sessionID string, msg *genai.Content, cfg agent.RunConfig) iter.Seq2[*session.Event, error] {
-	log := logger.Get()
+	// If not enabled, just pass through to base runner directly
+	if !rw.enabled {
+		return rw.baseRunner.Run(ctx, userID, sessionID, msg, cfg)
+	}
 
 	return func(yield func(*session.Event, error) bool) {
+		log := logger.Get()
 		var pendingCalls []*pendingToolCall
 		var lastCallTime time.Time
 
@@ -68,8 +71,8 @@ func (rw *RunnerWrapper) Run(ctx context.Context, userID, sessionID string, msg 
 				continue
 			}
 
-			// Analyze event for tool calls
-			if event.Content != nil {
+			// Analyze event for tool calls (only if we have content)
+			if event != nil && event.Content != nil && len(event.Content.Parts) > 0 {
 				functionCalls := extractFunctionCalls(event.Content.Parts)
 				functionResponses := extractFunctionResponses(event.Content.Parts)
 
@@ -80,7 +83,6 @@ func (rw *RunnerWrapper) Run(ctx context.Context, userID, sessionID string, msg 
 
 					now := time.Now()
 					if !lastCallTime.IsZero() && now.Sub(lastCallTime) < 100*time.Millisecond {
-						// Tool calls within 100ms window could have been parallel
 						rw.mu.Lock()
 						rw.parallelizableCalls += int64(len(functionCalls))
 						rw.mu.Unlock()
@@ -95,17 +97,18 @@ func (rw *RunnerWrapper) Run(ctx context.Context, userID, sessionID string, msg 
 						})
 					}
 
-					log.Debugw("Tool calls detected",
-						"count", len(functionCalls),
-						"tools", getToolNames(functionCalls),
-						"parallelizable", rw.executor.CanParallelize(toToolCalls(functionCalls)),
-					)
+					// Only log if executor exists
+					if rw.executor != nil {
+						log.Debugw("Tool calls detected",
+							"count", len(functionCalls),
+							"tools", getToolNames(functionCalls),
+						)
+					}
 				}
 
 				if len(functionResponses) > 0 {
 					now := time.Now()
 					for _, fr := range functionResponses {
-						// Find matching pending call
 						for i, pc := range pendingCalls {
 							if pc.name == fr.Name && pc.endTime.IsZero() {
 								pendingCalls[i].endTime = now
@@ -140,13 +143,12 @@ type pendingToolCall struct {
 
 // analyzeParallelization logs analysis of potential parallelization savings
 func (rw *RunnerWrapper) analyzeParallelization(calls []*pendingToolCall) {
-	log := logger.Get()
-
 	if len(calls) < 2 {
 		return
 	}
 
-	// Calculate sequential time
+	log := logger.Get()
+
 	var sequentialTime time.Duration
 	var longestCall time.Duration
 	toolNames := make([]string, 0, len(calls))
@@ -161,7 +163,6 @@ func (rw *RunnerWrapper) analyzeParallelization(calls []*pendingToolCall) {
 		toolNames = append(toolNames, call.name)
 	}
 
-	// If all calls were parallelized, time would be the longest single call
 	potentialTime := longestCall
 	savedTime := sequentialTime - potentialTime
 
@@ -205,7 +206,7 @@ type ParallelMetrics struct {
 func extractFunctionCalls(parts []*genai.Part) []*genai.FunctionCall {
 	var calls []*genai.FunctionCall
 	for _, part := range parts {
-		if part.FunctionCall != nil {
+		if part != nil && part.FunctionCall != nil {
 			calls = append(calls, part.FunctionCall)
 		}
 	}
@@ -215,7 +216,7 @@ func extractFunctionCalls(parts []*genai.Part) []*genai.FunctionCall {
 func extractFunctionResponses(parts []*genai.Part) []*genai.FunctionResponse {
 	var responses []*genai.FunctionResponse
 	for _, part := range parts {
-		if part.FunctionResponse != nil {
+		if part != nil && part.FunctionResponse != nil {
 			responses = append(responses, part.FunctionResponse)
 		}
 	}
@@ -228,18 +229,6 @@ func getToolNames(calls []*genai.FunctionCall) []string {
 		names[i] = c.Name
 	}
 	return names
-}
-
-func toToolCalls(fcs []*genai.FunctionCall) []ToolCall {
-	calls := make([]ToolCall, len(fcs))
-	for i, fc := range fcs {
-		calls[i] = ToolCall{
-			ID:   fc.ID,
-			Name: fc.Name,
-			Args: fc.Args,
-		}
-	}
-	return calls
 }
 
 // GetBaseRunner returns the underlying ADK runner
