@@ -190,6 +190,7 @@ type SlackConfig struct {
 	ThreadCacheTTL     time.Duration `yaml:"thread_cache_ttl" mapstructure:"thread_cache_ttl" envconfig:"SLACK_THREAD_CACHE_TTL" default:"5m"`                 // How long to cache thread messages
 	ThreadCacheMaxSize int           `yaml:"thread_cache_max_size" mapstructure:"thread_cache_max_size" envconfig:"SLACK_THREAD_CACHE_MAX_SIZE" default:"100"` // Max threads to keep in cache
 	MaxImagesPerThread int           `yaml:"max_images_per_thread" mapstructure:"max_images_per_thread" envconfig:"SLACK_MAX_IMAGES_PER_THREAD" default:"10"`  // Max images to download per thread
+	MaxThreadMessages  int           `yaml:"max_thread_messages" mapstructure:"max_thread_messages" envconfig:"SLACK_MAX_THREAD_MESSAGES" default:"0"`         // Max messages fallback limit (0 = no limit, smart trimming by bot mention is primary)
 }
 
 // PostgresConfig holds PostgreSQL configuration

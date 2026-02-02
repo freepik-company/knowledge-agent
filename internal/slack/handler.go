@@ -309,6 +309,46 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 
 	log.Debugw("Fetched thread messages", "count", len(messages))
 
+	// Smart context trimming: only get messages since last bot mention
+	// The rest of the context is already in the Redis session from previous interactions
+	originalCount := len(messages)
+	if len(messages) > 1 && h.botUserID != "" {
+		lastMentionIdx := h.findLastBotMentionIndex(messages)
+		if lastMentionIdx > 0 {
+			// Keep messages from last mention onwards
+			// Also keep first message (thread start) for context if it would be trimmed
+			if lastMentionIdx > 1 {
+				// Include thread start + messages from last mention
+				messages = append([]Message{messages[0]}, messages[lastMentionIdx:]...)
+			} else {
+				messages = messages[lastMentionIdx:]
+			}
+			log.Infow("Trimmed thread to messages since last bot mention",
+				"original_count", originalCount,
+				"trimmed_to", len(messages),
+				"last_mention_idx", lastMentionIdx,
+			)
+		}
+	}
+
+	// Fallback: apply max limit if still too many messages
+	maxThreadMessages := h.config.Slack.MaxThreadMessages
+	if maxThreadMessages > 0 && len(messages) > maxThreadMessages {
+		// Keep first message + last N-1 messages
+		if maxThreadMessages > 1 {
+			firstMsg := messages[0]
+			lastMessages := messages[len(messages)-(maxThreadMessages-1):]
+			messages = append([]Message{firstMsg}, lastMessages...)
+		} else {
+			messages = messages[len(messages)-1:]
+		}
+		log.Infow("Applied max thread messages limit",
+			"before_limit", len(messages),
+			"after_limit", len(messages),
+			"max_allowed", maxThreadMessages,
+		)
+	}
+
 	// 3. Transform messages to format for agent
 	// Track image stats for logging
 	maxImagesPerThread := h.config.Slack.MaxImagesPerThread
@@ -652,4 +692,26 @@ func stripBotMention(text string) string {
 	re := regexp.MustCompile(`<@[A-Z0-9]+>`)
 	cleanText := re.ReplaceAllString(text, "")
 	return strings.TrimSpace(cleanText)
+}
+
+// findLastBotMentionIndex finds the index of the last message that mentions the bot
+// (excluding the current/last message which triggered this handler)
+// Returns 0 if no previous mention found (meaning we should include all messages)
+func (h *Handler) findLastBotMentionIndex(messages []Message) int {
+	if len(messages) <= 1 {
+		return 0
+	}
+
+	botMentionPattern := fmt.Sprintf("<@%s>", h.botUserID)
+
+	// Search backwards from second-to-last message (last message is current trigger)
+	for i := len(messages) - 2; i >= 0; i-- {
+		if strings.Contains(messages[i].Text, botMentionPattern) {
+			return i
+		}
+	}
+
+	// No previous mention found - this might be first interaction in thread
+	// Return 0 to include all messages
+	return 0
 }
