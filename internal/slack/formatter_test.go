@@ -80,6 +80,31 @@ func TestFormatMessageForSlack(t *testing.T) {
 			input:    "Config: `SOME_VAR_NAME_HERE` is set to `OTHER_VAR`",
 			expected: "Config: `SOME_VAR_NAME_HERE` is set to `OTHER_VAR`",
 		},
+		{
+			name:     "Convert simple markdown table",
+			input:    "| Name | Value |\n|------|-------|\n| foo | bar |",
+			expected: "*Name* | *Value*\nfoo | bar",
+		},
+		{
+			name:     "Convert table with numbers",
+			input:    "| # | Error | Count |\n|---|-------|-------|\n| 1 | Error X | 163K |\n| 2 | Error Y | 50K |",
+			expected: "*#* | *Error* | *Count*\n1 | Error X | 163K\n2 | Error Y | 50K",
+		},
+		{
+			name:     "Table with text before and after",
+			input:    "Here are the results:\n\n| Column A | Column B |\n|----------|----------|\n| Value 1 | Value 2 |\n\nThat's all!",
+			expected: "Here are the results:\n\n*Column A* | *Column B*\nValue 1 | Value 2\n\nThat's all!",
+		},
+		{
+			name:     "Text without tables unchanged",
+			input:    "No tables here, just text with | pipe character",
+			expected: "No tables here, just text with | pipe character",
+		},
+		{
+			name:     "Table with alignment markers",
+			input:    "| Left | Center | Right |\n|:-----|:------:|------:|\n| L | C | R |",
+			expected: "*Left* | *Center* | *Right*\nL | C | R",
+		},
 	}
 
 	for _, tt := range tests {
