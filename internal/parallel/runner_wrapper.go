@@ -51,85 +51,14 @@ func NewRunnerWrapper(baseRunner *runner.Runner, cfg *config.ParallelConfig) *Ru
 }
 
 // Run executes the runner and tracks parallel execution opportunities
+// NOTE: Currently always passes through to base runner directly because wrapping
+// the iterator interferes with ADK's internal handling of A2A sub-agent responses.
+// The parallel execution monitoring is disabled until we find a way to observe
+// events without wrapping the iterator.
 func (rw *RunnerWrapper) Run(ctx context.Context, userID, sessionID string, msg *genai.Content, cfg agent.RunConfig) iter.Seq2[*session.Event, error] {
-	// If not enabled, just pass through to base runner directly
-	if !rw.enabled {
-		return rw.baseRunner.Run(ctx, userID, sessionID, msg, cfg)
-	}
-
-	return func(yield func(*session.Event, error) bool) {
-		log := logger.Get()
-		var pendingCalls []*pendingToolCall
-		var lastCallTime time.Time
-
-		// Track tool calls in the current turn
-		for event, err := range rw.baseRunner.Run(ctx, userID, sessionID, msg, cfg) {
-			if err != nil {
-				if !yield(event, err) {
-					return
-				}
-				continue
-			}
-
-			// Analyze event for tool calls (only if we have content)
-			if event != nil && event.Content != nil && len(event.Content.Parts) > 0 {
-				functionCalls := extractFunctionCalls(event.Content.Parts)
-				functionResponses := extractFunctionResponses(event.Content.Parts)
-
-				if len(functionCalls) > 0 {
-					rw.mu.Lock()
-					rw.totalToolCalls += int64(len(functionCalls))
-					rw.mu.Unlock()
-
-					now := time.Now()
-					if !lastCallTime.IsZero() && now.Sub(lastCallTime) < 100*time.Millisecond {
-						rw.mu.Lock()
-						rw.parallelizableCalls += int64(len(functionCalls))
-						rw.mu.Unlock()
-					}
-					lastCallTime = now
-
-					for _, fc := range functionCalls {
-						pendingCalls = append(pendingCalls, &pendingToolCall{
-							name:      fc.Name,
-							args:      fc.Args,
-							startTime: now,
-						})
-					}
-
-					// Only log if executor exists
-					if rw.executor != nil {
-						log.Debugw("Tool calls detected",
-							"count", len(functionCalls),
-							"tools", getToolNames(functionCalls),
-						)
-					}
-				}
-
-				if len(functionResponses) > 0 {
-					now := time.Now()
-					for _, fr := range functionResponses {
-						for i, pc := range pendingCalls {
-							if pc.name == fr.Name && pc.endTime.IsZero() {
-								pendingCalls[i].endTime = now
-								pendingCalls[i].duration = now.Sub(pc.startTime)
-								break
-							}
-						}
-					}
-				}
-			}
-
-			if !yield(event, nil) {
-				return
-			}
-		}
-
-		// Log parallelization analysis at end of run
-		if len(pendingCalls) > 1 {
-			rw.analyzeParallelization(pendingCalls)
-		}
-	}
+	// Always pass through to base runner directly
+	// Wrapping the iterator breaks A2A sub-agent response handling
+	return rw.baseRunner.Run(ctx, userID, sessionID, msg, cfg)
 }
 
 // pendingToolCall tracks a tool call in progress
