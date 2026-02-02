@@ -76,6 +76,9 @@ services:
       POSTGRES_URL: postgres://postgres:postgres@postgres:5432/knowledge_agent?sslmode=disable
       REDIS_ADDR: redis:6379
       OLLAMA_BASE_URL: http://ollama:11434/v1
+      # Authentication (see docs/SECURITY_GUIDE.md)
+      # INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN}  # Slack Bridge <-> Agent
+      # API_KEYS: '{"ka_secret_key":{"caller_id":"service","role":"write"}}'  # A2A auth
       # Optional: Install npm packages at RUNTIME (useful for Kubernetes/Helm)
       # MCP_NPM_PACKAGES: "@modelcontextprotocol/server-filesystem @modelcontextprotocol/server-sqlite"
     ports:

@@ -56,6 +56,15 @@ knowledgeAgent:
           name: knowledge-agent-secrets
           key: internal-auth-token
 
+    # API Keys for A2A authentication (JSON format)
+    # Format: {"secret_key": {"caller_id": "name", "role": "write|read"}}
+    - name: API_KEYS
+      valueFrom:
+        secretKeyRef:
+          name: knowledge-agent-secrets
+          key: api-keys
+          optional: true  # Not required for development
+
   # Resource limits
   resources:
     requests:
