@@ -25,6 +25,7 @@ type Handler struct {
 	agentURL      string // URL of the Knowledge Agent service
 	internalToken string // Internal token for authenticating with the Knowledge Agent
 	botUserID     string // Bot's own user ID (for filtering self-messages in DMs)
+	ackGenerator  *AckGenerator // Generator for contextual acknowledgment messages
 }
 
 // NewHandler creates a new Slack event handler
@@ -43,6 +44,7 @@ func NewHandler(cfg *config.Config, agentURL string) *Handler {
 		client:        client,
 		agentURL:      agentURL,
 		internalToken: cfg.Auth.InternalToken,
+		ackGenerator:  NewAckGenerator(cfg.Anthropic.APIKey),
 	}
 
 	// Initialize bot user ID for DM filtering
@@ -193,14 +195,14 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 // scheduleProcessingAck schedules an acknowledgment message to be sent after AckDelayThreshold
 // Returns a cancel function that should be called when processing completes to prevent the ack
 // from being sent if the response arrived quickly (better UX - no message spam)
-func (h *Handler) scheduleProcessingAck(channelID, threadTS string) context.CancelFunc {
+func (h *Handler) scheduleProcessingAck(channelID, threadTS, userMessage string) context.CancelFunc {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
 		select {
 		case <-time.After(AckDelayThreshold):
 			// Processing is taking a while, send the ack
-			h.sendProcessingAckNow(channelID, threadTS)
+			h.sendProcessingAckNow(ctx, channelID, threadTS, userMessage)
 		case <-ctx.Done():
 			// Processing completed before threshold, no ack needed
 		}
@@ -210,9 +212,11 @@ func (h *Handler) scheduleProcessingAck(channelID, threadTS string) context.Canc
 }
 
 // sendProcessingAckNow sends the acknowledgment message immediately
-func (h *Handler) sendProcessingAckNow(channelID, threadTS string) {
+func (h *Handler) sendProcessingAckNow(ctx context.Context, channelID, threadTS, userMessage string) {
 	log := logger.Get()
-	ackMessage := ":mag: Procesando tu mensaje..."
+
+	// Generate contextual ack message using Haiku
+	ackMessage := h.ackGenerator.GenerateAck(ctx, userMessage)
 
 	if err := h.client.PostMessage(channelID, threadTS, ackMessage); err != nil {
 		// Don't fail the request if ack fails - just log warning and continue
@@ -238,16 +242,16 @@ func (h *Handler) handleAppMention(event *slackevents.AppMentionEvent) {
 		threadTS = event.TimeStamp
 	}
 
+	// Strip bot mention and get the user's message
+	message := stripBotMention(event.Text)
+
 	// Schedule acknowledgment (only sent if processing takes > AckDelayThreshold)
-	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS)
+	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS, message)
 	defer cancelAck() // Cancel ack if response arrives quickly
 
 	// Create context with timeout for async operations
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-
-	// Strip bot mention and get the user's message
-	message := stripBotMention(event.Text)
 
 	// Always send to agent - LLM will decide what to do
 	h.sendToAgent(ctx, event, message)
@@ -619,7 +623,7 @@ func (h *Handler) handleDirectMessage(event *slackevents.MessageEvent) {
 	}
 
 	// Schedule acknowledgment (only sent if processing takes > AckDelayThreshold)
-	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS)
+	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS, event.Text)
 	defer cancelAck() // Cancel ack if response arrives quickly
 
 	// Create context with timeout for async operations
