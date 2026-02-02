@@ -57,65 +57,72 @@ func FormatMessageForSlack(text string) string {
 }
 
 // convertMarkdownTables converts markdown tables to a readable Slack format
-// Example input:
+// Handles both formats:
 //
-//	| # | Error | Count |
-//	|---|-------|-------|
-//	| 1 | Error X | 163K |
+//	Standard:  | # | Error | Count |
+//	Compact:   # | Error | Count
 //
-// Example output:
-//
-//	*#* | *Error* | *Count*
-//	1 | Error X | 163K
+// Output removes separator lines and makes headers bold
 func convertMarkdownTables(text string) string {
 	lines := strings.Split(text, "\n")
 	var result []string
-	var inTable bool
-	var headers []string
+	i := 0
 
-	for i := 0; i < len(lines); i++ {
+	for i < len(lines) {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 
-		// Check if this is a table line (starts and ends with |)
-		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
-			// Check if this is a separator line (contains only |, -, :, and spaces)
-			if isTableSeparator(trimmed) {
-				// Skip separator lines
-				continue
-			}
-
-			// Parse the cells
-			cells := parseTableRow(trimmed)
-
-			if !inTable {
-				// This is the header row
-				inTable = true
-				headers = cells
-				// Format headers as bold
+		// Check if this could be a table header (has | and content)
+		if hasTableContent(trimmed) {
+			// Look ahead to see if next line is a separator
+			if i+1 < len(lines) && isTableSeparator(strings.TrimSpace(lines[i+1])) {
+				// This is a table! Process header
+				cells := parseTableRow(trimmed)
 				var boldHeaders []string
-				for _, h := range headers {
+				for _, h := range cells {
+					h = strings.TrimSpace(h)
 					if h != "" {
 						boldHeaders = append(boldHeaders, "*"+h+"*")
 					}
 				}
 				result = append(result, strings.Join(boldHeaders, " | "))
-			} else {
-				// This is a data row
-				result = append(result, strings.Join(cells, " | "))
+				i += 2 // Skip header and separator
+
+				// Process data rows
+				for i < len(lines) {
+					dataLine := lines[i]
+					dataTrimmed := strings.TrimSpace(dataLine)
+					if hasTableContent(dataTrimmed) && !isTableSeparator(dataTrimmed) {
+						dataCells := parseTableRow(dataTrimmed)
+						result = append(result, strings.Join(dataCells, " | "))
+						i++
+					} else {
+						break
+					}
+				}
+				continue
 			}
-		} else {
-			// Not a table line
-			if inTable {
-				// End of table, add a blank line for separation
-				inTable = false
-				headers = nil
-			}
-			result = append(result, line)
 		}
+
+		// Not a table line, keep as-is
+		result = append(result, line)
+		i++
 	}
 
 	return strings.Join(result, "\n")
+}
+
+// hasTableContent checks if a line has table content (| with actual text)
+func hasTableContent(line string) bool {
+	if !strings.Contains(line, "|") {
+		return false
+	}
+	// Must have actual content, not just pipes/dashes/colons/spaces
+	cleaned := strings.ReplaceAll(line, "|", "")
+	cleaned = strings.ReplaceAll(cleaned, "-", "")
+	cleaned = strings.ReplaceAll(cleaned, ":", "")
+	cleaned = strings.TrimSpace(cleaned)
+	return len(cleaned) > 0
 }
 
 // isTableSeparator checks if a line is a markdown table separator (e.g., |---|---|)

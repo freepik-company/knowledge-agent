@@ -105,6 +105,16 @@ func TestFormatMessageForSlack(t *testing.T) {
 			input:    "| Left | Center | Right |\n|:-----|:------:|------:|\n| L | C | R |",
 			expected: "*Left* | *Center* | *Right*\nL | C | R",
 		},
+		{
+			name:     "Table without leading/trailing pipes",
+			input:    "# | Error | Count\n---|---|---\n1 | Error X | 163K\n2 | Error Y | 50K",
+			expected: "*#* | *Error* | *Count*\n1 | Error X | 163K\n2 | Error Y | 50K",
+		},
+		{
+			name:     "Table with percentage column",
+			input:    "# | Error | Ocurrencias | % Aprox\n---|---|---|---\n1 | Validation exception | 163,678 | 29.8%",
+			expected: "*#* | *Error* | *Ocurrencias* | *% Aprox*\n1 | Validation exception | 163,678 | 29.8%",
+		},
 	}
 
 	for _, tt := range tests {
