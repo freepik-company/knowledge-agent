@@ -34,7 +34,7 @@ INTERNAL_AUTH_TOKEN=$(openssl rand -hex 32)
 - Token is never exposed in API documentation or external configurations
 - Only known by the two internal services
 - Can be rotated without affecting external A2A clients
-- Not stored in `a2a_api_keys` (which might be visible to external services)
+- Not stored in `api_keys` (which might be visible to external services)
 
 ### 2. External A2A Authentication (External Services → Agent)
 
@@ -58,15 +58,15 @@ api_keys:
 ```bash
 # JSON format - Maps API key (secret) to config
 # New format with roles:
-A2A_API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
+API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
 
 # Legacy format (assumes role="write"):
-A2A_API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
+API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
 ```
 
 **How it works**:
 1. External services send `X-API-Key` header with their secret token
-2. Agent searches for which `client_id` has that secret in `a2a_api_keys` map
+2. Agent searches for which `client_id` has that secret in `api_keys` map
 3. If secret matches → request is authenticated with that `client_id`
 4. If secret not found → 401 Unauthorized
 
@@ -95,10 +95,10 @@ api_keys:
 
 **How it works**:
 1. Request arrives at `/a2a/invoke`
-2. HTTP middleware validates `X-API-Key` header against `a2a_api_keys`
+2. HTTP middleware validates `X-API-Key` header against `api_keys`
 3. If key is valid → request proceeds with authenticated caller
 4. If key is invalid → `401 Unauthorized`
-5. If `a2a_api_keys` is empty → Open mode (no authentication)
+5. If `api_keys` is empty → Open mode (no authentication)
 
 **Note**: The agent card at `/.well-known/agent-card.json` is always public to allow agent discovery.
 
@@ -183,7 +183,7 @@ The agent card at `/.well-known/agent-card.json` is always public (no auth) for 
 auth:
   internal_token: ${INTERNAL_AUTH_TOKEN}  # Required
 
-a2a_api_keys:
+api_keys:
   root-agent: ${A2A_SECRET_ROOT}
   monitoring: ${A2A_SECRET_MONITORING}
   # Add other external services as needed
@@ -191,7 +191,7 @@ a2a_api_keys:
 
 **Behavior**:
 - Slack Bridge → Agent: Requires internal token
-- External services → Agent: Requires secret token from a2a_api_keys
+- External services → Agent: Requires secret token from api_keys
 - Unauthenticated requests → 401 Unauthorized
 
 **Use for**: Production deployments, staging environments
@@ -203,7 +203,7 @@ a2a_api_keys:
 auth:
   internal_token: ""  # Empty or omitted
 
-a2a_api_keys: {}  # Empty or omitted
+api_keys: {}  # Empty or omitted
 ```
 
 **Behavior**:
@@ -221,7 +221,7 @@ a2a_api_keys: {}  # Empty or omitted
 auth:
   internal_token: ${INTERNAL_AUTH_TOKEN}  # Set
 
-a2a_api_keys: {}  # Empty
+api_keys: {}  # Empty
 ```
 
 **Behavior**:
@@ -316,7 +316,7 @@ services:
     image: knowledge-agent:latest
     environment:
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN}
-      A2A_API_KEYS: '${A2A_API_KEYS}'
+      API_KEYS: '${API_KEYS}'
     secrets:
       - anthropic_api_key
       - postgres_url
@@ -367,7 +367,7 @@ spec:
             secretKeyRef:
               name: knowledge-agent-secrets
               key: internal-auth-token
-        - name: A2A_API_KEYS
+        - name: API_KEYS
           valueFrom:
             secretKeyRef:
               name: knowledge-agent-secrets
@@ -407,11 +407,11 @@ spec:
 **Solution**:
 1. For Slack Bridge: Ensure `INTERNAL_AUTH_TOKEN` is set
 2. For A2A access: Include `X-API-Key` header in request
-3. For development: Set both `internal_token` and `a2a_api_keys` to empty to enable open mode
+3. For development: Set both `internal_token` and `api_keys` to empty to enable open mode
 
 ### "Invalid API key"
 
-**Cause**: API key not found in `a2a_api_keys` map
+**Cause**: API key not found in `api_keys` map
 
 **Solution**:
 1. Verify the key exists in configuration

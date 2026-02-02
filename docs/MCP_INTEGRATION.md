@@ -368,6 +368,29 @@ mcp:
 - "Compare our deployment docs with the process in GitHub repo xyz/abc"
 - "Read local architecture.md and the GitHub wiki, then save key decisions"
 
+## Retry Configuration
+
+MCP integrations support automatic retry for transient failures (502, 503, 504, 429, timeouts, connection errors).
+
+```yaml
+mcp:
+  enabled: true
+  retry:
+    enabled: true
+    max_retries: 3
+    initial_delay: 500ms
+    max_delay: 30s
+    backoff_multiplier: 2.0
+  servers:
+    # ...
+```
+
+**Retryable errors**: Connection refused, timeout, DNS failures, HTTP 502/503/504/429.
+
+See [CONFIGURATION.md](CONFIGURATION.md#retry-configuration) for complete retry configuration reference.
+
+---
+
 ## Error Handling
 
 ### Graceful Degradation

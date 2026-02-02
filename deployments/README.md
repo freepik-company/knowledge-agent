@@ -379,7 +379,7 @@ services:
 
 ### Security
 - [ ] Set strong `INTERNAL_AUTH_TOKEN`
-- [ ] Configure `A2A_API_KEYS` with unique tokens
+- [ ] Configure `API_KEYS` with unique tokens
 - [ ] Use HTTPS reverse proxy (nginx, caddy)
 - [ ] Use Docker secrets for sensitive data
 - [ ] Use `sslmode=require` in PostgreSQL connection string

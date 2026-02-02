@@ -30,6 +30,11 @@ Intelligent knowledge management system for teams. Built with Go, Claude Sonnet 
 - 🔌 **MCP Support**: Extend with Model Context Protocol servers (filesystem, GitHub, etc.)
 - 🐳 **Production-Ready**: Docker Compose, Kubernetes/Helm support, auto-migrations
 
+### Advanced Features
+- 🧹 **Response Cleaner**: Automatically removes internal narration from responses using Claude Haiku
+- 📦 **Context Summarizer**: Compresses long conversation threads to prevent context overflow
+- ⏳ **Async Sub-Agents**: Launch long-running agent tasks (5-15 min) without blocking
+
 ## Quick Start
 
 ### Docker Compose (Recommended)
@@ -61,6 +66,9 @@ docker exec knowledge-agent-ollama ollama pull nomic-embed-text
 # 1. Start infrastructure only
 make docker-up
 
+# 2. Configure (copy and edit config)
+cp config-example.yaml config.yaml
+# Edit config.yaml with your API keys
 
 # 3. Run agent locally
 make dev
@@ -169,7 +177,7 @@ SLACK_MODE=webhook
 SLACK_SIGNING_SECRET=...
 ```
 
-See `.env.example` for all options.
+See `deployments/.env.example` for all environment options, or `config-example.yaml` for YAML configuration.
 
 ## Observability (Optional)
 
@@ -217,15 +225,15 @@ API key authentication for direct API access from external services.
 
 ```bash
 # Knowledge Agent .env
-# Format: {"api_key_secret":{"caller_id":"name","role":"write|read"}}
-A2A_API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
+# Format: {"secret_key":{"caller_id":"name","role":"write|read"}}
+API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secret_def456":{"caller_id":"external-service","role":"read"}}'
 
 # Legacy format (assumes role="write"):
-# A2A_API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
+# API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
 ```
 
 **Authentication Modes**:
-- **Production** (recommended): Set both `INTERNAL_AUTH_TOKEN` and `A2A_API_KEYS`
+- **Production** (recommended): Set both `INTERNAL_AUTH_TOKEN` and `API_KEYS`
 - **Development** (open access): Leave both empty
 
 **Roles**:

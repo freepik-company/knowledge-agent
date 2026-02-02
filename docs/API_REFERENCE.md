@@ -57,10 +57,10 @@ For external agents or services.
 
 **Configuration**:
 ```bash
-A2A_API_KEYS='{"ka_rootagent":"root-agent","ka_analytics":"analytics-agent"}'
+API_KEYS='{"ka_rootagent":"root-agent","ka_analytics":"analytics-agent"}'
 ```
 
-**Caller ID**: Mapped value from `A2A_API_KEYS` (e.g., `root-agent`)
+**Caller ID**: Mapped value from `API_KEYS` (e.g., `root-agent`)
 
 ### 3. Slack Signature (Legacy)
 
@@ -74,7 +74,7 @@ Direct webhooks from Slack (legacy mode).
 
 ### 4. Open Mode (Development)
 
-If neither `INTERNAL_AUTH_TOKEN` nor `A2A_API_KEYS` is configured, authentication is disabled.
+If neither `INTERNAL_AUTH_TOKEN` nor `API_KEYS` is configured, authentication is disabled.
 
 **Caller ID**: `unauthenticated`
 
@@ -503,7 +503,7 @@ curl http://localhost:8081/.well-known/agent-card.json
 
 A2A protocol invocation endpoint.
 
-**Authentication**: Required (if `a2a_api_keys` configured)
+**Authentication**: Required (if `api_keys` configured)
 
 **Request Headers**:
 
@@ -781,6 +781,6 @@ if __name__ == '__main__':
 ## See Also
 
 - [CONFIGURATION.md](CONFIGURATION.md) - Full configuration guide
-- [SECURITY.md](SECURITY.md) - Authentication and permissions
+- [SECURITY_GUIDE.md](SECURITY_GUIDE.md) - Authentication and permissions
 - [OPERATIONS.md](OPERATIONS.md) - Logging and observability
 - [CLAUDE.md](../CLAUDE.md) - Development guide

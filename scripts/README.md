@@ -39,8 +39,10 @@ Generating A2A API key for service: analytics
 
 API Key: ka_analytics_f8e9d7c6b5a49382
 
-Add this to agent a2a_api_keys configuration:
-  ka_analytics_f8e9d7c6b5a49382: analytics
+Add this to agent api_keys configuration:
+  ka_analytics_f8e9d7c6b5a49382:
+    caller_id: analytics
+    role: write
 ```
 
 #### `test-auth.sh`

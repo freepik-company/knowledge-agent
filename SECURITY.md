@@ -65,7 +65,7 @@ We take the security of Knowledge Agent seriously. If you believe you have found
    ```yaml
    # Always use authentication in production
    internal_auth_token: ${INTERNAL_AUTH_TOKEN}
-   a2a_api_keys: ${A2A_API_KEYS}
+   api_keys: ${API_KEYS}
    ```
 
 4. **Use HTTPS in Production**

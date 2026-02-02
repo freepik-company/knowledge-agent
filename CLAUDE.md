@@ -221,10 +221,13 @@ Quick reference:
 | Slack Signature | `X-Slack-Signature` | Direct Slack webhooks (legacy) |
 | Open Mode | (none configured) | Development only |
 
-**API Key format** (`A2A_API_KEYS` env var):
+**API Key format** (`API_KEYS` env var):
 ```bash
-A2A_API_KEYS='{"ka_secret_key":"caller-id","ka_another":"other-caller"}'
-#              ↑ API key (secret)  ↑ Caller ID (for logging)
+# New format with roles:
+API_KEYS='{"ka_secret_key":{"caller_id":"my-caller","role":"write"}}'
+# Legacy format (assumes role="write"):
+API_KEYS='{"ka_secret_key":"caller-id"}'
+#          ↑ API key (secret)  ↑ Caller ID (for logging)
 ```
 
 **Security notes:**

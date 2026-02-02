@@ -344,12 +344,20 @@ log:
   format: console  # json, console
   output_path: stdout
 
-# A2A Authentication (optional)
-# Format: client_id: secret_token
-# The secret is sent in X-API-Key header, client_id is used for logging
-a2a_api_keys:
-  root-agent: ka_secret_rootagent
-  slack-bridge: ka_secret_slackbridge
+# API Key Authentication (optional)
+# Format: secret_key -> {caller_id, role}
+# The secret is sent in X-API-Key header, caller_id is used for logging
+# Roles: "write" (full access) or "read" (no save_to_memory)
+api_keys:
+  ka_secret_rootagent:
+    caller_id: root-agent
+    role: write
+  ka_secret_slackbridge:
+    caller_id: slack-bridge
+    role: write
+  ka_readonly_service:
+    caller_id: analytics
+    role: read
 
 # MCP Integration (optional)
 mcp:
@@ -767,8 +775,8 @@ When `a2a.enabled: true`, the following endpoints are added to port 8081:
 
 The `/a2a/invoke` endpoint uses the same authentication as `/api/*` endpoints:
 
-- If `a2a_api_keys` is configured → All requests require `X-API-Key` header
-- If `a2a_api_keys` is empty → Open mode (no authentication)
+- If `api_keys` is configured → All requests require `X-API-Key` header
+- If `api_keys` is empty → Open mode (no authentication)
 
 The agent card (`/.well-known/agent-card.json`) is always public to allow agent discovery.
 
@@ -840,6 +848,54 @@ a2a:
 ### Complete Documentation
 
 For comprehensive A2A integration guide, see: **[docs/A2A_TOOLS.md](A2A_TOOLS.md)**
+
+---
+
+## Async Sub-Agent Configuration
+
+For long-running sub-agent tasks (5-15 minutes), enable async invocation to avoid blocking the conversation.
+
+### Basic Setup
+
+```yaml
+a2a:
+  enabled: true
+  sub_agents:
+    - name: coding_agent
+      description: "Write and modify code"
+      endpoint: http://coding-agent:9000
+
+  # Enable async sub-agent invocation
+  async:
+    enabled: true
+    timeout: 15m              # Max wait time for sub-agent response
+    callback_enabled: true    # Re-invoke agent with result for processing
+    post_to_slack: true       # Post results directly to Slack thread
+```
+
+### Configuration Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable `async_invoke_agent` tool |
+| `timeout` | duration | `15m` | Maximum time to wait for sub-agent response |
+| `callback_enabled` | bool | `true` | Re-invoke agent with result when sub-agent completes |
+| `post_to_slack` | bool | `true` | Post results directly to Slack thread |
+
+### How It Works
+
+1. LLM calls `async_invoke_agent` with agent name, task, and Slack context
+2. Task is launched in a background goroutine
+3. LLM responds immediately ("Task sent to X")
+4. When sub-agent finishes, result is posted to the Slack thread
+5. Optionally, agent is re-invoked to process result (e.g., save to memory)
+
+### Limits
+
+- **Max concurrent tasks**: 100 per agent instance
+- **Graceful shutdown**: Waits up to 30 seconds for running tasks
+
+For complete async documentation, see: **[docs/A2A_TOOLS.md](A2A_TOOLS.md#async-sub-agent-invocation)**
 
 ---
 
@@ -1248,9 +1304,13 @@ redis:
 postgres:
   url: ${POSTGRES_URL}
 
-a2a_api_keys:
-  slack-bridge: ka_secret_slackbridge
-  root-agent: ka_secret_rootagent
+api_keys:
+  ka_secret_slackbridge:
+    caller_id: slack-bridge
+    role: write
+  ka_secret_rootagent:
+    caller_id: root-agent
+    role: write
 ```
 
 ```bash
@@ -1453,8 +1513,8 @@ The Knowledge Agent exposes HTTP endpoints that can be called by external agents
 ### Overview
 
 **Authentication Modes**:
-- **Development mode**: No authentication (set `A2A_API_KEYS` empty or omit it)
-- **Production mode**: API key authentication (configure `A2A_API_KEYS`)
+- **Development mode**: No authentication (leave `api_keys` empty or omit it)
+- **Production mode**: API key authentication (configure `api_keys`)
 
 **Supported Authentication Methods**:
 1. **API Key Authentication** (Recommended) - via `X-API-Key` header
@@ -1462,26 +1522,37 @@ The Knowledge Agent exposes HTTP endpoints that can be called by external agents
 
 ### Configuration
 
-#### Knowledge Agent (.env or config.yaml)
+#### Knowledge Agent (config.yaml)
 
 Configure which API keys are accepted:
 
 ```yaml
 # config.yaml
-# Format: client_id: secret_token
-a2a_api_keys:
-  root-agent: ka_secret_rootagent
-  slack-bridge: ka_secret_slackbridge
+# Format: secret_key -> {caller_id, role}
+api_keys:
+  ka_secret_rootagent:
+    caller_id: root-agent
+    role: write
+  ka_secret_slackbridge:
+    caller_id: slack-bridge
+    role: write
+  ka_readonly_service:
+    caller_id: analytics
+    role: read
 ```
 
-Or via environment:
+Or via environment variable (JSON format):
 ```bash
-# .env
-A2A_API_KEYS='{"ka_rootagent":"root-agent","ka_slackbridge":"slack-bridge"}'
+# .env - New format with roles
+API_KEYS='{"ka_secret_rootagent":{"caller_id":"root-agent","role":"write"},"ka_readonly":{"caller_id":"analytics","role":"read"}}'
+
+# Legacy format (assumes role="write")
+API_KEYS='{"ka_secret_rootagent":"root-agent","ka_slackbridge":"slack-bridge"}'
 ```
 
-- **Key format**: `ka_` prefix followed by unique identifier
-- **Value format**: Human-readable caller ID for logging
+- **Key**: The secret token sent in `X-API-Key` header
+- **caller_id**: Human-readable identifier for logging
+- **role**: `write` (full access) or `read` (no save_to_memory)
 - **Empty/omitted**: Open mode (no authentication required)
 
 #### Slack Bridge (.env or config.yaml)
@@ -1500,7 +1571,7 @@ Or via environment:
 SLACK_BRIDGE_API_KEY=ka_slackbridge
 ```
 
-**Important**: The API key must be included in the Knowledge Agent's `A2A_API_KEYS` configuration.
+**Important**: The API key must be included in the Knowledge Agent's `api_keys` configuration.
 
 ### API Endpoints
 
@@ -1508,7 +1579,7 @@ SLACK_BRIDGE_API_KEY=ka_slackbridge
 
 Query the knowledge base and get AI-powered responses.
 
-**Authentication**: Required (if A2A_API_KEYS is configured)
+**Authentication**: Required (if `api_keys` is configured)
 
 **Request Example**:
 ```bash
@@ -1548,7 +1619,7 @@ curl -X POST http://localhost:8081/api/query \
 
 Save conversation threads to the knowledge base.
 
-**Authentication**: Required (if A2A_API_KEYS is configured)
+**Authentication**: Required (if `api_keys` is configured)
 
 **Request Example**:
 ```bash
@@ -1587,7 +1658,7 @@ curl -X POST http://localhost:8081/api/ingest-thread \
    # Use format: ka_<generated-key>
    ```
 
-2. **Rotate keys periodically**: Update `A2A_API_KEYS` and restart the service
+2. **Rotate keys periodically**: Update `api_keys` and restart the service
 
 3. **Use HTTPS in production**: Never send API keys over unencrypted connections
 
@@ -1733,15 +1804,15 @@ See the detailed integration code examples in the original A2A documentation for
 
 **Solutions**:
 1. Check that `X-API-Key` header is being sent
-2. Verify the key exists in Knowledge Agent's `A2A_API_KEYS`
+2. Verify the key exists in Knowledge Agent's `api_keys` config
 3. Check for typos in the API key
-4. Ensure Knowledge Agent was restarted after updating `A2A_API_KEYS`
+4. Ensure Knowledge Agent was restarted after updating `api_keys`
 
 #### No Authentication Required (Open Mode)
 
 **Problem**: Want to enable authentication but requests work without API key
 
-**Solution**: Set `A2A_API_KEYS` in Knowledge Agent's config and restart
+**Solution**: Set `api_keys` in Knowledge Agent's config and restart
 
 #### Slack Bridge Can't Reach Knowledge Agent
 
