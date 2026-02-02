@@ -172,7 +172,8 @@ type AnthropicConfig struct {
 
 // SlackConfig holds Slack API configuration
 type SlackConfig struct {
-	BotToken           string        `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN" required:"true"`
+	Enabled            bool          `yaml:"enabled" mapstructure:"enabled" envconfig:"SLACK_ENABLED" default:"true"`                                          // Enable Slack integration (default: true for backwards compatibility)
+	BotToken           string        `yaml:"bot_token" mapstructure:"bot_token" envconfig:"SLACK_BOT_TOKEN"`                                                   // Required only if enabled
 	SigningSecret      string        `yaml:"signing_secret" mapstructure:"signing_secret" envconfig:"SLACK_SIGNING_SECRET"`                                    // Only required for webhook mode
 	AppToken           string        `yaml:"app_token" mapstructure:"app_token" envconfig:"SLACK_APP_TOKEN"`                                                   // Only required for socket mode
 	Mode               string        `yaml:"mode" mapstructure:"mode" envconfig:"SLACK_MODE" default:"webhook"`                                                // "webhook" or "socket"
@@ -255,21 +256,25 @@ func (c *Config) Validate() error {
 	if c.Anthropic.APIKey == "" {
 		return fmt.Errorf("ANTHROPIC_API_KEY is required")
 	}
-	if c.Slack.BotToken == "" {
-		return fmt.Errorf("SLACK_BOT_TOKEN is required")
-	}
 
-	// Validate mode-specific requirements
-	if c.Slack.Mode == "socket" {
-		if c.Slack.AppToken == "" {
-			return fmt.Errorf("SLACK_APP_TOKEN is required for socket mode")
+	// Only validate Slack config if Slack is enabled
+	if c.Slack.Enabled {
+		if c.Slack.BotToken == "" {
+			return fmt.Errorf("SLACK_BOT_TOKEN is required when Slack is enabled")
 		}
-	} else if c.Slack.Mode == "webhook" {
-		if c.Slack.SigningSecret == "" {
-			return fmt.Errorf("SLACK_SIGNING_SECRET is required for webhook mode")
+
+		// Validate mode-specific requirements
+		if c.Slack.Mode == "socket" {
+			if c.Slack.AppToken == "" {
+				return fmt.Errorf("SLACK_APP_TOKEN is required for socket mode")
+			}
+		} else if c.Slack.Mode == "webhook" {
+			if c.Slack.SigningSecret == "" {
+				return fmt.Errorf("SLACK_SIGNING_SECRET is required for webhook mode")
+			}
+		} else {
+			return fmt.Errorf("SLACK_MODE must be either 'socket' or 'webhook', got: %s", c.Slack.Mode)
 		}
-	} else {
-		return fmt.Errorf("SLACK_MODE must be either 'socket' or 'webhook', got: %s", c.Slack.Mode)
 	}
 
 	if c.Postgres.URL == "" {

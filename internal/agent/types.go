@@ -22,6 +22,7 @@ var (
 
 // IngestRequest represents a thread ingestion request
 type IngestRequest struct {
+	SessionID string           `json:"session_id,omitempty"` // Optional: client-provided session ID (takes precedence over auto-generated)
 	ThreadTS  string           `json:"thread_ts"`
 	ChannelID string           `json:"channel_id"`
 	Messages  []map[string]any `json:"messages"`
@@ -36,6 +37,7 @@ type IngestResponse struct {
 
 // QueryRequest represents a question/query request
 type QueryRequest struct {
+	SessionID    string           `json:"session_id,omitempty"` // Optional: client-provided session ID (takes precedence over auto-generated)
 	Question     string           `json:"question"`
 	ThreadTS     string           `json:"thread_ts,omitempty"`
 	ChannelID    string           `json:"channel_id,omitempty"`

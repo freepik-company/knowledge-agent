@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Knowledge Agent! We welcome contr
 
 ## Code of Conduct
 
-This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to [your-email].
+This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to sre@freepik.com.
 
 ## How Can I Contribute?
 

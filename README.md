@@ -241,7 +241,7 @@ curl -X POST http://localhost:8081/api/query \
   -d '{"question":"How do we deploy?"}'
 ```
 
-See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY.md` for detailed security configuration.
+See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY_GUIDE.md` for detailed security configuration.
 
 ## A2A Protocol (Agent-to-Agent)
 
@@ -303,7 +303,7 @@ See `docs/MCP_INTEGRATION.md` for complete guide and examples.
 
 ### Advanced
 - 🔌 [MCP Integration](docs/MCP_INTEGRATION.md) - Extend with external data sources
-- 🔐 [Security](docs/SECURITY.md) - Authentication and permissions
+- 🔐 [Security](docs/SECURITY_GUIDE.md) - Authentication and permissions
 - 🤖 [A2A Integration](docs/CONFIGURATION.md#agent-to-agent-a2a-authentication) - Agent-to-Agent API integration
 - 📊 [Observability](docs/OPERATIONS.md) - Langfuse integration and monitoring
 - 📈 [Prometheus Metrics](docs/PROMETHEUS_METRICS.md) - Prometheus metrics and ServiceMonitors

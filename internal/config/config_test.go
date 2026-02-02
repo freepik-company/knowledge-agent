@@ -43,10 +43,19 @@ func TestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid config",
+			name: "valid config with Slack enabled",
 			config: Config{
 				Anthropic: AnthropicConfig{APIKey: "key"},
-				Slack:     SlackConfig{BotToken: "token", SigningSecret: "secret", Mode: "webhook"},
+				Slack:     SlackConfig{Enabled: true, BotToken: "token", SigningSecret: "secret", Mode: "webhook"},
+				Postgres:  PostgresConfig{URL: "postgres://localhost/db"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid config with Slack disabled",
+			config: Config{
+				Anthropic: AnthropicConfig{APIKey: "key"},
+				Slack:     SlackConfig{Enabled: false}, // No token needed when disabled
 				Postgres:  PostgresConfig{URL: "postgres://localhost/db"},
 			},
 			wantErr: false,
@@ -54,16 +63,16 @@ func TestValidate(t *testing.T) {
 		{
 			name: "missing API key",
 			config: Config{
-				Slack:    SlackConfig{BotToken: "token", SigningSecret: "secret"},
+				Slack:    SlackConfig{Enabled: true, BotToken: "token", SigningSecret: "secret", Mode: "webhook"},
 				Postgres: PostgresConfig{URL: "postgres://localhost/db"},
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing Slack token",
+			name: "missing Slack token when enabled",
 			config: Config{
 				Anthropic: AnthropicConfig{APIKey: "key"},
-				Slack:     SlackConfig{SigningSecret: "secret"},
+				Slack:     SlackConfig{Enabled: true, SigningSecret: "secret", Mode: "webhook"},
 				Postgres:  PostgresConfig{URL: "postgres://localhost/db"},
 			},
 			wantErr: true,

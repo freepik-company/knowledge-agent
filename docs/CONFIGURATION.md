@@ -236,7 +236,7 @@ Place a `config.yaml` file in the current working directory.
 
 ```bash
 # Copy example
-cp config.yaml.example config.yaml
+cp config-example.yaml config.yaml
 
 # Edit with your values
 vim config.yaml
@@ -864,7 +864,7 @@ For comprehensive A2A integration guide, see: **[docs/A2A_TOOLS.md](A2A_TOOLS.md
 # Recommended structure
 knowledge-agent/
 ├── .env.example          # Template for env vars
-├── config.yaml.example   # Template for YAML config
+├── config-example.yaml   # Template for YAML config
 ├── configs/              # Environment-specific configs (gitignored if they have secrets)
 │   ├── development.yaml
 │   ├── staging.yaml
@@ -878,7 +878,7 @@ knowledge-agent/
 # .gitignore
 config.yaml
 configs/*.yaml
-!config.yaml.example
+!config-example.yaml
 .env
 !.env.example
 ```
@@ -893,8 +893,8 @@ configs/*.yaml
 # Good
 make dev CONFIG=config.dev.yaml
 
-# Also good
-./bin/agent --config config.dev.yaml
+# Also good (unified binary)
+./bin/knowledge-agent --config config.dev.yaml
 ```
 
 ### Production Best Practices
@@ -906,10 +906,10 @@ make dev CONFIG=config.dev.yaml
 
 ```bash
 # Good
-./bin/agent --config /etc/knowledge-agent/production.yaml
+./bin/knowledge-agent --config /etc/knowledge-agent/production.yaml
 
 # Also good (with systemd)
-ExecStart=/usr/local/bin/agent --config /etc/knowledge-agent/production.yaml
+ExecStart=/usr/local/bin/knowledge-agent --config /etc/knowledge-agent/production.yaml
 ```
 
 ### Multi-Environment Best Practices
@@ -949,7 +949,7 @@ anthropic:
 **Solution**: Ensure the environment variable is set before starting the service:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-xxx
-./bin/agent --config config.yaml
+./bin/knowledge-agent --config config.yaml
 ```
 
 ### Required values missing
@@ -986,7 +986,7 @@ chmod 644 config.yaml
 **Debug**:
 ```bash
 # See what config is loaded
-./bin/agent --config my-config.yaml 2>&1 | grep "Configuration loaded"
+./bin/knowledge-agent --config my-config.yaml 2>&1 | grep "Configuration loaded"
 ```
 
 ### Environment variables not expanding
@@ -996,13 +996,13 @@ chmod 644 config.yaml
 **Solution**: Ensure env var is set before starting:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-xxx
-./bin/agent --config config.yaml
+./bin/knowledge-agent --config config.yaml
 ```
 
 **Or use .env file**:
 ```bash
 source .env
-./bin/agent --config config.yaml
+./bin/knowledge-agent --config config.yaml
 ```
 
 ### Relative vs Absolute Paths
@@ -1012,13 +1012,13 @@ source .env
 **Solution**: Use absolute paths or paths relative to where you run from:
 ```bash
 # From project root
-./bin/agent --config config.yaml
+./bin/knowledge-agent --config config.yaml
 
 # From bin/
-./agent --config ../config.yaml
+./knowledge-agent --config ../config.yaml
 
 # Absolute path (works from anywhere)
-./agent --config /home/user/knowledge-agent/config.yaml
+./knowledge-agent --config /home/user/knowledge-agent/config.yaml
 ```
 
 ### Slack Authentication Issues
@@ -1061,9 +1061,9 @@ See the [A2A Troubleshooting](#a2a-troubleshooting) section above for detailed s
 
 | Method | Priority | Use Case | Command |
 |--------|----------|----------|---------|
-| `--config` flag | 1 (highest) | Multi-env, production, custom paths | `./bin/agent --config prod.yaml` |
-| `config.yaml` | 2 | Simple deployments, local dev | `./bin/agent` |
-| Environment vars | 3 (fallback) | Legacy, 12-factor, CI/CD | `./bin/agent` |
+| `--config` flag | 1 (highest) | Multi-env, production, custom paths | `./bin/knowledge-agent --config prod.yaml` |
+| `config.yaml` | 2 | Simple deployments, local dev | `./bin/knowledge-agent` |
+| Environment vars | 3 (fallback) | Legacy, 12-factor, CI/CD | `./bin/knowledge-agent` |
 
 Choose the method that best fits your deployment needs!
 
@@ -1142,7 +1142,7 @@ spec:
       containers:
       - name: agent
         image: knowledge-agent:latest
-        command: ["./agent", "--config", "/config/config.yaml"]
+        command: ["./knowledge-agent", "--config", "/config/config.yaml", "--mode", "agent"]
         ports:
         - containerPort: 8081
         volumeMounts:
@@ -1170,9 +1170,8 @@ COPY . .
 RUN make build
 
 FROM debian:bookworm-slim
-COPY --from=builder /app/bin/agent /usr/local/bin/
-COPY --from=builder /app/bin/slack-bot /usr/local/bin/
-CMD ["agent", "--config", "/config/production.yaml"]
+COPY --from=builder /app/bin/knowledge-agent /usr/local/bin/
+CMD ["knowledge-agent", "--config", "/config/production.yaml"]
 ```
 
 ```bash
@@ -1211,8 +1210,12 @@ postgres:
 ```
 
 ```bash
-./bin/agent --config config.dev.yaml
-./bin/slack-bot --config config.dev.yaml
+# Run both services (default mode)
+./bin/knowledge-agent --config config.dev.yaml
+
+# Or run separately
+./bin/knowledge-agent --config config.dev.yaml --mode agent
+./bin/knowledge-agent --config config.dev.yaml --mode slack-bot
 ```
 
 ### Production: Webhook Mode + JSON Logs
@@ -1251,8 +1254,12 @@ a2a_api_keys:
 ```
 
 ```bash
-./bin/agent --config /etc/knowledge-agent/config.prod.yaml
-./bin/slack-bot --config /etc/knowledge-agent/config.prod.yaml
+# Run both services (recommended)
+./bin/knowledge-agent --config /etc/knowledge-agent/config.prod.yaml
+
+# Or run as separate processes for scaling
+./bin/knowledge-agent --config /etc/knowledge-agent/config.prod.yaml --mode agent
+./bin/knowledge-agent --config /etc/knowledge-agent/config.prod.yaml --mode slack-bot
 ```
 
 ### Testing: Custom Ports + Test Database
@@ -1283,13 +1290,29 @@ slack:
 ```
 
 ```bash
-./bin/agent --config config.test.yaml
-./bin/slack-bot --config config.test.yaml
+./bin/knowledge-agent --config config.test.yaml
 ```
 
 ---
 
 ## Slack Configuration
+
+### Disabling Slack Integration
+
+Run the agent without Slack (API-only mode):
+
+```yaml
+slack:
+  enabled: false  # Disable Slack integration
+```
+
+When `slack.enabled: false`:
+- Agent starts in API-only mode (port 8081 only)
+- No Slack tokens required
+- Useful for testing, API-only deployments, or A2A-only scenarios
+- If running with `--mode all`, it automatically switches to agent-only mode
+
+**Default**: `true` (backwards compatible)
 
 ### Required Scopes
 
@@ -1754,12 +1777,13 @@ Use these logs to:
 
 ```bash
 # Use default config.yaml (if exists) or env vars
-./bin/agent
-./bin/slack-bot
+./bin/knowledge-agent                    # Runs both services (--mode all)
+./bin/knowledge-agent --mode agent       # Agent only (port 8081)
+./bin/knowledge-agent --mode slack-bot   # Slack bot only (port 8080)
 
 # Use specific config file
-./bin/agent --config my-config.yaml
-./bin/slack-bot --config /etc/knowledge-agent/production.yaml
+./bin/knowledge-agent --config my-config.yaml
+./bin/knowledge-agent --config /etc/knowledge-agent/production.yaml --mode agent
 
 # With make (development)
 make dev                              # Default behavior
@@ -1794,12 +1818,12 @@ vim .env
 make dev
 
 # Option 2: Use config.yaml
-cp config.yaml.example config.yaml
+cp config-example.yaml config.yaml
 vim config.yaml
 make dev
 
 # Option 3: Use custom config
-cp config.yaml.example config.dev.yaml
+cp config-example.yaml config.dev.yaml
 vim config.dev.yaml
 make dev CONFIG=config.dev.yaml
 ```
@@ -1807,12 +1831,11 @@ make dev CONFIG=config.dev.yaml
 #### Production
 
 ```bash
-# Build binaries
+# Build binary
 make build
 
 # Run with production config
-./bin/agent --config /etc/knowledge-agent/production.yaml
-./bin/slack-bot --config /etc/knowledge-agent/production.yaml
+./bin/knowledge-agent --config /etc/knowledge-agent/production.yaml
 ```
 
 #### Multi-Environment
@@ -1825,13 +1848,13 @@ configs/
 └── production.yaml
 
 # Development
-./bin/agent --config configs/development.yaml
+./bin/knowledge-agent --config configs/development.yaml
 
 # Staging
-./bin/agent --config configs/staging.yaml
+./bin/knowledge-agent --config configs/staging.yaml
 
 # Production
-./bin/agent --config configs/production.yaml
+./bin/knowledge-agent --config configs/production.yaml
 ```
 
 ### Makefile Usage
@@ -1880,7 +1903,7 @@ make dev CONFIG=configs/test.yaml
 
 ```bash
 # Try loading the config (will fail if config has errors)
-./bin/agent --config test.yaml
+./bin/knowledge-agent --config test.yaml
 # Look for: "Configuration loaded from: test.yaml"
 ```
 

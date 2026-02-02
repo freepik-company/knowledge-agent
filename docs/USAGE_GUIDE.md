@@ -38,6 +38,17 @@ Analyze documentation and web content:
 @bot check this documentation https://example.com/docs
 ```
 
+## Direct Messages (DMs)
+
+You can also message the bot directly without mentioning:
+
+```
+[In a DM conversation with the bot]
+How do we deploy to production?
+```
+
+The bot responds to DMs automatically - no @mention required.
+
 ## Language Support
 
 The agent responds in your language automatically (Spanish, English, etc.).

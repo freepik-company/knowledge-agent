@@ -154,6 +154,6 @@ make docker-up
 
 ## See Also
 
-- [docs/SECURITY.md](../docs/SECURITY.md) - Complete security guide
+- [docs/SECURITY_GUIDE.md](../docs/SECURITY_GUIDE.md) - Complete security guide
 - [README.md](../README.md) - Main project documentation
 - [CLAUDE.md](../CLAUDE.md) - Development guide

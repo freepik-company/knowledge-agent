@@ -24,21 +24,84 @@ type Handler struct {
 	client        *Client
 	agentURL      string // URL of the Knowledge Agent service
 	internalToken string // Internal token for authenticating with the Knowledge Agent
+	botUserID     string // Bot's own user ID (for filtering self-messages in DMs)
 }
 
 // NewHandler creates a new Slack event handler
 func NewHandler(cfg *config.Config, agentURL string) *Handler {
-	return &Handler{
-		config: cfg,
-		client: NewClient(ClientConfig{
-			Token:           cfg.Slack.BotToken,
-			MaxFileSize:     cfg.Slack.MaxFileSize,
-			ThreadCacheTTL:  cfg.Slack.ThreadCacheTTL,
-			ThreadCacheSize: cfg.Slack.ThreadCacheMaxSize,
-		}),
+	log := logger.Get()
+
+	client := NewClient(ClientConfig{
+		Token:           cfg.Slack.BotToken,
+		MaxFileSize:     cfg.Slack.MaxFileSize,
+		ThreadCacheTTL:  cfg.Slack.ThreadCacheTTL,
+		ThreadCacheSize: cfg.Slack.ThreadCacheMaxSize,
+	})
+
+	h := &Handler{
+		config:        cfg,
+		client:        client,
 		agentURL:      agentURL,
 		internalToken: cfg.Auth.InternalToken,
 	}
+
+	// Initialize bot user ID for DM filtering
+	if err := h.initBotUserID(); err != nil {
+		log.Warnw("Failed to get bot user ID (DM self-filtering may not work)",
+			"error", err,
+		)
+	}
+
+	return h
+}
+
+// initBotUserID fetches and stores the bot's own user ID
+func (h *Handler) initBotUserID() error {
+	log := logger.Get()
+
+	authResp, err := h.client.api.AuthTest()
+	if err != nil {
+		return fmt.Errorf("auth.test failed: %w", err)
+	}
+
+	h.botUserID = authResp.UserID
+	log.Infow("Bot user ID initialized", "bot_user_id", h.botUserID)
+	return nil
+}
+
+// ensureBotUserID ensures the bot user ID is initialized (lazy init with retry)
+// This is called before processing DMs to handle cases where initial init failed
+func (h *Handler) ensureBotUserID() {
+	if h.botUserID != "" {
+		return // Already initialized
+	}
+
+	log := logger.Get()
+	log.Debug("Bot user ID not initialized, attempting lazy initialization")
+
+	if err := h.initBotUserID(); err != nil {
+		log.Warnw("Lazy initialization of bot user ID failed",
+			"error", err,
+		)
+	}
+}
+
+// DMChannelPrefix is the prefix for direct message channel IDs in Slack
+const DMChannelPrefix = "D"
+
+// AckDelayThreshold is the minimum processing time before sending an acknowledgment
+// If the response arrives faster than this, no ack is sent to avoid message spam
+const AckDelayThreshold = 2 * time.Second
+
+// isDMChannel checks if a channel ID represents a direct message channel
+// DM channel IDs start with "D" (e.g., D01ABC123)
+func isDMChannel(channelID string) bool {
+	return strings.HasPrefix(channelID, DMChannelPrefix)
+}
+
+// isBotMessage checks if a message was sent by the bot itself
+func (h *Handler) isBotMessage(userID string) bool {
+	return h.botUserID != "" && userID == h.botUserID
 }
 
 // Close releases resources held by the handler
@@ -107,6 +170,17 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 			)
 			observability.RecordSlackEvent("app_mention", true)
 			go h.handleAppMention(ev)
+		case *slackevents.MessageEvent:
+			// Handle direct messages (DMs) - no @mention needed
+			if h.shouldHandleDirectMessage(ev) {
+				log.Infow("Webhook: DirectMessage detected",
+					"user", ev.User,
+					"channel", ev.Channel,
+					"text", ev.Text,
+				)
+				observability.RecordSlackEvent("direct_message", true)
+				go h.handleDirectMessage(ev)
+			}
 		default:
 			log.Debugw("Unhandled event type", "type", innerEvent.Type)
 			observability.RecordSlackEvent(innerEvent.Type, true)
@@ -116,6 +190,40 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// scheduleProcessingAck schedules an acknowledgment message to be sent after AckDelayThreshold
+// Returns a cancel function that should be called when processing completes to prevent the ack
+// from being sent if the response arrived quickly (better UX - no message spam)
+func (h *Handler) scheduleProcessingAck(channelID, threadTS string) context.CancelFunc {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		select {
+		case <-time.After(AckDelayThreshold):
+			// Processing is taking a while, send the ack
+			h.sendProcessingAckNow(channelID, threadTS)
+		case <-ctx.Done():
+			// Processing completed before threshold, no ack needed
+		}
+	}()
+
+	return cancel
+}
+
+// sendProcessingAckNow sends the acknowledgment message immediately
+func (h *Handler) sendProcessingAckNow(channelID, threadTS string) {
+	log := logger.Get()
+	ackMessage := ":mag: Procesando tu mensaje..."
+
+	if err := h.client.PostMessage(channelID, threadTS, ackMessage); err != nil {
+		// Don't fail the request if ack fails - just log warning and continue
+		log.Warnw("Failed to send processing acknowledgment",
+			"channel", channelID,
+			"thread_ts", threadTS,
+			"error", err,
+		)
+	}
+}
+
 // handleAppMention handles app mention events from Slack
 func (h *Handler) handleAppMention(event *slackevents.AppMentionEvent) {
 	log := logger.Get()
@@ -123,6 +231,16 @@ func (h *Handler) handleAppMention(event *slackevents.AppMentionEvent) {
 		"user", event.User,
 		"channel", event.Channel,
 	)
+
+	// Determine thread timestamp for responses
+	threadTS := event.ThreadTimeStamp
+	if threadTS == "" {
+		threadTS = event.TimeStamp
+	}
+
+	// Schedule acknowledgment (only sent if processing takes > AckDelayThreshold)
+	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS)
+	defer cancelAck() // Cancel ack if response arrives quickly
 
 	// Create context with timeout for async operations
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -180,7 +298,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		log.Errorw("Failed to fetch thread", "error", err, "channel", event.Channel, "thread_ts", threadTS)
 		observability.RecordSlackAPICall("conversations.replies", false)
 		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: Could not fetch thread messages: %v", err))
+			":warning: No pude obtener el contexto de este hilo. Por favor, intenta de nuevo.")
 		return
 	}
 	observability.RecordSlackAPICall("conversations.replies", true)
@@ -329,7 +447,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	if err != nil {
 		log.Errorw("Failed to marshal request", "error", err)
 		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: Could not prepare request: %v", err))
+			":gear: Tuve un problema preparando tu solicitud. Por favor, intenta de nuevo.")
 		return
 	}
 
@@ -347,7 +465,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	if err != nil {
 		log.Errorw("Failed to create request", "error", err)
 		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: Could not create request: %v", err))
+			":gear: Tuve un problema preparando tu solicitud. Por favor, intenta de nuevo.")
 		return
 	}
 
@@ -369,31 +487,15 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	resp, err := client.Do(req)
 
 	if err != nil {
-		// Distinguish different error types for better debugging
-		errMsg := "Could not reach Knowledge Agent"
-		if ctx.Err() != nil {
-			log.Errorw("Request canceled or timed out",
-				"error", err,
-				"context_error", ctx.Err(),
-				"payload_kb", payloadSize/1024,
-			)
-			errMsg = "Request timed out - the operation took too long"
-		} else if strings.Contains(err.Error(), "EOF") {
-			log.Errorw("Connection closed unexpectedly (EOF)",
-				"error", err,
-				"payload_kb", payloadSize/1024,
-				"hint", "Server may have closed connection due to large payload or timeout",
-			)
-			errMsg = "Connection closed unexpectedly. The request may be too large or the server is overloaded"
-		} else {
-			log.Errorw("Failed to call Knowledge Agent",
-				"error", err,
-				"payload_kb", payloadSize/1024,
-			)
-		}
+		// Log detailed technical error for debugging
+		log.Errorw("Failed to call Knowledge Agent",
+			"error", err,
+			"context_error", ctx.Err(),
+			"payload_kb", payloadSize/1024,
+		)
 		observability.RecordAgentForward(false)
-		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: %s: %v", errMsg, err))
+		// Send user-friendly error message (no technical details)
+		h.client.PostMessage(event.Channel, threadTS, FormatUserError(err, 0))
 		return
 	}
 	defer resp.Body.Close()
@@ -419,8 +521,8 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"status_code", resp.StatusCode,
 			"body_preview", string(body[:n]),
 		)
-		h.client.PostMessage(event.Channel, threadTS,
-			fmt.Sprintf("Error: Knowledge Agent returned status %d", resp.StatusCode))
+		// Send user-friendly error message based on status code
+		h.client.PostMessage(event.Channel, threadTS, FormatUserError(nil, resp.StatusCode))
 		return
 	}
 
@@ -433,7 +535,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"content_type", resp.Header.Get("Content-Type"),
 		)
 		h.client.PostMessage(event.Channel, threadTS,
-			"Error: Invalid response format from Knowledge Agent")
+			":gear: Recibi una respuesta que no pude procesar. Por favor, intenta de nuevo.")
 		return
 	}
 
@@ -442,7 +544,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	if !ok {
 		log.Error("Invalid response format: missing or invalid 'success' field")
 		h.client.PostMessage(event.Channel, threadTS,
-			"Error: Invalid response format from Knowledge Agent")
+			":gear: Recibi una respuesta que no pude procesar. Por favor, intenta de nuevo.")
 		return
 	}
 
@@ -451,7 +553,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		if !ok {
 			log.Error("Invalid response format: missing or invalid 'answer' field")
 			h.client.PostMessage(event.Channel, threadTS,
-				"Error: No answer received from Knowledge Agent")
+				":thinking_face: No recibi una respuesta completa. Por favor, intenta de nuevo.")
 			return
 		}
 
@@ -471,6 +573,73 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		formattedError := FormatMessageForSlack(fmt.Sprintf("*Error:*\n%s", errorMsg))
 		h.client.PostMessage(event.Channel, threadTS, formattedError)
 	}
+}
+
+// shouldHandleDirectMessage determines if a MessageEvent should be handled as a DM
+func (h *Handler) shouldHandleDirectMessage(event *slackevents.MessageEvent) bool {
+	// Only handle DM channels (channel_type "im" or channel ID starts with "D")
+	if event.ChannelType != "im" && !isDMChannel(event.Channel) {
+		return false
+	}
+
+	// Ensure bot user ID is initialized (lazy init if startup failed)
+	h.ensureBotUserID()
+
+	// Ignore messages from the bot itself
+	if h.isBotMessage(event.User) {
+		return false
+	}
+
+	// Ignore message subtypes (edits, deletes, bot_message, etc.)
+	// We only want regular user messages
+	if event.SubType != "" {
+		return false
+	}
+
+	// Ignore empty messages
+	if strings.TrimSpace(event.Text) == "" {
+		return false
+	}
+
+	return true
+}
+
+// handleDirectMessage handles direct message events from Slack (no @mention needed)
+func (h *Handler) handleDirectMessage(event *slackevents.MessageEvent) {
+	log := logger.Get()
+	log.Debugw("Processing direct message",
+		"user", event.User,
+		"channel", event.Channel,
+	)
+
+	// Determine thread timestamp for responses
+	threadTS := event.ThreadTimeStamp
+	if threadTS == "" {
+		threadTS = event.TimeStamp
+	}
+
+	// Schedule acknowledgment (only sent if processing takes > AckDelayThreshold)
+	cancelAck := h.scheduleProcessingAck(event.Channel, threadTS)
+	defer cancelAck() // Cancel ack if response arrives quickly
+
+	// Create context with timeout for async operations
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Convert MessageEvent to AppMentionEvent-like data for sendToAgent
+	// The message text doesn't need bot mention stripping in DMs
+	appMentionEvent := &slackevents.AppMentionEvent{
+		User:            event.User,
+		Channel:         event.Channel,
+		Text:            event.Text,
+		TimeStamp:       event.TimeStamp,
+		ThreadTimeStamp: event.ThreadTimeStamp,
+	}
+
+	// Send to agent
+	h.sendToAgent(ctx, appMentionEvent, event.Text)
+
+	log.Debugw("Direct message processed", "user", event.User)
 }
 
 // stripBotMention removes bot mention from the message text

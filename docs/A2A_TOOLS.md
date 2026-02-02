@@ -279,6 +279,6 @@ If unexpected, check:
 
 ## Related Documentation
 
-- [SECURITY.md](SECURITY.md) - Authentication, permissions, and SSRF protection
+- [SECURITY_GUIDE.md](SECURITY_GUIDE.md) - Authentication, permissions, and SSRF protection
 - [CONFIGURATION.md](CONFIGURATION.md) - Full configuration reference
 - [API_REFERENCE.md](API_REFERENCE.md) - REST API documentation

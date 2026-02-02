@@ -174,6 +174,12 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 // runSlackBotOnly runs only the Slack Bridge service
 func runSlackBotOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) {
 	log := logger.Get()
+
+	// Check if Slack is enabled
+	if !cfg.Slack.Enabled {
+		log.Fatal("Cannot run in slack-bot mode: Slack is disabled in configuration (slack.enabled: false)")
+	}
+
 	log.Info("Running in Slack-Bot-only mode")
 
 	// Agent service URL
@@ -268,6 +274,14 @@ func runSlackBotOnly(ctx context.Context, cfg *config.Config, done chan os.Signa
 // runBothServices runs both Agent and Slack Bridge in parallel
 func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signal) {
 	log := logger.Get()
+
+	// If Slack is disabled, delegate to agent-only mode
+	if !cfg.Slack.Enabled {
+		log.Info("Slack is disabled - running agent-only mode")
+		runAgentOnly(ctx, cfg, done)
+		return
+	}
+
 	log.Info("Running in All mode (both Agent and Slack Bridge)")
 
 	var wg sync.WaitGroup

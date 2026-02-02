@@ -168,9 +168,7 @@ Integration tests verify end-to-end functionality and require running services.
    make docker-up
    ```
 
-2. Run migrations:
-   ```bash
-   ```
+2. Migrations run automatically on startup (no manual step needed)
 
 3. Start agent (for some tests):
    ```bash
@@ -391,7 +389,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.22'
+          go-version: '1.24'
 
       - name: Run unit tests
         run: make test
@@ -425,7 +423,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.22'
+          go-version: '1.24'
 
       - name: Run integration tests
         run: make integration-test
@@ -461,7 +459,7 @@ make docker-health
 
 Create config file:
 ```bash
-cp config.yaml.example config.yaml
+cp config-example.yaml config.yaml
 # Edit with your credentials
 ```
 

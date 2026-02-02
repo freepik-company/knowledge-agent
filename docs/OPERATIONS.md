@@ -466,7 +466,7 @@ grep -A 5 "auth:" config.yaml
 
 ## See Also
 
-- [SECURITY.md](SECURITY.md) - Authentication and authorization
+- [SECURITY_GUIDE.md](SECURITY_GUIDE.md) - Authentication and authorization
 - [CONFIGURATION.md](CONFIGURATION.md) - System configuration
 - [TESTING.md](TESTING.md) - Testing and QA
 - [../CLAUDE.md](../CLAUDE.md) - System architecture

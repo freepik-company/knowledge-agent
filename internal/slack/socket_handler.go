@@ -115,6 +115,15 @@ func (sh *SocketHandler) handleEventsAPIEvent(event slackevents.EventsAPIEvent) 
 			)
 			// Handle app mention using existing handler logic
 			sh.handler.handleAppMention(ev)
+		case *slackevents.MessageEvent:
+			// Handle direct messages (DMs) - no @mention needed
+			if sh.handler.shouldHandleDirectMessage(ev) {
+				log.Infow("Direct message received",
+					"user", ev.User,
+					"channel", ev.Channel,
+				)
+				sh.handler.handleDirectMessage(ev)
+			}
 		default:
 			log.Debugw("Unhandled inner event type", "type", innerEvent.Type)
 		}

@@ -127,7 +127,7 @@ log:
 
 **New:**
 - `internal/config/loader.go` - YAML loading with env expansion
-- `config.yaml.example` - Complete configuration example
+- `config-example.yaml` - Complete configuration example
 
 **Updated:**
 - `internal/config/config.go` - Added yaml tags, updated Load()
@@ -139,28 +139,28 @@ log:
 ✅ **Environment Flexibility**: Use ${VAR} to reference env vars
 ✅ **Backward Compatible**: Existing .env setups still work
 ✅ **Type Safety**: Viper handles type conversion automatically
-✅ **Documentation**: config.yaml.example is self-documenting
+✅ **Documentation**: config-example.yaml is self-documenting
 
 ### Configuration Options
 
 **Option 1: YAML with --config flag**
 ```bash
 # Create your config file
-cp config.yaml.example my-config.yaml
+cp config-example.yaml my-config.yaml
 
-# Start with custom config
-./bin/agent --config my-config.yaml
-./bin/slack-bot --config /etc/knowledge-agent/config.yaml
+# Start with custom config (unified binary)
+./bin/knowledge-agent --config my-config.yaml
+./bin/knowledge-agent --config /etc/knowledge-agent/config.yaml --mode agent
+./bin/knowledge-agent --config /etc/knowledge-agent/config.yaml --mode slack-bot
 ```
 
 **Option 2: YAML in default location (config.yaml)**
 ```bash
 # Create config.yaml in current directory
-cp config.yaml.example config.yaml
+cp config-example.yaml config.yaml
 
-# Start without flag (auto-detects config.yaml)
-./bin/agent
-./bin/slack-bot
+# Start without flag (auto-detects config.yaml, runs both services)
+./bin/knowledge-agent
 ```
 
 **Option 3: Environment Variables (backward compatible)**
@@ -173,8 +173,7 @@ LOG_LEVEL=info
 LOG_FORMAT=console
 
 # Start without config file
-./bin/agent
-./bin/slack-bot
+./bin/knowledge-agent
 ```
 
 **Configuration Priority:**
@@ -200,7 +199,7 @@ log:
 
 
 1. **No changes required** - existing .env setups work as-is
-2. **Optional**: Create `config.yaml` from `config.yaml.example`
+2. **Optional**: Create `config.yaml` from `config-example.yaml`
 3. **Hybrid**: Use config.yaml with env var references for secrets
 
 ## Dependencies Added
@@ -345,7 +344,7 @@ log:
 
 **Updated Files:**
 - [x] `.env.example` - Added all new variables
-- [x] `config.yaml.example` - Complete example created
+- [x] `config-example.yaml` - Complete example created
 - [x] `IMPLEMENTATION_SUMMARY.md` - This file
 
 **Recommended Updates:**

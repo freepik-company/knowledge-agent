@@ -189,7 +189,7 @@ Key principles:
 
 ## Authentication & Security
 
-**Full guide: `docs/SECURITY.md`**
+**Full guide: `docs/SECURITY_GUIDE.md`**
 
 Quick reference:
 
@@ -213,7 +213,7 @@ A2A_API_KEYS='{"ka_secret_key":"caller-id","ka_another":"other-caller"}'
 
 ## Permissions System
 
-Controls who can use `save_to_memory`. **Full guide: `docs/SECURITY.md`**
+Controls who can use `save_to_memory`. **Full guide: `docs/SECURITY_GUIDE.md`**
 
 ```yaml
 permissions:
@@ -230,7 +230,8 @@ Implementation: `internal/agent/permissions.go`, `internal/agent/permission_memo
 Essential environment variables:
 ```bash
 ANTHROPIC_API_KEY=...          # Required
-SLACK_BOT_TOKEN=xoxb-...       # Required
+SLACK_ENABLED=true|false       # Default: true (set false for API-only mode)
+SLACK_BOT_TOKEN=xoxb-...       # Required if SLACK_ENABLED=true
 SLACK_MODE=socket|webhook      # Default: webhook
 POSTGRES_URL=...               # Required
 REDIS_ADDR=localhost:6379      # Default
@@ -381,7 +382,7 @@ All detailed documentation is in `docs/`:
 | File | Content |
 |------|---------|
 | `docs/CONFIGURATION.md` | Complete configuration guide |
-| `docs/SECURITY.md` | Authentication, authorization, permissions |
+| `docs/SECURITY_GUIDE.md` | Authentication, authorization, permissions |
 | `docs/A2A_TOOLS.md` | Agent-to-Agent integration |
 | `docs/MCP_INTEGRATION.md` | Model Context Protocol |
 | `docs/OBSERVABILITY.md` | Langfuse, metrics, tracing |

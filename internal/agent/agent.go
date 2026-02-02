@@ -44,6 +44,32 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// resolveSessionID determines the session_id based on available context
+// Priority:
+// 1. Client-provided session_id -> use it directly
+// 2. channel_id + thread_ts -> "thread-{channel}-{thread_ts}" (maintains context per thread)
+// 3. channel_id only -> "channel-{channel}-{timestamp}"
+// 4. No Slack context -> "api-{timestamp}"
+func resolveSessionID(clientSessionID, channelID, threadTS string) string {
+	// 1. Client-provided session_id takes precedence
+	if clientSessionID != "" {
+		return clientSessionID
+	}
+
+	// 2. Thread context (channel + thread_ts)
+	if channelID != "" && threadTS != "" {
+		return fmt.Sprintf("thread-%s-%s", channelID, threadTS)
+	}
+
+	// 3. Channel only (rare case)
+	if channelID != "" {
+		return fmt.Sprintf("channel-%s-%d", channelID, time.Now().Unix())
+	}
+
+	// 4. API-only context (no Slack)
+	return fmt.Sprintf("api-%d", time.Now().Unix())
+}
+
 // resolveUserID determines the user_id based on knowledge_scope configuration
 // Note: A2A requests (without channel/user context) use "shared-knowledge" namespace
 // which may be isolated from channel/user-specific data. For full A2A interoperability,
@@ -434,8 +460,12 @@ func (a *Agent) IngestThread(ctx context.Context, req IngestRequest) (*IngestRes
 
 	log.Infow("Starting thread ingestion via ADK", logFields...)
 
-	// Create a unique session for this ingestion
-	sessionID := fmt.Sprintf("ingest-%s-%s", req.ChannelID, req.ThreadTS)
+	// Resolve session ID (client-provided or auto-generated from thread context)
+	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
+	// For ingestion, add prefix to distinguish from query sessions
+	if req.SessionID == "" {
+		sessionID = "ingest-" + sessionID
+	}
 
 	// Determine user_id based on knowledge_scope configuration
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
@@ -619,8 +649,8 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
 	}()
 
-	// Create a unique session for this query
-	sessionID := fmt.Sprintf("query-%s-%d", req.ChannelID, time.Now().Unix())
+	// Resolve session ID (client-provided or auto-generated from thread context)
+	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
 
 	// Determine user_id based on knowledge_scope configuration
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)

@@ -200,6 +200,7 @@ Query the knowledge base with natural language questions.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `question` | string | **Yes** | User's question |
+| `session_id` | string | No | Custom session ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
 | `channel_id` | string | No | Slack channel ID (for context) |
 | `thread_ts` | string | No | Thread timestamp (for threading) |
 | `messages` | array | No | Thread context messages |
@@ -386,6 +387,7 @@ Ingest a Slack thread into the knowledge base.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `session_id` | string | No | Custom session ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
 | `thread_ts` | string | **Yes** | Thread timestamp (unique identifier) |
 | `channel_id` | string | **Yes** | Slack channel ID |
 | `messages` | array | **Yes** | Thread messages (non-empty) |
