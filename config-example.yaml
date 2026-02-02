@@ -213,15 +213,20 @@ langfuse:
   input_cost_per_1m: 3.0   # Cost per 1M input tokens in USD (default: Claude Sonnet 4.5 = $3)
   output_cost_per_1m: 15.0  # Cost per 1M output tokens in USD (default: Claude Sonnet 4.5 = $15)
 
-# Agent-to-Agent (A2A) External Authentication
-# Maps client IDs to their secret tokens for external services
-# Format: client_id: secret_token
-# These are for direct API access, not for Slack Bridge
+# API Key Authentication (A2A and External Services)
+# Maps secret keys to their configuration (caller_id and role)
+# Format: secret_key: {caller_id: "name", role: "write|read"}
+# These are for direct API access, not for Slack Bridge (use internal_token for that)
 # Generate tokens with: openssl rand -hex 16
-a2a_api_keys: {}
+# Roles: "write" (full access) or "read" (no save_to_memory)
+api_keys: {}
   # Example:
-  # root-agent: ${A2A_ROOT_AGENT_TOKEN}
-  # analytics-agent: ${A2A_ANALYTICS_TOKEN}
+  # ka_secret_rootagent:
+  #   caller_id: root-agent
+  #   role: write
+  # ka_readonly_analytics:
+  #   caller_id: analytics-agent
+  #   role: read
 
 # MCP (Model Context Protocol) Integration
 # Prerequisites:
@@ -265,14 +270,14 @@ mcp:
 # INBOUND (this agent receives A2A requests):
 #   - Exposes standard A2A endpoints on the same port as custom HTTP (8081)
 #   - GET /.well-known/agent-card.json (public, for agent discovery)
-#   - POST /a2a/invoke (authenticated, uses a2a_api_keys)
+#   - POST /a2a/invoke (authenticated, uses api_keys)
 #
 # OUTBOUND (this agent calls other agents):
 #   - Uses Google ADK's remoteagent.NewA2A for standard A2A protocol
 #   - Sub-agents are configured below
 #
 # Authentication: /a2a/invoke uses the same auth as /api/* endpoints
-# If a2a_api_keys is configured, all requests require X-API-Key header
+# If api_keys is configured, all requests require X-API-Key header
 a2a:
   enabled: true
   self_name: knowledge-agent  # Used for loop prevention
@@ -305,6 +310,37 @@ a2a:
     #   description: "Get current alerts, acknowledge incidents, and manage on-call schedules"
     #   endpoint: http://alerts-agent:9000
     #   timeout: 30
+
+  # ============================================================================
+  # Async Sub-Agent Invocation
+  # ============================================================================
+  # Enable async_invoke_agent tool for long-running sub-agent tasks (5-15 min).
+  # When enabled, the LLM can use this tool to launch tasks in the background.
+  # Results are posted to Slack when complete, without blocking the conversation.
+  #
+  # Use cases:
+  # - Coding agents that take several minutes to complete
+  # - Analysis agents that process large amounts of data
+  # - Any sub-agent task that would timeout with synchronous invocation
+  #
+  # Flow:
+  # 1. LLM calls async_invoke_agent(agent_name, task, channel, thread)
+  # 2. Task is launched in a goroutine, LLM responds "Task sent to X"
+  # 3. When sub-agent finishes, result is posted to the Slack thread
+  # 4. Optionally, agent is re-invoked to process result (save to memory, etc.)
+  async:
+    # Enable/disable async sub-agent tool (default: false)
+    enabled: false
+
+    # Maximum time to wait for sub-agent response (default: 15m)
+    timeout: 15m
+
+    # Re-invoke agent with result when sub-agent completes (default: true)
+    # This allows the agent to process the result (e.g., save to memory)
+    callback_enabled: true
+
+    # Post results directly to Slack thread (default: true)
+    post_to_slack: true
 
   # DEPRECATED: Legacy agents config (use sub_agents instead)
   # This config creates custom HTTP tools, not standard A2A sub-agents

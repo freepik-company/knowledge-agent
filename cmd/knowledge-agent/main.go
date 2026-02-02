@@ -357,6 +357,12 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 	// Initialize Slack handler
 	slackHandler := slack.NewHandler(cfg, agentURL)
 
+	// Configure async sub-agent callbacks if enabled
+	if cfg.A2A.Enabled && cfg.A2A.Async.Enabled {
+		log.Info("Configuring async sub-agent callbacks with Slack client")
+		agentInstance.SetAsyncCallbacks(slackHandler.GetClient())
+	}
+
 	// Start Slack Bridge based on mode
 	if cfg.Slack.Mode == "socket" {
 		// Socket Mode

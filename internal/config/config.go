@@ -143,6 +143,15 @@ type A2AConfig struct {
 	AgentURL     string              `yaml:"agent_url" mapstructure:"agent_url"`                                     // Public URL for this agent (for A2A discovery/agent card)
 	Retry        RetryConfig         `yaml:"retry" mapstructure:"retry"`                                             // Retry configuration for A2A calls
 	SubAgents    []A2ASubAgentConfig `yaml:"sub_agents" mapstructure:"sub_agents"`                                   // List of remote ADK agents to integrate as sub-agents
+	Async        A2AAsyncConfig      `yaml:"async" mapstructure:"async"`                                             // Async sub-agent invocation configuration
+}
+
+// A2AAsyncConfig holds configuration for async sub-agent invocations
+type A2AAsyncConfig struct {
+	Enabled         bool          `yaml:"enabled" mapstructure:"enabled" default:"false"`                  // Enable async sub-agent tool (async_invoke_agent)
+	Timeout         time.Duration `yaml:"timeout" mapstructure:"timeout" default:"15m"`                    // Maximum time to wait for sub-agent response
+	CallbackEnabled bool          `yaml:"callback_enabled" mapstructure:"callback_enabled" default:"true"` // Re-invoke agent with result when sub-agent completes
+	PostToSlack     bool          `yaml:"post_to_slack" mapstructure:"post_to_slack" default:"true"`       // Post results directly to Slack thread
 }
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent

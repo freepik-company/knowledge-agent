@@ -71,6 +71,12 @@ func (h *Handler) initBotUserID() error {
 	return nil
 }
 
+// GetClient returns the underlying Slack client for use by other components
+// This allows the async sub-agent tool to post messages directly to Slack
+func (h *Handler) GetClient() *Client {
+	return h.client
+}
+
 // ensureBotUserID ensures the bot user ID is initialized (lazy init with retry)
 // This is called before processing DMs to handle cases where initial init failed
 func (h *Handler) ensureBotUserID() {
