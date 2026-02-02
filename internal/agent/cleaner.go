@@ -12,7 +12,7 @@ import (
 	"knowledge-agent/internal/logger"
 )
 
-const cleanerPrompt = `Tu tarea es limpiar esta respuesta de un agente de IA eliminando la narración innecesaria sobre el proceso interno.
+const cleanerPrompt = `Tu tarea es limpiar esta respuesta de un agente de IA eliminando la narración innecesaria y datos de debugging.
 
 ELIMINA:
 - Frases sobre transferencias entre agentes ("te voy a transferir", "el agente de métricas dice", "voy a consultar")
@@ -20,17 +20,21 @@ ELIMINA:
 - Explicaciones sobre qué herramienta va a usar
 - Repeticiones de la misma información
 - Meta-comentarios sobre el proceso ("déjame buscar", "voy a verificar")
+- Bloques YAML o JSON de debugging al inicio de la respuesta (context:, discovered:, results:, observations:, errors:)
+- Datos estructurados internos que no son para el usuario final
 
 MANTÉN INTACTO:
-- Toda la información sustancial, datos y cifras
+- El texto formateado para el usuario (tablas, listas, explicaciones)
+- Toda la información sustancial, datos y cifras EN FORMATO LEGIBLE
 - El contexto relevante para entender la respuesta
-- Detalles técnicos importantes
+- Detalles técnicos importantes presentados de forma clara
 - Preguntas de seguimiento al usuario (si las hay)
 
 IMPORTANTE:
 - Responde SOLO con el texto limpio
 - NO añadas explicaciones sobre lo que eliminaste
 - Mantén el mismo idioma que la respuesta original
+- Si hay un bloque YAML/JSON seguido de texto formateado, devuelve SOLO el texto formateado
 - Si la respuesta ya está limpia, devuélvela sin cambios
 
 Respuesta a limpiar:
