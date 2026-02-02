@@ -309,3 +309,25 @@ a2a:
   # DEPRECATED: Legacy agents config (use sub_agents instead)
   # This config creates custom HTTP tools, not standard A2A sub-agents
   # agents: []
+
+# ============================================================================
+# Parallel Tool Execution
+# ============================================================================
+# Monitors tool call patterns and logs parallelization opportunities.
+# When the LLM makes multiple sequential tool calls that could have been parallel,
+# metrics are logged showing potential time savings.
+parallel:
+  # Enable/disable parallel execution monitoring (default: true)
+  enabled: true
+
+  # Maximum number of tools to execute concurrently (default: 5)
+  max_parallelism: 5
+
+  # Timeout for individual tool execution (default: 120s)
+  tool_timeout: 120s
+
+  # Tools that must execute sequentially (not in parallel)
+  # For example, save_to_memory should run after search_memory to avoid
+  # saving redundant information already in the knowledge base
+  sequential_tools:
+    - save_to_memory

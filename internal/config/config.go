@@ -23,6 +23,7 @@ type Config struct {
 	Langfuse          LangfuseConfig          `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP               MCPConfig               `yaml:"mcp" mapstructure:"mcp"`
 	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                               // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
+	Parallel          ParallelConfig          `yaml:"parallel" mapstructure:"parallel"`                     // Parallel tool execution configuration
 	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"`     // Clean responses before sending to user
 	ContextSummarizer ContextSummarizerConfig `yaml:"context_summarizer" mapstructure:"context_summarizer"` // Summarize long contexts before sending to LLM
 	APIKeys           map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                     // API keys with caller_id and role for authentication
@@ -162,6 +163,14 @@ type A2AAuthConfig struct {
 	Header   string `yaml:"header,omitempty" mapstructure:"header"`       // Header name for api_key auth (e.g., "X-API-Key")
 	KeyEnv   string `yaml:"key_env,omitempty" mapstructure:"key_env"`     // Environment variable containing API key
 	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"` // Environment variable containing bearer token
+}
+
+// ParallelConfig holds configuration for parallel tool execution
+type ParallelConfig struct {
+	Enabled         bool          `yaml:"enabled" mapstructure:"enabled" envconfig:"PARALLEL_ENABLED" default:"true"`                     // Enable parallel tool execution
+	MaxParallelism  int           `yaml:"max_parallelism" mapstructure:"max_parallelism" envconfig:"PARALLEL_MAX" default:"5"`            // Maximum number of tools to execute in parallel
+	ToolTimeout     time.Duration `yaml:"tool_timeout" mapstructure:"tool_timeout" envconfig:"PARALLEL_TOOL_TIMEOUT" default:"120s"`      // Timeout for individual tool execution
+	SequentialTools []string      `yaml:"sequential_tools" mapstructure:"sequential_tools"`                                               // Tools that must execute sequentially (e.g., save_to_memory after search)
 }
 
 // AnthropicConfig holds Anthropic API configuration
