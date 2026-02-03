@@ -95,6 +95,47 @@ var (
 		Name: "slack_bridge_agent_forward_errors_total",
 		Help: "Total number of errors forwarding to Knowledge Agent",
 	})
+
+	// Tool execution metrics
+	toolLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_tool_latency_seconds",
+		Help:    "Tool execution latency by tool name",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	}, []string{"tool_name"})
+
+	toolCalls = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "knowledge_agent_tool_calls_total",
+		Help: "Total tool calls by tool name and status",
+	}, []string{"tool_name", "status"})
+
+	// A2A sub-agent metrics
+	a2aCallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "knowledge_agent_a2a_calls_total",
+		Help: "Total A2A calls by sub-agent and status",
+	}, []string{"sub_agent", "status"})
+
+	a2aLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_a2a_latency_seconds",
+		Help:    "A2A sub-agent call latency",
+		Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60},
+	}, []string{"sub_agent"})
+
+	// Ingest metrics
+	ingestTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "knowledge_agent_ingest_total",
+		Help: "Total number of ingest operations",
+	})
+
+	ingestErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "knowledge_agent_ingest_errors_total",
+		Help: "Total number of ingest errors",
+	})
+
+	ingestLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_ingest_latency_seconds",
+		Help:    "Ingest latency in seconds",
+		Buckets: prometheus.DefBuckets,
+	})
 )
 
 // init registers the process start time
@@ -139,4 +180,34 @@ func (m *Metrics) recordURLFetchPrometheus(success bool) {
 // recordTokensPrometheus records tokens used to Prometheus
 func (m *Metrics) recordTokensPrometheus(tokens int64) {
 	tokensUsed.Add(float64(tokens))
+}
+
+// recordToolCallPrometheus records tool call metrics to Prometheus
+func recordToolCallPrometheus(toolName string, duration time.Duration, success bool) {
+	toolLatency.WithLabelValues(toolName).Observe(duration.Seconds())
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	toolCalls.WithLabelValues(toolName, status).Inc()
+}
+
+// recordA2ACallPrometheus records A2A sub-agent call metrics to Prometheus
+func recordA2ACallPrometheus(subAgent string, duration time.Duration, success bool) {
+	a2aLatency.WithLabelValues(subAgent).Observe(duration.Seconds())
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	a2aCallsTotal.WithLabelValues(subAgent, status).Inc()
+}
+
+// recordIngestPrometheus records ingest metrics to Prometheus
+func (m *Metrics) recordIngestPrometheus(duration time.Duration, err error) {
+	ingestTotal.Inc()
+	ingestLatency.Observe(duration.Seconds())
+
+	if err != nil {
+		ingestErrors.Inc()
+	}
 }

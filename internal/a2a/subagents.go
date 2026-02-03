@@ -14,6 +14,7 @@ import (
 
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/observability"
 )
 
 // CreateSubAgents creates remote ADK agents from configuration using remoteagent.NewA2A
@@ -227,13 +228,16 @@ func resolveAuthHeader(auth config.A2AAuthConfig) (headerName, headerValue strin
 	}
 }
 
+// a2aStartTimeKey is the context key for storing A2A request start time
+type a2aStartTimeKey struct{}
+
 // loggingInterceptor implements a2aclient.CallInterceptor for debugging A2A calls
 type loggingInterceptor struct {
 	a2aclient.PassthroughInterceptor
 	agentName string
 }
 
-// Before logs the outgoing A2A request
+// Before logs the outgoing A2A request and records start time for metrics
 func (li *loggingInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
 	log := logger.Get()
 	log.Infow("A2A outgoing request",
@@ -242,17 +246,29 @@ func (li *loggingInterceptor) Before(ctx context.Context, req *a2aclient.Request
 		"base_url", req.BaseURL,
 		"has_payload", req.Payload != nil,
 	)
+	// Store start time in context for After() to calculate duration
+	ctx = context.WithValue(ctx, a2aStartTimeKey{}, time.Now())
 	return ctx, nil
 }
 
-// After logs the A2A response
+// After logs the A2A response and records metrics
 func (li *loggingInterceptor) After(ctx context.Context, resp *a2aclient.Response) error {
 	log := logger.Get()
+
+	// Calculate duration from context
+	var duration time.Duration
+	if startTime, ok := ctx.Value(a2aStartTimeKey{}).(time.Time); ok {
+		duration = time.Since(startTime)
+	}
+
+	success := resp.Err == nil
+
 	if resp.Err != nil {
 		log.Errorw("A2A request failed",
 			"agent", li.agentName,
 			"method", resp.Method,
 			"error", resp.Err,
+			"duration_ms", duration.Milliseconds(),
 		)
 	} else {
 		log.Infow("A2A response received",
@@ -260,8 +276,13 @@ func (li *loggingInterceptor) After(ctx context.Context, resp *a2aclient.Respons
 			"method", resp.Method,
 			"base_url", resp.BaseURL,
 			"has_payload", resp.Payload != nil,
+			"duration_ms", duration.Milliseconds(),
 		)
 	}
+
+	// Record A2A metrics
+	observability.GetMetrics().RecordA2ACall(li.agentName, duration, success)
+
 	return nil
 }
 

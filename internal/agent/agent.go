@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/agent"
@@ -45,6 +46,32 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// containsError checks if a tool response contains an error indicator
+func containsError(response map[string]any) bool {
+	if response == nil {
+		return false
+	}
+
+	// Check if response has "error" key
+	if _, hasError := response["error"]; hasError {
+		return true
+	}
+	// Also check for "Error" key
+	if _, hasError := response["Error"]; hasError {
+		return true
+	}
+
+	// Check if output field contains error patterns
+	if output, ok := response["output"].(string); ok {
+		lowerStr := strings.ToLower(output)
+		if strings.Contains(lowerStr, "error") || strings.Contains(lowerStr, "failed") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // resolveSessionID determines the session_id based on available context
@@ -471,10 +498,17 @@ func (a *Agent) GetParallelMetrics() *parallel.ParallelMetrics {
 // IngestThread handles thread ingestion using ADK agent
 func (a *Agent) IngestThread(ctx context.Context, req IngestRequest) (*IngestResponse, error) {
 	log := logger.Get()
+	startTime := time.Now()
 
 	// Extract caller information from context
 	callerID := ctxutil.CallerID(ctx)
 	slackUserID := ctxutil.SlackUserID(ctx)
+
+	// Start Langfuse ingest trace
+	ingestTrace := a.langfuseTracer.StartIngestTrace(ctx, req.ThreadTS, req.ChannelID, len(req.Messages), map[string]any{
+		"caller_id":     callerID,
+		"slack_user_id": slackUserID,
+	})
 
 	// Update context holder for permission checks
 	a.contextHolder.SetContext(ctx)
@@ -559,13 +593,16 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 	// Run agent to process and save the thread
 	var responseText string
 	var memoriesSaved int
+	var ingestErr error
+	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
 
 	log.Info("Running agent for thread ingestion")
 	eventCount := 0
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
 		if err != nil {
 			log.Errorw("Runner error during ingestion", "error", err)
-			return nil, fmt.Errorf("ingestion failed: %w", err)
+			ingestErr = fmt.Errorf("ingestion failed: %w", err)
+			break
 		}
 
 		eventCount++
@@ -580,7 +617,8 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 				"error_code", event.ErrorCode,
 				"error_message", event.ErrorMessage,
 			)
-			return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
+			ingestErr = fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
+			break
 		}
 
 		// Process event content
@@ -595,26 +633,66 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 				responseText += event.Content.Parts[0].Text
 			}
 
-			// Count and log memory saves
+			// Count and log memory saves with tool metrics
 			for _, part := range event.Content.Parts {
 				if part.FunctionCall != nil {
+					toolName := part.FunctionCall.Name
+					toolStartTimes[toolName] = time.Now()
+
 					log.Infow("Agent calling tool during ingestion",
-						"tool", part.FunctionCall.Name,
+						"tool", toolName,
+						"trace_id", ingestTrace.TraceID,
 					)
-					if part.FunctionCall.Name == "save_to_memory" {
+				}
+				if part.FunctionResponse != nil {
+					toolName := part.FunctionResponse.Name
+					var duration time.Duration
+					if start, ok := toolStartTimes[toolName]; ok {
+						duration = time.Since(start)
+						delete(toolStartTimes, toolName)
+					}
+
+					success := !containsError(part.FunctionResponse.Response)
+
+					log.Infow("Tool response during ingestion",
+						"tool", toolName,
+						"duration_ms", duration.Milliseconds(),
+						"success", success,
+					)
+
+					// Record tool metrics
+					observability.GetMetrics().RecordToolCall(toolName, duration, success)
+
+					// Track memory saves in Langfuse trace
+					if toolName == "save_to_memory" && success {
 						memoriesSaved++
+						// Extract content for trace if available
+						contentPreview := ""
+						if part.FunctionResponse.Response != nil {
+							if content, ok := part.FunctionResponse.Response["content"].(string); ok {
+								contentPreview = content
+							}
+						}
+						ingestTrace.RecordMemorySave(contentPreview)
 						log.Debugw("Memory save detected",
 							"total_saves", memoriesSaved,
 						)
 					}
 				}
-				if part.FunctionResponse != nil {
-					log.Debugw("Tool response during ingestion",
-						"tool", part.FunctionResponse.Name,
-					)
-				}
 			}
 		}
+	}
+
+	// Record ingest metrics
+	duration := time.Since(startTime)
+	observability.GetMetrics().RecordIngest(duration, ingestErr)
+
+	// End Langfuse ingest trace
+	ingestTrace.End(ingestErr == nil, responseText)
+
+	// Return error if ingestion failed
+	if ingestErr != nil {
+		return nil, ingestErr
 	}
 
 	completionLogFields := []any{
@@ -622,6 +700,7 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 		"memories_saved", memoriesSaved,
 		"total_events", eventCount,
 		"response_length", len(responseText),
+		"duration_ms", duration.Milliseconds(),
 	}
 	if slackUserID != "" {
 		completionLogFields = append(completionLogFields, "slack_user_id", slackUserID)
@@ -826,6 +905,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	var responseText string     // Accumulates full response for final answer
 	var generationOutput string // Tracks current generation's output only
 	var currentGeneration *traces.Observation
+	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
 
 	log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
 	eventCount := 0
@@ -893,31 +973,50 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 				// Tool call
 				if part.FunctionCall != nil {
-					log.Infow("Agent calling tool",
-						"tool", part.FunctionCall.Name,
+					toolName := part.FunctionCall.Name
+					toolStartTimes[toolName] = time.Now()
+
+					log.Infow("Tool call started",
+						"tool", toolName,
 						"args_count", len(part.FunctionCall.Args),
+						"trace_id", trace.TraceID,
 					)
 
 					// Track tool call in Langfuse
-					trace.StartToolCall(part.FunctionCall.Name, part.FunctionCall.Args)
+					trace.StartToolCall(toolName, part.FunctionCall.Args)
 				}
 
 				// Tool response
 				if part.FunctionResponse != nil {
-					log.Infow("Tool response received",
-						"tool", part.FunctionResponse.Name,
+					toolName := part.FunctionResponse.Name
+					var duration time.Duration
+					if startTime, ok := toolStartTimes[toolName]; ok {
+						duration = time.Since(startTime)
+						delete(toolStartTimes, toolName)
+					}
+
+					// Determine if tool call was successful
+					success := !containsError(part.FunctionResponse.Response)
+
+					log.Infow("Tool call completed",
+						"tool", toolName,
+						"duration_ms", duration.Milliseconds(),
+						"success", success,
 						"has_response", part.FunctionResponse.Response != nil,
 					)
 
+					// Record tool metrics
+					observability.GetMetrics().RecordToolCall(toolName, duration, success)
+
 					// Log detailed response for A2A debugging
-					if part.FunctionResponse.Name == "transfer_to_agent" {
+					if toolName == "transfer_to_agent" {
 						log.Debugw("transfer_to_agent response details",
 							"response", part.FunctionResponse.Response,
 						)
 					}
 
 					// End tool call in Langfuse
-					trace.EndToolCall(part.FunctionResponse.Name, part.FunctionResponse.Response, nil)
+					trace.EndToolCall(toolName, part.FunctionResponse.Response, nil)
 				}
 			}
 

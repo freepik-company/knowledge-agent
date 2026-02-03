@@ -234,9 +234,16 @@ func (ci *contextCleanerInterceptor) findTextInMap(data map[string]any) string {
 		}
 	}
 
-	// Check nested "message" object
+	// Check nested "message" object (standard A2A format)
 	if message, ok := data["message"].(map[string]any); ok {
 		if text := ci.findTextInMap(message); text != "" {
+			texts = append(texts, text)
+		}
+	}
+
+	// Check nested "new_message" object (ADK Launcher format)
+	if newMessage, ok := data["new_message"].(map[string]any); ok {
+		if text := ci.findTextInMap(newMessage); text != "" {
 			texts = append(texts, text)
 		}
 	}
@@ -275,25 +282,45 @@ func (ci *contextCleanerInterceptor) replaceTextInPayload(payload any, newText s
 }
 
 // replaceTextInMap replaces text content in a map structure with new text.
-// For simplicity, it replaces the first "text" field it finds in "parts".
+// Replaces ALL text parts with a single summarized text, removing redundant parts.
 func (ci *contextCleanerInterceptor) replaceTextInMap(data map[string]any, newText string) bool {
 	// Check "parts" array first (most common A2A format)
-	if parts, ok := data["parts"].([]any); ok {
-		for i, part := range parts {
+	if parts, ok := data["parts"].([]any); ok && len(parts) > 0 {
+		// Replace first text part with summary, remove all other text parts
+		newParts := make([]any, 0, 1)
+		replaced := false
+		for _, part := range parts {
 			if partMap, ok := part.(map[string]any); ok {
 				if _, hasText := partMap["text"]; hasText {
-					partMap["text"] = newText
-					parts[i] = partMap
-					data["parts"] = parts
-					return true
+					if !replaced {
+						// Keep only the first text part with summarized content
+						partMap["text"] = newText
+						newParts = append(newParts, partMap)
+						replaced = true
+					}
+					// Skip other text parts (they're redundant after summarization)
+				} else {
+					// Keep non-text parts (files, etc.)
+					newParts = append(newParts, part)
 				}
 			}
 		}
+		if replaced {
+			data["parts"] = newParts
+			return true
+		}
 	}
 
-	// Check nested "message" object
+	// Check nested "message" object (standard A2A format)
 	if message, ok := data["message"].(map[string]any); ok {
 		if ci.replaceTextInMap(message, newText) {
+			return true
+		}
+	}
+
+	// Check nested "new_message" object (ADK Launcher format)
+	if newMessage, ok := data["new_message"].(map[string]any); ok {
+		if ci.replaceTextInMap(newMessage, newText) {
 			return true
 		}
 	}

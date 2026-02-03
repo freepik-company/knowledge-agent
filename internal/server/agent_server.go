@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	adkagent "google.golang.org/adk/agent"
@@ -145,6 +146,8 @@ func (s *AgentServer) Handler() http.Handler {
 
 // handleIngestThread handles thread ingestion requests
 func (s *AgentServer) handleIngestThread(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	if r.Method != http.MethodPost {
 		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -192,10 +195,22 @@ func (s *AgentServer) handleIngestThread(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	resp, err := s.agent.IngestThread(ctx, req)
 	if err != nil {
-		log.Errorw("Ingest error", "error", err, "caller", callerID)
+		log.Errorw("Ingest error",
+			"error", err,
+			"caller", callerID,
+			"duration_ms", time.Since(startTime).Milliseconds(),
+		)
 		jsonError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	log.Infow("IngestThread completed",
+		"caller", callerID,
+		"thread_ts", req.ThreadTS,
+		"channel_id", req.ChannelID,
+		"duration_ms", time.Since(startTime).Milliseconds(),
+		"success", true,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -206,6 +221,8 @@ func (s *AgentServer) handleIngestThread(w http.ResponseWriter, r *http.Request)
 
 // handleQuery handles query requests
 func (s *AgentServer) handleQuery(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -251,10 +268,20 @@ func (s *AgentServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	resp, err := s.agent.Query(ctx, req)
 	if err != nil {
-		log.Errorw("Query error", "error", err, "caller", callerID)
+		log.Errorw("Query error",
+			"error", err,
+			"caller", callerID,
+			"duration_ms", time.Since(startTime).Milliseconds(),
+		)
 		jsonError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	log.Infow("Query completed",
+		"caller", callerID,
+		"duration_ms", time.Since(startTime).Milliseconds(),
+		"success", true,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

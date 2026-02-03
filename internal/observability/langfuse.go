@@ -319,6 +319,120 @@ func (qt *QueryTrace) End(success bool, answer string) {
 	)
 }
 
+// IngestTrace tracks a complete ingest operation with memory saves
+type IngestTrace struct {
+	trace       *traces.Trace
+	tracer      *LangfuseTracer
+	startTime   time.Time
+	metadata    map[string]any
+	TraceID     string // Exported for external access
+	memorySaves int
+}
+
+// StartIngestTrace starts tracing an ingest operation
+func (t *LangfuseTracer) StartIngestTrace(ctx context.Context, threadTS, channelID string, msgCount int, metadata map[string]any) *IngestTrace {
+	if !t.enabled {
+		return &IngestTrace{
+			tracer:    t,
+			startTime: time.Now(),
+			metadata:  metadata,
+		}
+	}
+
+	log := logger.Get()
+
+	// Create trace using git-hulk SDK
+	trace := t.client.StartTrace(ctx, "knowledge-agent-ingest")
+
+	// Set trace properties
+	trace.Input = map[string]any{
+		"thread_ts":     threadTS,
+		"channel_id":    channelID,
+		"message_count": msgCount,
+	}
+	trace.Tags = []string{"ingest", "knowledge-agent"}
+	trace.Metadata = metadata
+
+	// Extract user_name from metadata for UserID
+	if userName, ok := metadata["user_name"].(string); ok && userName != "" {
+		trace.UserID = userName
+	}
+
+	log.Infow("Langfuse ingest trace created",
+		"trace_id", trace.ID,
+		"thread_ts", threadTS,
+		"channel_id", channelID,
+		"message_count", msgCount,
+	)
+
+	return &IngestTrace{
+		trace:     trace,
+		tracer:    t,
+		startTime: time.Now(),
+		metadata:  metadata,
+		TraceID:   trace.ID,
+	}
+}
+
+// RecordMemorySave records a memory save operation within the ingest trace
+func (it *IngestTrace) RecordMemorySave(content string) {
+	it.memorySaves++
+
+	if !it.tracer.enabled || it.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+
+	// Create a span for the memory save
+	span := it.trace.StartSpan(fmt.Sprintf("memory-save-%d", it.memorySaves))
+	span.Input = map[string]any{"content_preview": truncateForLog(content, 200)}
+	span.End()
+
+	log.Debugw("Memory save recorded in ingest trace",
+		"trace_id", it.TraceID,
+		"save_number", it.memorySaves,
+	)
+}
+
+// End finishes the ingest trace
+func (it *IngestTrace) End(success bool, summary string) {
+	if !it.tracer.enabled || it.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+
+	// Set trace output
+	it.trace.Output = map[string]any{
+		"success":       success,
+		"summary":       truncateForLog(summary, 500),
+		"duration_ms":   time.Since(it.startTime).Milliseconds(),
+		"memories_saved": it.memorySaves,
+	}
+
+	// Update metadata
+	it.trace.Metadata = it.metadata
+
+	// End trace
+	it.trace.End()
+
+	log.Infow("Ingest trace completed",
+		"trace_id", it.TraceID,
+		"success", success,
+		"duration_ms", time.Since(it.startTime).Milliseconds(),
+		"memories_saved", it.memorySaves,
+	)
+}
+
+// truncateForLog truncates a string for logging purposes
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // Flush flushes pending traces to Langfuse
 func (t *LangfuseTracer) Flush() error {
 	if !t.enabled {

@@ -26,6 +26,20 @@ type Metrics struct {
 	// Token usage (if available from LLM responses)
 	tokensUsed atomic.Int64
 
+	// Tool call metrics
+	toolCallCount      atomic.Int64
+	toolCallErrorCount atomic.Int64
+
+	// A2A call metrics
+	a2aCallCount      atomic.Int64
+	a2aCallErrorCount atomic.Int64
+
+	// Ingest metrics
+	ingestCount        atomic.Int64
+	ingestErrorCount   atomic.Int64
+	ingestLatencySum   atomic.Int64 // in milliseconds
+	ingestLatencyCount atomic.Int64
+
 	// Uptime
 	startTime time.Time
 	mu        sync.RWMutex
@@ -100,6 +114,42 @@ func (m *Metrics) RecordTokensUsed(tokens int64) {
 	m.recordTokensPrometheus(tokens)
 }
 
+// RecordToolCall records a tool call execution
+func (m *Metrics) RecordToolCall(toolName string, duration time.Duration, success bool) {
+	m.toolCallCount.Add(1)
+	if !success {
+		m.toolCallErrorCount.Add(1)
+	}
+
+	// Record to Prometheus
+	recordToolCallPrometheus(toolName, duration, success)
+}
+
+// RecordA2ACall records an A2A sub-agent call execution
+func (m *Metrics) RecordA2ACall(subAgent string, duration time.Duration, success bool) {
+	m.a2aCallCount.Add(1)
+	if !success {
+		m.a2aCallErrorCount.Add(1)
+	}
+
+	// Record to Prometheus
+	recordA2ACallPrometheus(subAgent, duration, success)
+}
+
+// RecordIngest records an ingest operation
+func (m *Metrics) RecordIngest(duration time.Duration, err error) {
+	m.ingestCount.Add(1)
+	m.ingestLatencySum.Add(duration.Milliseconds())
+	m.ingestLatencyCount.Add(1)
+
+	if err != nil {
+		m.ingestErrorCount.Add(1)
+	}
+
+	// Record to Prometheus
+	m.recordIngestPrometheus(duration, err)
+}
+
 // GetStats returns a snapshot of current metrics
 func (m *Metrics) GetStats() map[string]any {
 	m.mu.RLock()
@@ -124,6 +174,30 @@ func (m *Metrics) GetStats() map[string]any {
 		memoryErrorRate = float64(m.memoryErrorCount.Load()) / float64(totalMemoryOps) * 100
 	}
 
+	// Calculate tool error rate
+	var toolErrorRate float64
+	if count := m.toolCallCount.Load(); count > 0 {
+		toolErrorRate = float64(m.toolCallErrorCount.Load()) / float64(count) * 100
+	}
+
+	// Calculate A2A error rate
+	var a2aErrorRate float64
+	if count := m.a2aCallCount.Load(); count > 0 {
+		a2aErrorRate = float64(m.a2aCallErrorCount.Load()) / float64(count) * 100
+	}
+
+	// Calculate average ingest latency
+	var avgIngestLatency float64
+	if count := m.ingestLatencyCount.Load(); count > 0 {
+		avgIngestLatency = float64(m.ingestLatencySum.Load()) / float64(count)
+	}
+
+	// Calculate ingest error rate
+	var ingestErrorRate float64
+	if count := m.ingestCount.Load(); count > 0 {
+		ingestErrorRate = float64(m.ingestErrorCount.Load()) / float64(count) * 100
+	}
+
 	// Calculate uptime
 	uptime := time.Since(m.startTime)
 
@@ -145,6 +219,22 @@ func (m *Metrics) GetStats() map[string]any {
 			"total":  m.urlFetchCount.Load(),
 			"errors": m.urlFetchErrorCount.Load(),
 		},
+		"tools": map[string]any{
+			"total":              m.toolCallCount.Load(),
+			"errors":             m.toolCallErrorCount.Load(),
+			"error_rate_percent": toolErrorRate,
+		},
+		"a2a": map[string]any{
+			"total":              m.a2aCallCount.Load(),
+			"errors":             m.a2aCallErrorCount.Load(),
+			"error_rate_percent": a2aErrorRate,
+		},
+		"ingest": map[string]any{
+			"total":              m.ingestCount.Load(),
+			"errors":             m.ingestErrorCount.Load(),
+			"error_rate_percent": ingestErrorRate,
+			"avg_latency_ms":     avgIngestLatency,
+		},
 		"tokens_used": m.tokensUsed.Load(),
 	}
 }
@@ -161,6 +251,14 @@ func (m *Metrics) Reset() {
 	m.urlFetchCount.Store(0)
 	m.urlFetchErrorCount.Store(0)
 	m.tokensUsed.Store(0)
+	m.toolCallCount.Store(0)
+	m.toolCallErrorCount.Store(0)
+	m.a2aCallCount.Store(0)
+	m.a2aCallErrorCount.Store(0)
+	m.ingestCount.Store(0)
+	m.ingestErrorCount.Store(0)
+	m.ingestLatencySum.Store(0)
+	m.ingestLatencyCount.Store(0)
 
 	m.mu.Lock()
 	m.startTime = time.Now()
