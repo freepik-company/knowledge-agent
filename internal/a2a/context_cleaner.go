@@ -141,9 +141,10 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 	}
 
 	// Extract all text from parts
+	// Note: Parts are stored as values (a2a.TextPart), not pointers (*a2a.TextPart)
 	var texts []string
 	for _, part := range params.Message.Parts {
-		if textPart, ok := part.(*a2a.TextPart); ok && textPart.Text != "" {
+		if textPart, ok := part.(a2a.TextPart); ok && textPart.Text != "" {
 			texts = append(texts, textPart.Text)
 		}
 	}
@@ -189,8 +190,9 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 
 	// CRITICAL: Modify the Message.Parts directly on the original pointer
 	// This ensures the modification is used by the transport
+	// Note: Parts must be values (a2a.TextPart), not pointers (*a2a.TextPart)
 	params.Message.Parts = a2a.ContentParts{
-		&a2a.TextPart{
+		a2a.TextPart{
 			Text: summarized,
 		},
 	}
