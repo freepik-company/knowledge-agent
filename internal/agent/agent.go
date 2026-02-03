@@ -1002,6 +1002,10 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
 
 	log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
+
+	// Add QueryTrace to context for A2A interceptors to use
+	ctx = observability.ContextWithQueryTrace(ctx, trace)
+
 	eventCount := 0
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
 		if err != nil {

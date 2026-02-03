@@ -433,6 +433,53 @@ func truncateForLog(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// Context key for QueryTrace
+type queryTraceKey struct{}
+
+// ContextWithQueryTrace adds a QueryTrace to the context
+func ContextWithQueryTrace(ctx context.Context, qt *QueryTrace) context.Context {
+	return context.WithValue(ctx, queryTraceKey{}, qt)
+}
+
+// QueryTraceFromContext retrieves the QueryTrace from context
+func QueryTraceFromContext(ctx context.Context) *QueryTrace {
+	if qt, ok := ctx.Value(queryTraceKey{}).(*QueryTrace); ok {
+		return qt
+	}
+	return nil
+}
+
+// RecordA2ACall records an A2A sub-agent call with the cleaned query
+func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery string, durationMs int64) {
+	if !qt.tracer.enabled || qt.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+	qt.eventCount++
+
+	// Create a span for the A2A call
+	span := qt.trace.StartSpan(fmt.Sprintf("a2a-call-%s", agentName))
+	span.Input = map[string]any{
+		"agent":          agentName,
+		"original_query": truncateForLog(originalQuery, 500),
+		"cleaned_query":  cleanedQuery,
+		"original_len":   len(originalQuery),
+		"cleaned_len":    len(cleanedQuery),
+	}
+	span.Output = map[string]any{
+		"reduction_percent": fmt.Sprintf("%.1f%%", float64(len(originalQuery)-len(cleanedQuery))/float64(len(originalQuery))*100),
+	}
+	span.End()
+
+	log.Debugw("Recorded A2A call in trace",
+		"trace_id", qt.TraceID,
+		"agent", agentName,
+		"original_len", len(originalQuery),
+		"cleaned_len", len(cleanedQuery),
+	)
+}
+
 // Flush flushes pending traces to Langfuse
 func (t *LangfuseTracer) Flush() error {
 	if !t.enabled {

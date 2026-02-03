@@ -14,6 +14,7 @@ import (
 
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/observability"
 )
 
 const (
@@ -206,6 +207,11 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 		"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
 		"cleaned_text", summarized,
 	)
+
+	// Record A2A call in Langfuse trace if available
+	if qt := observability.QueryTraceFromContext(ctx); qt != nil {
+		qt.RecordA2ACall(ci.agentName, originalText, summarized, 0)
+	}
 
 	return ctx, nil
 }
