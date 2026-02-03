@@ -2,12 +2,12 @@ package a2a
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-go/a2a"
 	"github.com/a2aproject/a2a-go/a2aclient"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -106,7 +106,9 @@ func NewContextCleanerInterceptor(agentName, agentDescription string, cfg config
 	}
 }
 
-// Before intercepts the request and summarizes the context before sending to sub-agent
+// Before intercepts the request and summarizes the context before sending to sub-agent.
+// IMPORTANT: We modify the *a2a.MessageSendParams directly because the a2aclient
+// uses the original pointer, not req.Payload, when calling the transport.
 func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
 	log := logger.Get()
 
@@ -120,16 +122,49 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 		return ctx, nil
 	}
 
-	// Extract text from the A2A payload
-	originalText := ci.extractTextFromPayload(req.Payload)
+	// Type assert to *a2a.MessageSendParams - this is what SendMessage receives
+	params, ok := req.Payload.(*a2a.MessageSendParams)
+	if !ok {
+		log.Debugw("Context cleaner skipped: payload is not *a2a.MessageSendParams",
+			"agent", ci.agentName,
+			"payload_type", fmt.Sprintf("%T", req.Payload),
+		)
+		return ctx, nil
+	}
+
+	// Skip if no message
+	if params.Message == nil || len(params.Message.Parts) == 0 {
+		log.Debugw("Context cleaner skipped: no message or parts",
+			"agent", ci.agentName,
+		)
+		return ctx, nil
+	}
+
+	// Extract all text from parts
+	var texts []string
+	for _, part := range params.Message.Parts {
+		if textPart, ok := part.(*a2a.TextPart); ok && textPart.Text != "" {
+			texts = append(texts, textPart.Text)
+		}
+	}
+
+	originalText := strings.Join(texts, "\n")
 	if originalText == "" {
-		log.Debugw("Context cleaner skipped: no text found in payload",
+		log.Debugw("Context cleaner skipped: no text found in parts",
 			"agent", ci.agentName,
 		)
 		return ctx, nil
 	}
 
 	originalLen := len(originalText)
+	originalPartsCount := len(params.Message.Parts)
+
+	log.Debugw("Context cleaner: inspecting payload",
+		"agent", ci.agentName,
+		"parts_count", originalPartsCount,
+		"text_length", originalLen,
+		"text_preview", truncateString(originalText, 200),
+	)
 
 	// Call Haiku to summarize the context
 	summarized, err := ci.summarizeContext(ctx, originalText)
@@ -152,30 +187,23 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 		return ctx, nil
 	}
 
-	// Replace the payload with the summarized version
-	newPayload, replaced := ci.replaceTextInPayload(req.Payload, summarized)
-	if replaced {
-		req.Payload = newPayload
-		log.Infow("Context cleaned for sub-agent",
-			"agent", ci.agentName,
-			"original_length", originalLen,
-			"cleaned_length", len(summarized),
-			"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
-			"cleaned_text", summarized,
-		)
-
-		// Log the modified payload for debugging
-		if modifiedJson, err := json.Marshal(newPayload); err == nil {
-			log.Debugw("Context cleaner: modified payload",
-				"agent", ci.agentName,
-				"payload_json", string(modifiedJson),
-			)
-		}
-	} else {
-		log.Debugw("Context cleaner: could not replace text in payload",
-			"agent", ci.agentName,
-		)
+	// CRITICAL: Modify the Message.Parts directly on the original pointer
+	// This ensures the modification is used by the transport
+	params.Message.Parts = a2a.ContentParts{
+		&a2a.TextPart{
+			Text: summarized,
+		},
 	}
+
+	log.Infow("Context cleaned for sub-agent",
+		"agent", ci.agentName,
+		"original_length", originalLen,
+		"original_parts", originalPartsCount,
+		"cleaned_length", len(summarized),
+		"cleaned_parts", 1,
+		"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
+		"cleaned_text", summarized,
+	)
 
 	return ctx, nil
 }
@@ -218,173 +246,10 @@ func (ci *contextCleanerInterceptor) summarizeContext(ctx context.Context, text 
 	return strings.TrimSpace(result.String()), nil
 }
 
-// extractTextFromPayload extracts text content from an A2A payload.
-// The payload can be various A2A message types.
-func (ci *contextCleanerInterceptor) extractTextFromPayload(payload any) string {
-	log := logger.Get()
-
-	// Convert payload to JSON for inspection
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	// Log the payload structure for debugging
-	log.Debugw("Context cleaner: inspecting payload structure",
-		"agent", ci.agentName,
-		"payload_json", string(jsonBytes),
-	)
-
-	// Parse as generic map to find text content
-	var data map[string]any
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return ""
-	}
-
-	// Look for common A2A message structures
-	// A2A typically uses: message.parts[].text or params.message.parts[].text
-	text := ci.findTextInMap(data)
-
-	log.Debugw("Context cleaner: extracted text",
-		"agent", ci.agentName,
-		"text_length", len(text),
-		"text_preview", truncateString(text, 200),
-	)
-
-	return text
-}
-
 // truncateString truncates a string to maxLen and adds "..." if truncated
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-// findTextInMap recursively searches for text content in a map structure
-func (ci *contextCleanerInterceptor) findTextInMap(data map[string]any) string {
-	var texts []string
-
-	// Direct "text" field
-	if text, ok := data["text"].(string); ok && text != "" {
-		texts = append(texts, text)
-	}
-
-	// Check "parts" array (A2A message format)
-	if parts, ok := data["parts"].([]any); ok {
-		for _, part := range parts {
-			if partMap, ok := part.(map[string]any); ok {
-				if text, ok := partMap["text"].(string); ok && text != "" {
-					texts = append(texts, text)
-				}
-			}
-		}
-	}
-
-	// Check nested "message" object (standard A2A format)
-	if message, ok := data["message"].(map[string]any); ok {
-		if text := ci.findTextInMap(message); text != "" {
-			texts = append(texts, text)
-		}
-	}
-
-	// Check nested "new_message" object (ADK Launcher format)
-	if newMessage, ok := data["new_message"].(map[string]any); ok {
-		if text := ci.findTextInMap(newMessage); text != "" {
-			texts = append(texts, text)
-		}
-	}
-
-	// Check nested "params" object
-	if params, ok := data["params"].(map[string]any); ok {
-		if text := ci.findTextInMap(params); text != "" {
-			texts = append(texts, text)
-		}
-	}
-
-	return strings.Join(texts, "\n")
-}
-
-// replaceTextInPayload replaces text content in an A2A payload with the summarized version.
-// Returns the new payload and whether the replacement was successful.
-func (ci *contextCleanerInterceptor) replaceTextInPayload(payload any, newText string) (any, bool) {
-	// Convert to JSON, modify, and back
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return payload, false
-	}
-
-	var data map[string]any
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return payload, false
-	}
-
-	// Replace text in the structure
-	if !ci.replaceTextInMap(data, newText) {
-		return payload, false
-	}
-
-	// Return the modified map as the new payload
-	return data, true
-}
-
-// replaceTextInMap replaces text content in a map structure with new text.
-// Replaces ALL text parts with a single summarized text, removing redundant parts.
-func (ci *contextCleanerInterceptor) replaceTextInMap(data map[string]any, newText string) bool {
-	// Check "parts" array first (most common A2A format)
-	if parts, ok := data["parts"].([]any); ok && len(parts) > 0 {
-		// Replace first text part with summary, remove all other text parts
-		newParts := make([]any, 0, 1)
-		replaced := false
-		for _, part := range parts {
-			if partMap, ok := part.(map[string]any); ok {
-				if _, hasText := partMap["text"]; hasText {
-					if !replaced {
-						// Keep only the first text part with summarized content
-						partMap["text"] = newText
-						newParts = append(newParts, partMap)
-						replaced = true
-					}
-					// Skip other text parts (they're redundant after summarization)
-				} else {
-					// Keep non-text parts (files, etc.)
-					newParts = append(newParts, part)
-				}
-			}
-		}
-		if replaced {
-			data["parts"] = newParts
-			return true
-		}
-	}
-
-	// Check nested "message" object (standard A2A format)
-	if message, ok := data["message"].(map[string]any); ok {
-		if ci.replaceTextInMap(message, newText) {
-			return true
-		}
-	}
-
-	// Check nested "new_message" object (ADK Launcher format)
-	if newMessage, ok := data["new_message"].(map[string]any); ok {
-		if ci.replaceTextInMap(newMessage, newText) {
-			return true
-		}
-	}
-
-	// Check nested "params" object
-	if params, ok := data["params"].(map[string]any); ok {
-		if ci.replaceTextInMap(params, newText) {
-			return true
-		}
-	}
-
-	// Direct "text" field as fallback
-	if _, ok := data["text"].(string); ok {
-		data["text"] = newText
-		return true
-	}
-
-	return false
 }
