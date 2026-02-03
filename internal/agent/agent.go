@@ -29,10 +29,6 @@ import (
 	"knowledge-agent/internal/tools"
 )
 
-// SlackPoster interface for posting messages to Slack (used by async sub-agent tool)
-type SlackPoster interface {
-	PostMessage(channelID, threadTS, text string) error
-}
 
 const (
 	appName = "knowledge-agent"
@@ -120,9 +116,8 @@ type Agent struct {
 	permissionChecker   *MemoryPermissionChecker
 	promptManager       *PromptManager
 	langfuseTracer      *observability.LangfuseTracer
-	responseCleaner     *ResponseCleaner
-	contextSummarizer   *ContextSummarizer
-	asyncSubAgentToolset *tools.AsyncSubAgentToolset // For async sub-agent invocations
+	responseCleaner   *ResponseCleaner
+	contextSummarizer *ContextSummarizer
 }
 
 // New creates a new agent instance with full ADK integration
@@ -292,39 +287,15 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		)
 	}
 
-	// 11. Create async sub-agent toolset (if enabled)
-	var asyncSubAgentToolset *tools.AsyncSubAgentToolset
-	if cfg.A2A.Enabled && cfg.A2A.Async.Enabled {
-		log.Infow("Async sub-agent tool enabled",
-			"timeout", cfg.A2A.Async.Timeout,
-			"callback_enabled", cfg.A2A.Async.CallbackEnabled,
-			"post_to_slack", cfg.A2A.Async.PostToSlack,
-		)
-
-		var err error
-		asyncSubAgentToolset, err = tools.NewAsyncSubAgentToolset(tools.AsyncSubAgentConfig{
-			Config:      &cfg.A2A.Async,
-			SubAgents:   cfg.A2A.SubAgents,
-			AgentPort:   cfg.Server.AgentPort,
-			// SlackPoster and SelfInvoker will be set later via SetAsyncCallbacks
-		})
-		if err != nil {
-			log.Warnw("Failed to create async sub-agent toolset", "error", err)
-		}
-	}
-
-	// 12. Create ADK agent with system prompt and toolsets
+	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
-	// Build toolsets array (base + MCP + async)
+	// Build toolsets array (base + MCP)
 	toolsets := []tool.Toolset{
 		memoryToolset, // Uses wrapped permission memory service
 		webToolset,
 	}
 	toolsets = append(toolsets, mcpToolsets...)
-	if asyncSubAgentToolset != nil {
-		toolsets = append(toolsets, asyncSubAgentToolset)
-	}
 
 	llmAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Knowledge Agent",
@@ -384,9 +355,8 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		permissionChecker:    permChecker,
 		promptManager:        promptManager,
 		langfuseTracer:       langfuseTracer,
-		responseCleaner:      responseCleaner,
-		contextSummarizer:    contextSummarizer,
-		asyncSubAgentToolset: asyncSubAgentToolset,
+		responseCleaner:   responseCleaner,
+		contextSummarizer: contextSummarizer,
 	}, nil
 }
 
@@ -410,10 +380,6 @@ func (a *Agent) Close() error {
 	}
 	var resources []resource
 
-	// Close async toolset first (waits for pending tasks)
-	if a.asyncSubAgentToolset != nil {
-		resources = append(resources, resource{"async_subagent_toolset", a.asyncSubAgentToolset.Close})
-	}
 	if a.langfuseTracer != nil {
 		resources = append(resources, resource{"langfuse_tracer", a.langfuseTracer.Close})
 	}
@@ -1028,63 +994,4 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 		Success: true,
 		Answer:  finalResponse,
 	}, nil
-}
-
-// SetAsyncCallbacks configures the async sub-agent tool with Slack poster and self-invoker
-// This must be called after the agent is created to enable async sub-agent functionality
-func (a *Agent) SetAsyncCallbacks(slackPoster SlackPoster) {
-	if a.asyncSubAgentToolset == nil {
-		return
-	}
-
-	log := logger.Get()
-	log.Info("Configuring async sub-agent callbacks")
-
-	a.asyncSubAgentToolset.SetCallbacks(slackPoster, a)
-}
-
-// SelfInvoke implements the tools.SelfInvoker interface for async callbacks
-func (a *Agent) SelfInvoke(ctx context.Context, req tools.CallbackRequest) error {
-	log := logger.Get()
-
-	log.Infow("Self-invoking agent with async callback result",
-		"agent_name", req.AgentName,
-		"channel_id", req.ChannelID,
-		"thread_ts", req.ThreadTS,
-		"is_callback", req.IsCallback,
-	)
-
-	// Convert CallbackRequest to QueryRequest
-	queryReq := QueryRequest{
-		SessionID: req.SessionID,
-		Question:  req.Question,
-		ChannelID: req.ChannelID,
-		ThreadTS:  req.ThreadTS,
-	}
-
-	// Execute the query (this will process the callback and potentially save to memory)
-	resp, err := a.Query(ctx, queryReq)
-	if err != nil {
-		return fmt.Errorf("self-invoke query failed: %w", err)
-	}
-
-	// If post_to_slack is disabled for callbacks, we need to post the response manually
-	// But since we're using Query which goes through the normal flow, the response
-	// will be returned but not posted. The async tool already posted the raw result.
-	// This callback is for additional processing (like save_to_memory).
-
-	log.Infow("Self-invoke completed",
-		"success", resp.Success,
-		"response_length", len(resp.Answer),
-	)
-
-	return nil
-}
-
-// GetAsyncPendingTasks returns the list of pending async sub-agent tasks
-func (a *Agent) GetAsyncPendingTasks() []tools.PendingTask {
-	if a.asyncSubAgentToolset == nil {
-		return nil
-	}
-	return a.asyncSubAgentToolset.GetPendingTasks()
 }

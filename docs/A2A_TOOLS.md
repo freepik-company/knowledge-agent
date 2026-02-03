@@ -245,15 +245,9 @@ WARN  Failed to create remote agent, skipping  agent=oncall-agent error="connect
 INFO  A2A sub-agents created successfully  count=2
 ```
 
-## Async Sub-Agent Invocation
+## Context Cleaner
 
-For long-running sub-agent tasks (5-15 minutes), Knowledge Agent supports **async invocation**. This allows the LLM to launch tasks in the background without blocking the conversation.
-
-### When to Use Async Invocation
-
-- **Coding agents** that take several minutes to complete
-- **Analysis agents** that process large amounts of data
-- **Any sub-agent task** that would timeout with synchronous invocation (>30s)
+When delegating tasks to sub-agents, Knowledge Agent can automatically summarize the conversation context to reduce token consumption and improve sub-agent focus.
 
 ### Configuration
 
@@ -261,111 +255,41 @@ For long-running sub-agent tasks (5-15 minutes), Knowledge Agent supports **asyn
 # config.yaml
 a2a:
   enabled: true
-  sub_agents:
-    - name: coding_agent
-      description: "Write and modify code based on requirements"
-      endpoint: http://coding-agent:9000
-      timeout: 30
 
-  # Enable async sub-agent invocation
-  async:
-    enabled: true
-    timeout: 15m              # Max wait time for sub-agent response
-    callback_enabled: true    # Re-invoke agent with result for processing
-    post_to_slack: true       # Post results directly to Slack thread
+  # Context cleaner: summarizes context before sending to sub-agents
+  context_cleaner:
+    enabled: true                         # Enable context cleaning (default: true)
+    model: claude-haiku-4-5-20251001      # Model for summarization (default: Haiku)
 ```
-
-### Configuration Fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable async sub-agent tool |
-| `timeout` | duration | `15m` | Maximum time to wait for sub-agent response |
-| `callback_enabled` | bool | `true` | Re-invoke agent with result when complete |
-| `post_to_slack` | bool | `true` | Post results directly to Slack thread |
 
 ### How It Works
 
-1. **User asks for long-running task**: "Hey @bot, ask coding-agent to implement feature X"
-2. **LLM calls `async_invoke_agent`**: Provides agent name, task, and Slack context
-3. **Task launches in background**: LLM responds immediately "Task sent to coding_agent"
-4. **Sub-agent processes task**: Runs for 5-15 minutes
-5. **Result posted to Slack**: When complete, result appears in the thread
-6. **Optional callback**: Agent is re-invoked to process result (e.g., save to memory)
+1. Before sending a request to a sub-agent, the interceptor extracts text from the A2A payload
+2. Haiku summarizes the text into a concise task description (1-3 sentences)
+3. If the summary is shorter, the payload is replaced with the summarized version
+4. If summarization fails or the summary is longer, the original payload is used (graceful degradation)
 
-### The `async_invoke_agent` Tool
+### Benefits
 
-When async is enabled, the LLM gets access to a new tool:
+- **Reduced token consumption**: Sub-agents receive focused context instead of full conversation history
+- **Improved sub-agent performance**: Clear, concise tasks are easier to process
+- **Cost optimization**: Using Haiku for summarization is much cheaper than sending full context to larger models
 
-```json
-{
-  "name": "async_invoke_agent",
-  "description": "Invoke a sub-agent asynchronously for long-running tasks",
-  "parameters": {
-    "agent_name": "Name of the sub-agent to invoke",
-    "task": "The task description for the sub-agent",
-    "channel_id": "Slack channel ID for posting results",
-    "thread_ts": "Slack thread timestamp for posting results",
-    "session_id": "Optional session ID for callback processing"
-  }
-}
+### Example
+
+**Original context (1200 tokens):**
+```
+User in channel C123 said: "Hey team, we've been having issues with the payment
+service. The error rate increased yesterday around 3pm. Sarah mentioned it might
+be related to the new deployment. Can someone check the metrics? Also, John said
+he saw some timeout errors in the logs. We need to figure out what's happening."
 ```
 
-### Example Flow
-
+**After context cleaning (150 tokens):**
 ```
-User: @bot ask coding-agent to implement a new /health endpoint
-
-Agent: [Calls async_invoke_agent]
-       - agent_name: "coding_agent"
-       - task: "Implement a new /health endpoint..."
-       - channel_id: "C123ABC"
-       - thread_ts: "1234567890.123456"
-
-Agent Response: "I've sent the task to coding_agent. The result will be posted
-                here when complete (this may take several minutes)."
-
-[5 minutes later, in the same Slack thread]
-
-Bot: *Task completed by coding_agent*
-
-    I've implemented the /health endpoint with the following changes:
-    - Added handler in internal/server/health.go
-    - Registered route in cmd/main.go
-    - Added tests in internal/server/health_test.go
-    ...
-
-[If callback_enabled: Agent is re-invoked to process this result]
+Investigate payment service issues: error rate increased yesterday around 3pm,
+potentially related to new deployment. Check metrics and look for timeout errors.
 ```
-
-### Retry Configuration
-
-Async invocations support retry for transient failures:
-
-```yaml
-a2a:
-  retry:
-    enabled: true
-    max_retries: 3
-    initial_delay: 500ms
-    max_delay: 30s
-    backoff_multiplier: 2.0
-```
-
-See [CONFIGURATION.md](CONFIGURATION.md#retry-configuration) for details.
-
-### Concurrency Limits
-
-- **Maximum concurrent tasks**: 100 per agent instance
-- Tasks beyond this limit return an error
-- Tasks are tracked and cleaned up on completion or timeout
-
-### Graceful Shutdown
-
-On agent shutdown:
-1. New async tasks are rejected
-2. Running tasks are cancelled via context
-3. Agent waits up to 30 seconds for tasks to complete
 
 ---
 

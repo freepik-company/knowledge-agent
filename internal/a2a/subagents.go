@@ -35,12 +35,13 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 		"sub_agents_count", len(cfg.SubAgents),
 		"polling", cfg.Polling,
 		"retry_enabled", cfg.Retry.Enabled,
+		"context_cleaner_enabled", cfg.ContextCleaner.Enabled,
 	)
 
 	var subAgents []agent.Agent
 
 	for _, subAgentCfg := range cfg.SubAgents {
-		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.Retry)
+		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.Retry, cfg.ContextCleaner)
 		if err != nil {
 			// Graceful degradation: log warning but continue with other agents
 			log.Warnw("Failed to create remote agent, skipping",
@@ -71,7 +72,7 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 }
 
 // createRemoteAgent creates a single remote agent using ADK's remoteagent package
-func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg config.RetryConfig) (agent.Agent, error) {
+func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg config.RetryConfig, contextCleanerCfg config.A2AContextCleanerConfig) (agent.Agent, error) {
 	log := logger.Get()
 
 	log.Debugw("Creating remote agent",
@@ -81,6 +82,7 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 		"auth_type", cfg.Auth.Type,
 		"polling", polling,
 		"retry_enabled", retryCfg.Enabled,
+		"context_cleaner_enabled", contextCleanerCfg.Enabled,
 	)
 
 	// Prepare auth headers if needed
@@ -130,6 +132,17 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 		a2aclient.WithConfig(a2aclient.Config{
 			Polling: polling,
 		}),
+	}
+
+	// Add context cleaner interceptor if enabled (first interceptor - cleans context before other processing)
+	if contextCleanerCfg.Enabled {
+		log.Debugw("Adding context cleaner interceptor for sub-agent",
+			"agent", cfg.Name,
+			"model", contextCleanerCfg.Model,
+		)
+		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
+			NewContextCleanerInterceptor(cfg.Name, contextCleanerCfg),
+		))
 	}
 
 	// Add retry interceptor if enabled (before logging to capture retry attempts)

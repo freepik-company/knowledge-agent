@@ -59,24 +59,74 @@ func LoadFromYAML(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// expandEnvVars recursively expands ${VAR} and ${ENV:VAR} references in all string values
+// expandEnvVars recursively expands ${VAR} and ${VAR:default} references in all values
+// including strings, arrays/slices, and nested structures
 func expandEnvVars(v *viper.Viper) {
 	for _, key := range v.AllKeys() {
-		val := v.GetString(key)
-		if strings.Contains(val, "${") {
-			expanded := expandEnvString(val)
+		val := v.Get(key)
+		expanded := expandEnvValue(val)
+		if expanded != nil {
 			v.Set(key, expanded)
 		}
 	}
 }
 
+// expandEnvValue recursively expands environment variables in any value type
+func expandEnvValue(val any) any {
+	if val == nil {
+		return nil
+	}
+
+	switch v := val.(type) {
+	case string:
+		if strings.Contains(v, "${") {
+			return expandEnvString(v)
+		}
+		return v
+
+	case []any:
+		// Handle arrays/slices ([]any is alias for []interface{})
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = expandEnvValue(item)
+		}
+		return result
+
+	case []string:
+		// Handle string slices
+		result := make([]string, len(v))
+		for i, item := range v {
+			if strings.Contains(item, "${") {
+				result[i] = expandEnvString(item)
+			} else {
+				result[i] = item
+			}
+		}
+		return result
+
+	case map[string]any:
+		// Handle nested maps (map[string]any is alias for map[string]interface{})
+		result := make(map[string]any, len(v))
+		for k, item := range v {
+			result[k] = expandEnvValue(item)
+		}
+		return result
+
+	default:
+		// Return as-is for other types (int, bool, etc.)
+		return val
+	}
+}
+
 // expandEnvString expands environment variable references in a string
-// Supports two formats:
-//   - ${VAR} - standard format (compatible with os.ExpandEnv)
-//   - ${ENV:VAR} - explicit format for clarity in config files
+// Supports three formats:
+//   - ${VAR} - standard format, returns empty string if not set
+//   - ${VAR:default} - with default value if VAR is not set or empty
+//   - ${ENV:VAR} - explicit format for clarity (legacy, same as ${VAR})
 func expandEnvString(s string) string {
-	// First handle ${ENV:VAR} format
 	result := s
+
+	// First handle ${ENV:VAR} format (legacy)
 	for {
 		start := strings.Index(result, "${ENV:")
 		if start == -1 {
@@ -97,8 +147,50 @@ func expandEnvString(s string) string {
 		result = result[:start] + varValue + result[end+1:]
 	}
 
-	// Then handle standard ${VAR} format
-	result = os.ExpandEnv(result)
+	// Handle ${VAR:default} and ${VAR} formats with custom expansion
+	// This allows for default values which os.ExpandEnv doesn't support
+	result = expandWithDefaults(result)
+
+	return result
+}
+
+// expandWithDefaults expands ${VAR} and ${VAR:default} patterns
+func expandWithDefaults(s string) string {
+	result := s
+
+	for {
+		start := strings.Index(result, "${")
+		if start == -1 {
+			break
+		}
+
+		end := strings.Index(result[start:], "}")
+		if end == -1 {
+			break
+		}
+		end += start
+
+		// Extract content between ${ and }
+		content := result[start+2 : end]
+
+		var varValue string
+		if colonIdx := strings.Index(content, ":"); colonIdx != -1 {
+			// Has default value: ${VAR:default}
+			varName := content[:colonIdx]
+			defaultValue := content[colonIdx+1:]
+
+			varValue = os.Getenv(varName)
+			if varValue == "" {
+				varValue = defaultValue
+			}
+		} else {
+			// Simple variable: ${VAR}
+			varValue = os.Getenv(content)
+		}
+
+		// Replace ${...} with value
+		result = result[:start] + varValue + result[end+1:]
+	}
 
 	return result
 }

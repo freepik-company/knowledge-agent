@@ -67,7 +67,10 @@ func CreateMCPToolset(ctx context.Context, cfg config.MCPServerConfig, retryCfg 
 	}
 
 	log.Infow("MCP toolset created successfully", "server", cfg.Name)
-	return toolset, nil
+
+	// Wrap with SafeToolset for graceful error handling during runtime
+	// This ensures MCP failures don't crash the agent or confuse the LLM
+	return NewSafeToolset(toolset, cfg.Name), nil
 }
 
 // commandTransportFactory creates a new command for each connection
