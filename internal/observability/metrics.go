@@ -40,6 +40,12 @@ type Metrics struct {
 	ingestLatencySum   atomic.Int64 // in milliseconds
 	ingestLatencyCount atomic.Int64
 
+	// Pre-search metrics (programmatic search before LLM loop)
+	preSearchCount        atomic.Int64
+	preSearchErrorCount   atomic.Int64
+	preSearchLatencySum   atomic.Int64 // in milliseconds
+	preSearchLatencyCount atomic.Int64
+
 	// Uptime
 	startTime time.Time
 	mu        sync.RWMutex
@@ -150,6 +156,20 @@ func (m *Metrics) RecordIngest(duration time.Duration, err error) {
 	m.recordIngestPrometheus(duration, err)
 }
 
+// RecordPreSearch records a pre-search memory operation (programmatic search before LLM loop)
+func (m *Metrics) RecordPreSearch(duration time.Duration, success bool) {
+	m.preSearchCount.Add(1)
+	m.preSearchLatencySum.Add(duration.Milliseconds())
+	m.preSearchLatencyCount.Add(1)
+
+	if !success {
+		m.preSearchErrorCount.Add(1)
+	}
+
+	// Record to Prometheus
+	m.recordPreSearchPrometheus(duration, success)
+}
+
 // GetStats returns a snapshot of current metrics
 func (m *Metrics) GetStats() map[string]any {
 	m.mu.RLock()
@@ -198,6 +218,18 @@ func (m *Metrics) GetStats() map[string]any {
 		ingestErrorRate = float64(m.ingestErrorCount.Load()) / float64(count) * 100
 	}
 
+	// Calculate average pre-search latency
+	var avgPreSearchLatency float64
+	if count := m.preSearchLatencyCount.Load(); count > 0 {
+		avgPreSearchLatency = float64(m.preSearchLatencySum.Load()) / float64(count)
+	}
+
+	// Calculate pre-search error rate
+	var preSearchErrorRate float64
+	if count := m.preSearchCount.Load(); count > 0 {
+		preSearchErrorRate = float64(m.preSearchErrorCount.Load()) / float64(count) * 100
+	}
+
 	// Calculate uptime
 	uptime := time.Since(m.startTime)
 
@@ -235,6 +267,12 @@ func (m *Metrics) GetStats() map[string]any {
 			"error_rate_percent": ingestErrorRate,
 			"avg_latency_ms":     avgIngestLatency,
 		},
+		"pre_search": map[string]any{
+			"total":              m.preSearchCount.Load(),
+			"errors":             m.preSearchErrorCount.Load(),
+			"error_rate_percent": preSearchErrorRate,
+			"avg_latency_ms":     avgPreSearchLatency,
+		},
 		"tokens_used": m.tokensUsed.Load(),
 	}
 }
@@ -259,6 +297,10 @@ func (m *Metrics) Reset() {
 	m.ingestErrorCount.Store(0)
 	m.ingestLatencySum.Store(0)
 	m.ingestLatencyCount.Store(0)
+	m.preSearchCount.Store(0)
+	m.preSearchErrorCount.Store(0)
+	m.preSearchLatencySum.Store(0)
+	m.preSearchLatencyCount.Store(0)
 
 	m.mu.Lock()
 	m.startTime = time.Now()

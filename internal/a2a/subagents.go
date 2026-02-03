@@ -109,7 +109,7 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 		cardResolveOpts = append(cardResolveOpts, agentcard.WithRequestHeader(authHeaderName, authHeaderValue))
 	}
 
-	// Pre-resolve the agent card so we can modify capabilities
+	// Pre-resolve the agent card so we can modify capabilities and extract description
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -117,6 +117,13 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve agent card for %s: %w", cfg.Name, err)
 	}
+
+	// Log agent card info for debugging
+	log.Infow("Agent card resolved",
+		"agent", cfg.Name,
+		"has_description", card.Description != "",
+		"description_len", len(card.Description),
+	)
 
 	// Disable streaming when polling is enabled (required for A2A communication)
 	// Without this, large responses can timeout or cause connection issues
@@ -136,13 +143,15 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 	}
 
 	// Add context cleaner interceptor if enabled (first interceptor - cleans context before other processing)
+	// Pass card.Description for targeted query extraction based on agent capabilities
 	if contextCleanerCfg.Enabled {
 		log.Debugw("Adding context cleaner interceptor for sub-agent",
 			"agent", cfg.Name,
 			"model", contextCleanerCfg.Model,
+			"has_card_description", card.Description != "",
 		)
 		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
-			NewContextCleanerInterceptor(cfg.Name, contextCleanerCfg),
+			NewContextCleanerInterceptor(cfg.Name, card.Description, contextCleanerCfg),
 		))
 	}
 

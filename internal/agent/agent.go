@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/memory"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -714,6 +715,87 @@ Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, 
 	}, nil
 }
 
+// preSearchMemory executes search_memory programmatically before the LLM loop.
+// This ensures the agent always has relevant memory context before deciding what to do.
+// NOTE: Uses memoryService directly (not permission-wrapped) because reads
+// don't require permission checks. See PermissionMemoryService.Search().
+func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) string {
+	log := logger.Get()
+
+	// Skip empty or whitespace-only questions
+	if strings.TrimSpace(question) == "" {
+		return ""
+	}
+
+	// Pre-search should not block the main query if memory service is slow
+	const preSearchTimeout = 3 * time.Second
+	searchCtx, cancel := context.WithTimeout(ctx, preSearchTimeout)
+	defer cancel()
+
+	startTime := time.Now()
+
+	// Execute search on memory service directly
+	searchResp, err := a.memoryService.Search(searchCtx, &memory.SearchRequest{
+		Query:   question,
+		UserID:  userID,
+		AppName: appName,
+	})
+
+	duration := time.Since(startTime)
+
+	// Record pre-search metrics
+	observability.GetMetrics().RecordPreSearch(duration, err == nil)
+
+	if err != nil {
+		log.Warnw("Pre-search memory failed",
+			"error", err,
+			"question", truncateString(question, 100),
+			"duration_ms", duration.Milliseconds(),
+		)
+		return ""
+	}
+
+	if searchResp == nil || len(searchResp.Memories) == 0 {
+		log.Debugw("Pre-search memory: no results found",
+			"question", truncateString(question, 100),
+			"duration_ms", duration.Milliseconds(),
+		)
+		return "No relevant information found in memory."
+	}
+
+	// Format results for context (limit to avoid token overflow)
+	const maxPreSearchResults = 5
+	var sb strings.Builder
+	resultCount := 0
+
+	for i, entry := range searchResp.Memories {
+		if resultCount >= maxPreSearchResults {
+			break
+		}
+		if entry.Content != nil && len(entry.Content.Parts) > 0 {
+			// Extract text from the first part
+			if entry.Content.Parts[0].Text != "" {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, entry.Content.Parts[0].Text))
+				resultCount++
+			}
+		}
+	}
+
+	resultsText := sb.String()
+	if resultsText == "" {
+		return "No relevant information found in memory."
+	}
+
+	log.Infow("Pre-search memory completed",
+		"question", truncateString(question, 100),
+		"results_count", resultCount,
+		"total_found", len(searchResp.Memories),
+		"duration_ms", duration.Milliseconds(),
+	)
+
+	return resultsText
+}
+
 // Query handles question answering using the knowledge base
 func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 	log := logger.Get()
@@ -804,6 +886,10 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		}
 	}
 
+	// Pre-search memory: always execute search_memory BEFORE the LLM loop
+	// This ensures the agent has relevant memory context before deciding what to do
+	preSearchResults := a.preSearchMemory(ctx, req.Question, userID)
+
 	// Get current date for temporal context
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 
@@ -829,6 +915,9 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 **Current Date**: %s%s%s
 
+**Memory Search Results** (already searched for you):
+%s
+
 Current Thread Context:
 %s
 
@@ -843,47 +932,52 @@ User Message: %s
    - Workflow diagrams: Document process steps, decision points, actors
    - Documentation: Extract key technical concepts, APIs, specifications
 
-2. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
+2. Consider the memory search results above when formulating your response
+
+3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
    - Clear description of what the image shows
    - ALL visible text, labels, error messages, component names
    - Technical relationships and connections
    - Context provided by the user
 
-3. If the user is asking a question, search memory first, then analyze the current image
+4. If you need more specific information, you can search_memory again with different terms
 
-4. Always respond in the same language the user is using
+5. Always respond in the same language the user is using
 
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, contextStr, req.Question)
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
 	} else if contextStr != "" {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
 **Current Date**: %s%s%s
+
+**Memory Search Results** (already searched for you):
+%s
 
 Current Thread Context:
 %s
 
 Question: %s
 
-Please answer the question by:
-1. Using search_memory to find relevant information from past conversations
-2. Considering the current thread context if relevant
-3. Providing a clear, helpful answer based on available knowledge
-4. If you can't find relevant information in memory, say so and provide a general answer if possible
+Based on the memory search results above and the thread context, provide your answer.
+If you need more specific information, you can search_memory again with different terms.
+If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, contextStr, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
 	} else {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
 **Current Date**: %s%s%s
 
+**Memory Search Results** (already searched for you):
+%s
+
 Question: %s
 
-Please answer the question by:
-1. Using search_memory to find relevant information from past conversations
-2. Providing a clear, helpful answer based on available knowledge
-3. If you can't find relevant information in memory, say so
+Based on the memory search results above, provide your answer.
+If you need more specific information, you can search_memory again with different terms.
+If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Question)
 	}
 
 	// Create user message with images if available

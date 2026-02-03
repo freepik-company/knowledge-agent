@@ -175,10 +175,14 @@ This diagram shows the complete flow of a Slack message from user to response.
   │                   │                     │                     │         11. Create/resume session
   │                   │                     │                     │             (Redis)│
   │                   │                     │                     │                    │
-  │                   │                     │                     │         12. Build prompt with context
+  │                   │                     │                     │         12. Pre-search memory
+  │                   │                     │                     │             (3s timeout, max 5)
+  │                   │                     │                     │                    │
+  │                   │                     │                     │         13. Build prompt with context
+  │                   │                     │                     │             + pre-search results
   │                   │                     │                     │             + images (if any)
   │                   │                     │                     │                    │
-  │                   │                     │                     │         13. Run LLM (Claude)
+  │                   │                     │                     │         14. Run LLM (Claude)
   │                   │                     │                     │                    │
   │                   │                     │                     │             ┌──────┴──────┐
   │                   │                     │                     │             │  LLM Loop   │
@@ -204,7 +208,7 @@ This diagram shows the complete flow of a Slack message from user to response.
   │                   │                     │◄────────────────────┤                    │
   │                   │                     │   JSON Response     │                    │
   │                   │                     │                     │                    │
-  │                   │                     │ 14. Format response │                    │
+  │                   │                     │ 15. Format response │                    │
   │                   │                     │     for Slack       │                    │
   │                   │                     │                     │                    │
   │                   │  PostMessage        │                     │                    │
@@ -229,9 +233,10 @@ This diagram shows the complete flow of a Slack message from user to response.
 | 9 | Agent Server | Apply rate limiting (10 req/s, burst 20) |
 | 10 | Agent Server | Parse JSON body, validate required fields |
 | 11 | ADK Agent | Create or resume session in Redis |
-| 12 | ADK Agent | Build prompt with thread context + images |
-| 13 | ADK Agent | Execute LLM with tool loop |
-| 14 | Slack Bridge | Convert markdown to Slack format, post response |
+| 12 | ADK Agent | **Pre-search memory**: Execute `search_memory` programmatically (3s timeout, max 5 results) |
+| 13 | ADK Agent | Build prompt with thread context + pre-search results + images |
+| 14 | ADK Agent | Execute LLM with tool loop |
+| 15 | Slack Bridge | Convert markdown to Slack format, post response |
 
 ---
 

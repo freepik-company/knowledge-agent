@@ -158,6 +158,44 @@ rate(knowledge_agent_tokens_used_total[24h]) * 86400
 (rate(knowledge_agent_tokens_used_total[24h]) * 86400) * (0.4 * 3 + 0.6 * 15) / 1000000
 ```
 
+### Pre-Search Memory
+
+Pre-search is a programmatic memory search executed automatically before the LLM loop to provide relevant context upfront.
+
+#### `knowledge_agent_presearch_total`
+- **Type**: Counter
+- **Description**: Total number of pre-search memory operations
+- **Use case**: Track automatic memory lookups before LLM processing
+
+```promql
+# Pre-search rate per minute
+rate(knowledge_agent_presearch_total[5m]) * 60
+```
+
+#### `knowledge_agent_presearch_errors_total`
+- **Type**: Counter
+- **Description**: Total number of pre-search errors (timeouts, database failures)
+- **Use case**: Monitor pre-search reliability
+
+```promql
+# Pre-search error rate percentage
+100 * rate(knowledge_agent_presearch_errors_total[5m]) / rate(knowledge_agent_presearch_total[5m])
+```
+
+#### `knowledge_agent_presearch_latency_seconds`
+- **Type**: Histogram
+- **Buckets**: 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3 seconds
+- **Description**: Pre-search latency distribution (hard timeout at 3 seconds)
+- **Use case**: Monitor search performance and identify slow queries
+
+```promql
+# P95 pre-search latency
+histogram_quantile(0.95, rate(knowledge_agent_presearch_latency_seconds_bucket[5m]))
+
+# Average pre-search latency
+rate(knowledge_agent_presearch_latency_seconds_sum[5m]) / rate(knowledge_agent_presearch_latency_seconds_count[5m])
+```
+
 ### Process Metrics
 
 #### `knowledge_agent_process_start_time_seconds`

@@ -247,7 +247,7 @@ INFO  A2A sub-agents created successfully  count=2
 
 ## Context Cleaner
 
-When delegating tasks to sub-agents, Knowledge Agent can automatically summarize the conversation context to reduce token consumption and improve sub-agent focus.
+When delegating tasks to sub-agents, Knowledge Agent automatically extracts the relevant query from the conversation context. This reduces token consumption and improves sub-agent focus.
 
 ### Configuration
 
@@ -256,24 +256,47 @@ When delegating tasks to sub-agents, Knowledge Agent can automatically summarize
 a2a:
   enabled: true
 
-  # Context cleaner: summarizes context before sending to sub-agents
+  # Context cleaner: extracts relevant queries before sending to sub-agents
   context_cleaner:
     enabled: true                         # Enable context cleaning (default: true)
-    model: claude-haiku-4-5-20251001      # Model for summarization (default: Haiku)
+    model: claude-haiku-4-5-20251001      # Model for extraction (default: Haiku)
+    # Note: 10 second timeout for extraction calls
 ```
 
 ### How It Works
 
 1. Before sending a request to a sub-agent, the interceptor extracts text from the A2A payload
-2. Haiku summarizes the text into a concise task description (1-3 sentences)
-3. If the summary is shorter, the payload is replaced with the summarized version
-4. If summarization fails or the summary is longer, the original payload is used (graceful degradation)
+2. **Auto-Discovery**: The sub-agent's `agent-card` description is fetched automatically during initialization
+3. If the agent-card has a `description`, Haiku uses it to extract only the relevant query for that specific agent
+4. If no description is available, Haiku performs generic summarization (1-3 sentences)
+5. If extraction fails or the result is longer, the original payload is used (graceful degradation)
+
+### Auto-Discovery with Agent Card
+
+When the sub-agent's agent-card includes a description, the context cleaner uses it for targeted query extraction:
+
+**With agent description (targeted extraction):**
+```
+Agent Purpose (from agent-card):
+"Search and analyze logs from Loki. Find errors, patterns, and anomalies."
+
+From this context, extract ONLY the specific request relevant for this agent.
+Focus on what this agent can actually do based on its purpose.
+```
+
+**Without agent description (generic summarization):**
+```
+Create a clear, concise summary that identifies the main task.
+Include only essential context needed to complete the task.
+```
 
 ### Benefits
 
-- **Reduced token consumption**: Sub-agents receive focused context instead of full conversation history
-- **Improved sub-agent performance**: Clear, concise tasks are easier to process
-- **Cost optimization**: Using Haiku for summarization is much cheaper than sending full context to larger models
+- **Targeted extraction**: Sub-agents receive queries specific to their capabilities
+- **Reduced token consumption**: No full conversation history, just the relevant request
+- **Improved sub-agent performance**: Clear, focused queries are easier to process
+- **Cost optimization**: Haiku extraction is much cheaper than sending full context
+- **Zero configuration**: Agent descriptions are auto-discovered from agent-cards
 
 ### Example
 
@@ -285,10 +308,14 @@ be related to the new deployment. Can someone check the metrics? Also, John said
 he saw some timeout errors in the logs. We need to figure out what's happening."
 ```
 
-**After context cleaning (150 tokens):**
+**After extraction for logs_agent (agent-card: "Search and analyze logs from Loki"):**
 ```
-Investigate payment service issues: error rate increased yesterday around 3pm,
-potentially related to new deployment. Check metrics and look for timeout errors.
+Search for timeout errors in payment service logs from yesterday around 3pm.
+```
+
+**After extraction for metrics_agent (agent-card: "Query Prometheus metrics"):**
+```
+Check error rate metrics for payment service, focusing on yesterday around 3pm.
 ```
 
 ---

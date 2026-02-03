@@ -478,20 +478,53 @@ curl http://localhost:8081/metrics
 **Current Metrics:**
 ```json
 {
-  "query_count": 150,
-  "query_error_count": 3,
-  "memory_save_count": 45,
-  "memory_search_count": 120,
+  "uptime_seconds": 3600.5,
+  "queries": {
+    "total": 150,
+    "errors": 3,
+    "error_rate_percent": 2.0,
+    "avg_latency_ms": 1250.5
+  },
+  "memory": {
+    "saves": 45,
+    "searches": 120,
+    "errors": 2,
+    "error_rate_percent": 1.2
+  },
+  "pre_search": {
+    "total": 148,
+    "errors": 2,
+    "error_rate_percent": 1.35,
+    "avg_latency_ms": 85.3
+  },
+  "tools": {
+    "total": 320,
+    "errors": 5,
+    "error_rate_percent": 1.56
+  },
+  "a2a": {
+    "total": 25,
+    "errors": 1,
+    "error_rate_percent": 4.0
+  },
   "tokens_used": 1250000
 }
 ```
 
-**Future Enhancements:**
-- Prometheus-compatible metrics
-- Per-user metrics
-- Per-tool metrics
-- Latency histograms
-- Error rate percentages
+**Pre-Search Metrics:**
+- `pre_search.total` - Number of automatic memory searches executed before LLM loop
+- `pre_search.errors` - Failed pre-searches (timeouts after 3s, database errors)
+- `pre_search.avg_latency_ms` - Average search latency in milliseconds
+
+> **Note**: Pre-search runs automatically on every query to provide memory context upfront. It has a 3-second timeout and limits results to 5 entries to avoid blocking the main request.
+
+**Prometheus Metrics:**
+
+Full Prometheus-compatible metrics are available at `/metrics`. See [PROMETHEUS_METRICS.md](PROMETHEUS_METRICS.md) for complete documentation including:
+- Query latency histograms
+- Tool execution metrics by name
+- A2A sub-agent call metrics
+- Pre-search latency distribution
 
 ---
 

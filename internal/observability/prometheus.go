@@ -136,6 +136,23 @@ var (
 		Help:    "Ingest latency in seconds",
 		Buckets: prometheus.DefBuckets,
 	})
+
+	// Pre-search metrics (programmatic search before LLM loop)
+	preSearchTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "knowledge_agent_presearch_total",
+		Help: "Total number of pre-search memory operations",
+	})
+
+	preSearchErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "knowledge_agent_presearch_errors_total",
+		Help: "Total number of pre-search errors",
+	})
+
+	preSearchLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_presearch_latency_seconds",
+		Help:    "Pre-search memory latency in seconds",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3}, // Fast operations, 3s is timeout
+	})
 )
 
 // init registers the process start time
@@ -209,5 +226,15 @@ func (m *Metrics) recordIngestPrometheus(duration time.Duration, err error) {
 
 	if err != nil {
 		ingestErrors.Inc()
+	}
+}
+
+// recordPreSearchPrometheus records pre-search metrics to Prometheus
+func (m *Metrics) recordPreSearchPrometheus(duration time.Duration, success bool) {
+	preSearchTotal.Inc()
+	preSearchLatency.Observe(duration.Seconds())
+
+	if !success {
+		preSearchErrors.Inc()
 	}
 }

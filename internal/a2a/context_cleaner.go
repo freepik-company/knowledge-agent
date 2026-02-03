@@ -18,7 +18,27 @@ import (
 
 const (
 	defaultContextCleanerModel = "claude-haiku-4-5-20251001"
-	contextCleanerPrompt       = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
+
+	// contextCleanerPromptWithDescription is used when the agent-card has a description
+	// This allows for more targeted query extraction based on what the agent does
+	contextCleanerPromptWithDescription = `You are extracting the relevant query for the "%s" agent.
+
+Agent Purpose (from agent-card):
+%s
+
+From this conversation context, extract ONLY the specific request/query that is relevant for this agent.
+Focus on what this agent can actually do based on its purpose.
+Output ONLY the extracted query, nothing else. No preamble, no explanation.
+
+Context:
+---
+%s
+---
+
+Extracted query:`
+
+	// contextCleanerPromptGeneric is the fallback when no agent description is available
+	contextCleanerPromptGeneric = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
 
 Given the following conversation or task description, create a clear, concise summary that:
 1. Identifies the main task or question being asked
@@ -37,15 +57,18 @@ Context to summarize:
 // improves sub-agent performance by providing focused context.
 type contextCleanerInterceptor struct {
 	a2aclient.PassthroughInterceptor
-	agentName string
-	client    anthropic.Client
-	model     string
-	enabled   bool
+	agentName        string
+	agentDescription string // From agent-card, used for targeted query extraction
+	client           anthropic.Client
+	model            string
+	enabled          bool
 }
 
 // NewContextCleanerInterceptor creates a new context cleaner interceptor.
 // It reads the Anthropic API key from ANTHROPIC_API_KEY env var.
-func NewContextCleanerInterceptor(agentName string, cfg config.A2AContextCleanerConfig) *contextCleanerInterceptor {
+// The agentDescription parameter comes from the resolved agent-card and enables
+// more targeted query extraction based on what the agent actually does.
+func NewContextCleanerInterceptor(agentName, agentDescription string, cfg config.A2AContextCleanerConfig) *contextCleanerInterceptor {
 	log := logger.Get()
 
 	model := cfg.Model
@@ -60,18 +83,26 @@ func NewContextCleanerInterceptor(agentName string, cfg config.A2AContextCleaner
 			"agent", agentName,
 		)
 		return &contextCleanerInterceptor{
-			agentName: agentName,
-			enabled:   false,
+			agentName:        agentName,
+			agentDescription: agentDescription,
+			enabled:          false,
 		}
 	}
 
 	client := anthropic.NewClient(option.WithAPIKey(anthropicKey))
 
+	log.Debugw("Context cleaner initialized",
+		"agent", agentName,
+		"has_description", agentDescription != "",
+		"description_len", len(agentDescription),
+	)
+
 	return &contextCleanerInterceptor{
-		agentName: agentName,
-		client:    client,
-		model:     model,
-		enabled:   true,
+		agentName:        agentName,
+		agentDescription: agentDescription,
+		client:           client,
+		model:            model,
+		enabled:          true,
 	}
 }
 
@@ -141,11 +172,19 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 }
 
 // summarizeContext calls Haiku to create a concise summary of the context
+// If agentDescription is available, uses a targeted prompt for better extraction
 func (ci *contextCleanerInterceptor) summarizeContext(ctx context.Context, text string) (string, error) {
-	prompt := fmt.Sprintf(contextCleanerPrompt, text)
+	var prompt string
+	if ci.agentDescription != "" {
+		// Use targeted prompt with agent description from agent-card
+		prompt = fmt.Sprintf(contextCleanerPromptWithDescription, ci.agentName, ci.agentDescription, text)
+	} else {
+		// Fallback to generic summarization
+		prompt = fmt.Sprintf(contextCleanerPromptGeneric, text)
+	}
 
-	// Add timeout to prevent indefinite blocking
-	cleanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Add timeout to prevent indefinite blocking (10s is enough for summarization)
+	cleanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	message, err := ci.client.Messages.New(cleanCtx, anthropic.MessageNewParams{

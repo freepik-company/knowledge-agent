@@ -133,6 +133,8 @@ The `SystemPrompt` constant defines agent behavior - it's LLM-driven, not rule-b
 | `search_memory` | User asks questions | PostgreSQL pgvector similarity search |
 | `fetch_url` | URLs shared for analysis | `internal/tools/webfetch.go` |
 
+> **Pre-Search**: `search_memory` is automatically executed **before** the LLM loop to provide relevant memory context upfront. Results are injected into the prompt, and the LLM can search again with different terms if needed. Pre-search has a 3-second timeout and returns max 5 results.
+
 ### MCP Integration
 
 Model Context Protocol enables access to external data sources. **Full guide: `docs/MCP_INTEGRATION.md`**
