@@ -163,6 +163,14 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 			"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
 			"cleaned_text", summarized,
 		)
+
+		// Log the modified payload for debugging
+		if modifiedJson, err := json.Marshal(newPayload); err == nil {
+			log.Debugw("Context cleaner: modified payload",
+				"agent", ci.agentName,
+				"payload_json", string(modifiedJson),
+			)
+		}
 	} else {
 		log.Debugw("Context cleaner: could not replace text in payload",
 			"agent", ci.agentName,
