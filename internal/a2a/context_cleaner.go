@@ -173,11 +173,19 @@ func (ci *contextCleanerInterceptor) summarizeContext(ctx context.Context, text 
 // extractTextFromPayload extracts text content from an A2A payload.
 // The payload can be various A2A message types.
 func (ci *contextCleanerInterceptor) extractTextFromPayload(payload any) string {
+	log := logger.Get()
+
 	// Convert payload to JSON for inspection
 	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}
+
+	// Log the payload structure for debugging
+	log.Debugw("Context cleaner: inspecting payload structure",
+		"agent", ci.agentName,
+		"payload_json", string(jsonBytes),
+	)
 
 	// Parse as generic map to find text content
 	var data map[string]any
@@ -187,7 +195,23 @@ func (ci *contextCleanerInterceptor) extractTextFromPayload(payload any) string 
 
 	// Look for common A2A message structures
 	// A2A typically uses: message.parts[].text or params.message.parts[].text
-	return ci.findTextInMap(data)
+	text := ci.findTextInMap(data)
+
+	log.Debugw("Context cleaner: extracted text",
+		"agent", ci.agentName,
+		"text_length", len(text),
+		"text_preview", truncateString(text, 200),
+	)
+
+	return text
+}
+
+// truncateString truncates a string to maxLen and adds "..." if truncated
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // findTextInMap recursively searches for text content in a map structure
