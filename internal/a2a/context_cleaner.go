@@ -122,14 +122,20 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 	}
 
 	// Replace the payload with the summarized version
-	ci.replaceTextInPayload(req.Payload, summarized)
-
-	log.Infow("Context cleaned for sub-agent",
-		"agent", ci.agentName,
-		"original_length", originalLen,
-		"cleaned_length", len(summarized),
-		"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
-	)
+	newPayload, replaced := ci.replaceTextInPayload(req.Payload, summarized)
+	if replaced {
+		req.Payload = newPayload
+		log.Infow("Context cleaned for sub-agent",
+			"agent", ci.agentName,
+			"original_length", originalLen,
+			"cleaned_length", len(summarized),
+			"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
+		)
+	} else {
+		log.Debugw("Context cleaner: could not replace text in payload",
+			"agent", ci.agentName,
+		)
+	}
 
 	return ctx, nil
 }
@@ -222,30 +228,26 @@ func (ci *contextCleanerInterceptor) findTextInMap(data map[string]any) string {
 }
 
 // replaceTextInPayload replaces text content in an A2A payload with the summarized version.
-// This modifies the payload in place.
-func (ci *contextCleanerInterceptor) replaceTextInPayload(payload any, newText string) {
+// Returns the new payload and whether the replacement was successful.
+func (ci *contextCleanerInterceptor) replaceTextInPayload(payload any, newText string) (any, bool) {
 	// Convert to JSON, modify, and back
 	jsonBytes, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return payload, false
 	}
 
 	var data map[string]any
 	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return
+		return payload, false
 	}
 
 	// Replace text in the structure
-	ci.replaceTextInMap(data, newText)
-
-	// Marshal back and unmarshal into original payload
-	newBytes, err := json.Marshal(data)
-	if err != nil {
-		return
+	if !ci.replaceTextInMap(data, newText) {
+		return payload, false
 	}
 
-	// Try to unmarshal back into the original pointer
-	_ = json.Unmarshal(newBytes, payload)
+	// Return the modified map as the new payload
+	return data, true
 }
 
 // replaceTextInMap replaces text content in a map structure with new text.
