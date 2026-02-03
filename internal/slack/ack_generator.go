@@ -51,16 +51,17 @@ func (g *AckGenerator) GenerateAck(ctx context.Context, userMessage string) stri
 	ctx, cancel := context.WithTimeout(ctx, AckTimeout)
 	defer cancel()
 
-	prompt := fmt.Sprintf(`Genera una respuesta corta y natural (máximo 15 palabras) para indicar que estás procesando este mensaje.
-Sé casual y amigable. Usa emojis apropiados. No uses "Procesando" ni frases genéricas.
-Responde SOLO con el mensaje, sin explicaciones.
+	prompt := fmt.Sprintf(`Generate a short and natural response (max 15 words) to indicate you are processing this message.
+Be casual and friendly. Use appropriate emojis. Don't use "Processing" or generic phrases.
+Respond ONLY with the message, no explanations.
+IMPORTANT: Respond in the SAME LANGUAGE as the user's message.
 
-Ejemplos:
-- Usuario: "Los logs de ai-audio están dando 5xx" → ":eyes: A ver qué pasa con ai-audio, dame un momento..."
-- Usuario: "¿Cómo desplegamos en producción?" → ":thinking_face: Déjame buscar info sobre despliegues..."
-- Usuario: "Hay un error en el payment service" → ":mag: Investigando el payment service..."
+Examples:
+- User: "The ai-audio logs are throwing 5xx" → ":eyes: Let me check what's up with ai-audio..."
+- User: "How do we deploy to production?" → ":thinking_face: Let me find info about deployments..."
+- User: "There's an error in the payment service" → ":mag: Investigating the payment service..."
 
-Mensaje del usuario: %s`, userMessage)
+User message: %s`, userMessage)
 
 	message, err := g.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(AckModel),
@@ -89,5 +90,5 @@ Mensaje del usuario: %s`, userMessage)
 
 // defaultAckMessage returns the fallback acknowledgment message
 func defaultAckMessage() string {
-	return ":mag: Dame un momento..."
+	return ":mag: Give me a moment..."
 }

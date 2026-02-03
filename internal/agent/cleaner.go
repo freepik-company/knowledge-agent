@@ -12,32 +12,32 @@ import (
 	"knowledge-agent/internal/logger"
 )
 
-const cleanerPrompt = `Tu tarea es limpiar esta respuesta de un agente de IA eliminando la narración innecesaria y datos de debugging.
+const cleanerPrompt = `Your task is to clean this AI agent response by removing unnecessary narration and debugging data.
 
-ELIMINA:
-- Frases sobre transferencias entre agentes ("te voy a transferir", "el agente de métricas dice", "voy a consultar")
-- Saludos redundantes o repetidos
-- Explicaciones sobre qué herramienta va a usar
-- Repeticiones de la misma información
-- Meta-comentarios sobre el proceso ("déjame buscar", "voy a verificar")
-- Bloques YAML o JSON de debugging al inicio de la respuesta (context:, discovered:, results:, observations:, errors:)
-- Datos estructurados internos que no son para el usuario final
+REMOVE:
+- Phrases about agent transfers ("I will transfer you", "the metrics agent says", "I will consult")
+- Redundant or repeated greetings
+- Explanations about which tool will be used
+- Repetitions of the same information
+- Meta-comments about the process ("let me search", "I will verify")
+- YAML or JSON debugging blocks at the start of the response (context:, discovered:, results:, observations:, errors:)
+- Internal structured data not meant for the end user
 
-MANTÉN INTACTO:
-- El texto formateado para el usuario (tablas, listas, explicaciones)
-- Toda la información sustancial, datos y cifras EN FORMATO LEGIBLE
-- El contexto relevante para entender la respuesta
-- Detalles técnicos importantes presentados de forma clara
-- Preguntas de seguimiento al usuario (si las hay)
+KEEP INTACT:
+- User-formatted text (tables, lists, explanations)
+- All substantive information, data, and figures IN READABLE FORMAT
+- Relevant context to understand the response
+- Important technical details presented clearly
+- Follow-up questions to the user (if any)
 
-IMPORTANTE:
-- Responde SOLO con el texto limpio
-- NO añadas explicaciones sobre lo que eliminaste
-- Mantén el mismo idioma que la respuesta original
-- Si hay un bloque YAML/JSON seguido de texto formateado, devuelve SOLO el texto formateado
-- Si la respuesta ya está limpia, devuélvela sin cambios
+IMPORTANT:
+- Respond ONLY with the cleaned text
+- Do NOT add explanations about what you removed
+- Keep the same language as the original response
+- If there is a YAML/JSON block followed by formatted text, return ONLY the formatted text
+- If the response is already clean, return it unchanged
 
-Respuesta a limpiar:
+Response to clean:
 %s`
 
 // ResponseCleaner cleans agent responses before sending to users

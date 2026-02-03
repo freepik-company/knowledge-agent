@@ -12,8 +12,8 @@ func TestFormatMessageForSlack(t *testing.T) {
 	}{
 		{
 			name:     "Convert bold markdown",
-			input:    "Sí, según la información que tengo guardada, **Alby Hernandez sí tiene barba**.",
-			expected: "Sí, según la información que tengo guardada, *Alby Hernandez sí tiene barba*.",
+			input:    "Yes, according to the information I have saved, **Alby Hernandez does have a beard**.",
+			expected: "Yes, according to the information I have saved, *Alby Hernandez does have a beard*.",
 		},
 		{
 			name:     "Convert multiple bold sections",
@@ -42,13 +42,13 @@ func TestFormatMessageForSlack(t *testing.T) {
 		},
 		{
 			name:     "Complex message with mixed formatting",
-			input:    "Según la información guardada:\n\n**Alby Hernandez** tiene las siguientes características:\n- Barba completa\n- Color oscuro\n\nEspecíficamente, tiene una barba completa y bien cuidada.",
-			expected: "Según la información guardada:\n\n*Alby Hernandez* tiene las siguientes características:\n• Barba completa\n• Color oscuro\n\nEspecíficamente, tiene una barba completa y bien cuidada.",
+			input:    "According to the saved information:\n\n**Alby Hernandez** has the following characteristics:\n- Full beard\n- Dark color\n\nSpecifically, he has a full and well-groomed beard.",
+			expected: "According to the saved information:\n\n*Alby Hernandez* has the following characteristics:\n• Full beard\n• Dark color\n\nSpecifically, he has a full and well-groomed beard.",
 		},
 		{
 			name:     "Convert markdown headers",
-			input:    "## Información General que tengo registrada:\n\nContent here",
-			expected: "*Información General que tengo registrada:*\n\nContent here",
+			input:    "## General Information I have recorded:\n\nContent here",
+			expected: "*General Information I have recorded:*\n\nContent here",
 		},
 		{
 			name:     "Convert multiple header levels",
@@ -112,8 +112,8 @@ func TestFormatMessageForSlack(t *testing.T) {
 		},
 		{
 			name:     "Table with percentage column",
-			input:    "# | Error | Ocurrencias | % Aprox\n---|---|---|---\n1 | Validation exception | 163,678 | 29.8%",
-			expected: "*#* | *Error* | *Ocurrencias* | *% Aprox*\n1 | Validation exception | 163,678 | 29.8%",
+			input:    "# | Error | Occurrences | % Approx\n---|---|---|---\n1 | Validation exception | 163,678 | 29.8%",
+			expected: "*#* | *Error* | *Occurrences* | *% Approx*\n1 | Validation exception | 163,678 | 29.8%",
 		},
 	}
 

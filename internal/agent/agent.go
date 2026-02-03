@@ -548,7 +548,7 @@ Your task:
 1. Analyze this conversation carefully
 2. Identify all important information, decisions, solutions, or insights
 3. Use the save_to_memory tool to store each piece of valuable information
-4. When saving, include the date if the conversation contains temporal references (e.g., "esta semana", "hoy", "last week")
+4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
 5. After saving everything, provide a summary of what you saved
 
 Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), threadContext)
@@ -764,7 +764,7 @@ User Message: %s
    - Workflow diagrams: Document process steps, decision points, actors
    - Documentation: Extract key technical concepts, APIs, specifications
 
-2. If the user is documenting something (e.g., "Esta es nuestra arquitectura", "This error is blocking us"), use save_to_memory to store:
+2. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
    - Clear description of what the image shows
    - ALL visible text, labels, error messages, component names
    - Technical relationships and connections

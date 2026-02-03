@@ -67,7 +67,7 @@ func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.S
 		log.Warnw("save_to_memory BLOCKED: insufficient permissions", logFields...)
 
 		// Return error that will bubble up to the tool and then to the agent
-		return fmt.Errorf("⛔ Permisos insuficientes. Solo los usuarios autorizados pueden guardar información en la base de conocimiento. Razón: %s", permissionReason)
+		return fmt.Errorf("⛔ Insufficient permissions. Only authorized users can save information to the knowledge base. Reason: %s", permissionReason)
 	}
 
 	// Permission granted - proceed with save
@@ -78,7 +78,7 @@ func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.S
 	if err != nil {
 		log.Errorw("Failed to save to memory service",
 			append(logFields, "error", err)...)
-		return fmt.Errorf("error al guardar en memoria: %w", err)
+		return fmt.Errorf("error saving to memory: %w", err)
 	}
 
 	log.Infow("save_to_memory completed successfully", logFields...)
