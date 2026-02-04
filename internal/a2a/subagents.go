@@ -190,6 +190,12 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtracto
 		}))
 	}
 
+	// Add error recovery interceptor LAST - converts connection errors to valid responses
+	// This allows the LLM to handle sub-agent failures gracefully
+	factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
+		NewErrorRecoveryInterceptor(cfg.Name),
+	))
+
 	// Build A2A config with pre-resolved card (description comes from agent-card)
 	a2aCfg := remoteagent.A2AConfig{
 		Name:          cfg.Name,
