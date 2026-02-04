@@ -422,6 +422,282 @@ func TestSubAgentHandlerInvocation(t *testing.T) {
 		tools[0].Name(), tools[0].Description())
 }
 
+// TestNewA2AToolset_RESTProtocol tests toolset creation with REST protocol
+func TestNewA2AToolset_RESTProtocol(t *testing.T) {
+	var serverURL string
+
+	// Create a mock server that handles both agent-card and /api/query
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-card.json" {
+			agentCard := map[string]any{
+				"name":               "rest-agent",
+				"description":        "A REST-based test agent",
+				"url":                serverURL,
+				"version":            "1.0.0",
+				"protocolVersion":    "0.2.2",
+				"preferredTransport": "JSONRPC",
+				"capabilities":       map[string]any{"streaming": false},
+				"defaultInputModes":  []string{"text"},
+				"defaultOutputModes": []string{"text"},
+				"skills":             []map[string]any{{"id": "test", "name": "Test"}},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(agentCard)
+			return
+		}
+
+		// Handle REST /query endpoint
+		if r.URL.Path == "/query" && r.Method == http.MethodPost {
+			var req struct {
+				Question  string `json:"question"`
+				ChannelID string `json:"channel_id"`
+				SessionID string `json:"session_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid json", http.StatusBadRequest)
+				return
+			}
+
+			// Return success response
+			resp := map[string]any{
+				"success": true,
+				"answer":  "REST response for: " + req.Question,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	cfg := &config.A2AConfig{
+		Enabled:  true,
+		SelfName: "test-parent",
+		Polling:  true,
+		SubAgents: []config.A2ASubAgentConfig{
+			{
+				Name:     "rest_agent",
+				Endpoint: server.URL,
+				Protocol: "rest", // Use REST protocol
+				Auth:     config.A2AAuthConfig{Type: "none"},
+				Timeout:  5,
+			},
+		},
+		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
+	}
+
+	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatalf("Failed to create toolset: %v", err)
+	}
+	defer toolset.Close()
+
+	// Get tools
+	tools, err := toolset.Tools(nil)
+	if err != nil {
+		t.Fatalf("Failed to get tools: %v", err)
+	}
+
+	if len(tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(tools))
+	}
+
+	// Verify tool was created with correct name
+	tool := tools[0]
+	if tool.Name() != "query_rest_agent" {
+		t.Errorf("Expected tool name 'query_rest_agent', got '%s'", tool.Name())
+	}
+
+	// Verify description was extracted from agent card
+	if !strings.Contains(tool.Description(), "REST-based test agent") {
+		t.Errorf("Expected description to contain agent card description, got '%s'", tool.Description())
+	}
+
+	t.Logf("REST tool '%s' created successfully with description: %s",
+		tool.Name(), tool.Description())
+}
+
+// TestNewA2AToolset_MixedProtocols tests toolset with both A2A and REST agents
+func TestNewA2AToolset_MixedProtocols(t *testing.T) {
+	var a2aServerURL, restServerURL string
+
+	// Create A2A mock server
+	a2aServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-card.json" {
+			agentCard := map[string]any{
+				"name":               "a2a-agent",
+				"description":        "An A2A protocol agent",
+				"url":                a2aServerURL,
+				"version":            "1.0.0",
+				"protocolVersion":    "0.2.2",
+				"preferredTransport": "JSONRPC",
+				"capabilities":       map[string]any{"streaming": false},
+				"defaultInputModes":  []string{"text"},
+				"defaultOutputModes": []string{"text"},
+				"skills":             []map[string]any{{"id": "test", "name": "Test"}},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(agentCard)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer a2aServer.Close()
+	a2aServerURL = a2aServer.URL
+
+	// Create REST mock server
+	restServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-card.json" {
+			agentCard := map[string]any{
+				"name":               "rest-agent",
+				"description":        "A REST protocol agent",
+				"url":                restServerURL,
+				"version":            "1.0.0",
+				"protocolVersion":    "0.2.2",
+				"preferredTransport": "JSONRPC",
+				"capabilities":       map[string]any{"streaming": false},
+				"defaultInputModes":  []string{"text"},
+				"defaultOutputModes": []string{"text"},
+				"skills":             []map[string]any{{"id": "test", "name": "Test"}},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(agentCard)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer restServer.Close()
+	restServerURL = restServer.URL
+
+	cfg := &config.A2AConfig{
+		Enabled:  true,
+		SelfName: "test-parent",
+		Polling:  true,
+		SubAgents: []config.A2ASubAgentConfig{
+			{
+				Name:     "a2a_agent",
+				Endpoint: a2aServer.URL,
+				Protocol: "a2a", // Explicit A2A protocol
+				Auth:     config.A2AAuthConfig{Type: "none"},
+				Timeout:  5,
+			},
+			{
+				Name:     "rest_agent",
+				Endpoint: restServer.URL,
+				Protocol: "rest", // REST protocol
+				Auth:     config.A2AAuthConfig{Type: "none"},
+				Timeout:  5,
+			},
+		},
+		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
+	}
+
+	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatalf("Failed to create toolset: %v", err)
+	}
+	defer toolset.Close()
+
+	// Get tools (should be 3: a2a_agent, rest_agent, and query_multiple_agents)
+	tools, err := toolset.Tools(nil)
+	if err != nil {
+		t.Fatalf("Failed to get tools: %v", err)
+	}
+
+	if len(tools) != 3 {
+		t.Fatalf("Expected 3 tools (2 individual + 1 parallel), got %d", len(tools))
+	}
+
+	// Verify tool names
+	toolNames := make(map[string]bool)
+	for _, tool := range tools {
+		toolNames[tool.Name()] = true
+	}
+
+	if !toolNames["query_a2a_agent"] {
+		t.Error("Expected tool 'query_a2a_agent' to exist")
+	}
+	if !toolNames["query_rest_agent"] {
+		t.Error("Expected tool 'query_rest_agent' to exist")
+	}
+	if !toolNames["query_multiple_agents"] {
+		t.Error("Expected parallel tool 'query_multiple_agents' to exist")
+	}
+
+	t.Logf("Mixed protocol toolset created with %d tools", len(tools))
+}
+
+// TestNewA2AToolset_DefaultProtocol tests that default protocol is A2A
+func TestNewA2AToolset_DefaultProtocol(t *testing.T) {
+	var serverURL string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-card.json" {
+			agentCard := map[string]any{
+				"name":               "default-agent",
+				"description":        "Agent without explicit protocol",
+				"url":                serverURL,
+				"version":            "1.0.0",
+				"protocolVersion":    "0.2.2",
+				"preferredTransport": "JSONRPC",
+				"capabilities":       map[string]any{"streaming": false},
+				"defaultInputModes":  []string{"text"},
+				"defaultOutputModes": []string{"text"},
+				"skills":             []map[string]any{{"id": "test", "name": "Test"}},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(agentCard)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	cfg := &config.A2AConfig{
+		Enabled:  true,
+		SelfName: "test-parent",
+		Polling:  true,
+		SubAgents: []config.A2ASubAgentConfig{
+			{
+				Name:     "default_agent",
+				Endpoint: server.URL,
+				// Protocol intentionally not set - should default to "a2a"
+				Auth:    config.A2AAuthConfig{Type: "none"},
+				Timeout: 5,
+			},
+		},
+		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
+	}
+
+	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatalf("Failed to create toolset: %v", err)
+	}
+	defer toolset.Close()
+
+	// Should have created tool using A2A protocol (default)
+	// The tool was created successfully, which means it used A2A
+	tools, err := toolset.Tools(nil)
+	if err != nil {
+		t.Fatalf("Failed to get tools: %v", err)
+	}
+
+	if len(tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(tools))
+	}
+
+	// Verify an A2A client was created (not REST)
+	if len(toolset.a2aClients) != 1 {
+		t.Errorf("Expected 1 A2A client (default protocol), got %d", len(toolset.a2aClients))
+	}
+
+	t.Logf("Default protocol test passed - A2A client created")
+}
+
 // TestTimeoutConstants verifies timeout constants are properly defined
 func TestTimeoutConstants(t *testing.T) {
 	// Verify constants are reasonable values

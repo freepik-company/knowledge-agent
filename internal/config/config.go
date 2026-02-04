@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -173,10 +174,12 @@ type A2AQueryExtractorConfig struct {
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
 type A2ASubAgentConfig struct {
-	Name     string        `yaml:"name" mapstructure:"name"`                     // Agent name (used in LLM instructions)
-	Endpoint string        `yaml:"endpoint" mapstructure:"endpoint"`             // Agent card source URL (e.g., http://metrics-agent:9000)
-	Auth     A2AAuthConfig `yaml:"auth" mapstructure:"auth"`                     // Authentication configuration (api_key, bearer, or none)
-	Timeout  int           `yaml:"timeout" mapstructure:"timeout" default:"180"` // HTTP client timeout in seconds for A2A calls (default: 180s)
+	Name     string        `yaml:"name" mapstructure:"name"`                       // Agent name (used in LLM instructions)
+	Endpoint string        `yaml:"endpoint" mapstructure:"endpoint"`               // Agent card source URL (e.g., http://metrics-agent:9000)
+	Protocol string        `yaml:"protocol" mapstructure:"protocol" default:"a2a"` // Communication protocol: "rest" (direct HTTP) or "a2a" (A2A protocol, default)
+	APIPath  string        `yaml:"api_path" mapstructure:"api_path"`               // REST endpoint path (only for protocol: rest). Default: "/query"
+	Auth     A2AAuthConfig `yaml:"auth" mapstructure:"auth"`                       // Authentication configuration (api_key, bearer, or none)
+	Timeout  int           `yaml:"timeout" mapstructure:"timeout" default:"180"`   // HTTP client timeout in seconds for A2A calls (default: 180s)
 }
 
 // A2AAuthConfig holds authentication configuration for an external agent
@@ -346,6 +349,22 @@ func (c *Config) Validate() error {
 			}
 			if subAgent.Endpoint == "" {
 				return fmt.Errorf("a2a.sub_agents[%d] (%s): endpoint is required", i, subAgent.Name)
+			}
+			// Validate protocol if specified
+			protocol := strings.ToLower(subAgent.Protocol)
+			if protocol != "" && protocol != "a2a" && protocol != "rest" {
+				return fmt.Errorf("a2a.sub_agents[%d] (%s): protocol must be 'a2a' or 'rest', got '%s'", i, subAgent.Name, subAgent.Protocol)
+			}
+			// Validate api_path if specified (only for REST protocol)
+			if subAgent.APIPath != "" {
+				// Check for URL injection attempts
+				if strings.Contains(subAgent.APIPath, "://") {
+					return fmt.Errorf("a2a.sub_agents[%d] (%s): api_path cannot contain URL scheme", i, subAgent.Name)
+				}
+				// Check for path traversal attempts
+				if strings.Contains(subAgent.APIPath, "..") {
+					return fmt.Errorf("a2a.sub_agents[%d] (%s): api_path cannot contain path traversal", i, subAgent.Name)
+				}
 			}
 			// Description is optional - will use agent-card description as fallback
 		}

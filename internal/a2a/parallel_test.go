@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-go/a2aclient"
-
 	"knowledge-agent/internal/config"
 )
 
@@ -88,7 +86,7 @@ func TestExtractAgentNames(t *testing.T) {
 
 func TestGetAvailableAgents(t *testing.T) {
 	// Create empty map
-	clients := make(map[string]*a2aclient.Client)
+	clients := make(map[string]SubAgentClient)
 
 	agents := getAvailableAgents(clients)
 	if len(agents) != 0 {

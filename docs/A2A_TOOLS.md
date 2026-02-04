@@ -123,19 +123,76 @@ a2a:
   # Sub-agents: Remote ADK agents that this agent can delegate to
   # Description is auto-discovered from the agent-card
   sub_agents:
-    - name: metrics_agent
-      endpoint: http://metrics-agent:9000
+    # REST protocol: Direct HTTP calls to REST endpoint (configurable path, default: /query) (simpler, faster, better errors)
+    - name: logs_agent
+      endpoint: http://logs-agent:8081
+      protocol: rest              # Direct REST calls to configured endpoint
       timeout: 180
 
-    - name: logs_agent
-      endpoint: http://logs-agent:9000
+    # A2A protocol (default): Full A2A protocol with JSON-RPC
+    - name: metrics_agent
+      endpoint: http://metrics-agent:9000
+      protocol: a2a               # A2A protocol (or omit for default)
       timeout: 180
 
     - name: alerts_agent
       endpoint: http://alerts-agent:9000
+      # protocol defaults to "a2a" if not specified
       timeout: 180
 ```
 
+### Communication Protocols
+
+The toolset supports two protocols, configurable per sub-agent:
+
+| Protocol | Config | Use Case | Benefits |
+|----------|--------|----------|----------|
+| `a2a` (default) | `protocol: a2a` | External ADK agents | Full A2A protocol support, interceptors, agent-card |
+| `rest` | `protocol: rest` | Internal agents | Simpler, faster (~1-2s less latency), clearer errors |
+
+**REST Protocol Benefits:**
+- **Simpler**: Direct HTTP POST to REST endpoint (default: `/query`, configurable via `api_path`) (no JSON-RPC wrapper)
+- **Faster**: Bypasses QueryExtractor interceptor (+1-2s savings per call)
+- **Better Errors**: HTTP status codes + message instead of generic "internal error"
+- **Identity Propagation**: Headers `X-User-Email`, `X-Session-Id`, `X-Slack-User-Id` passed through
+
+**When to use REST:**
+- Internal agents that expose the REST endpoint (default: `/query`, customizable per agent)
+- When you need faster response times
+- When debugging issues (clearer error messages)
+
+**When to use A2A:**
+- External/third-party ADK agents
+- Agents that only implement A2A protocol
+- When you need full A2A protocol features (streaming, tasks, artifacts)
+
+### REST Protocol Configuration
+
+When using `protocol: rest`, you can customize the API endpoint path:
+
+```yaml
+# config.yaml
+a2a:
+  sub_agents:
+    # Default: uses /query endpoint
+    - name: logs_agent
+      endpoint: http://logs-agent:8081
+      protocol: rest
+      timeout: 180
+
+    # Custom endpoint path
+    - name: custom_agent
+      endpoint: http://custom-agent:9000
+      protocol: rest
+      api_path: /custom/query      # Custom REST endpoint path
+      timeout: 180
+```
+
+**Field Reference:**
+- `api_path`: REST endpoint path (only for `protocol: rest`)
+  - Default: `/query`
+  - Examples: `/api/query`, `/custom/endpoint`, `/v1/agent`
+  - The endpoint will be: `{endpoint}{api_path}`
 ### How Sub-agents Work (A2AToolset)
 
 Unlike handoff-based approaches, A2AToolset creates dynamic tools that **return results to the LLM**, allowing:

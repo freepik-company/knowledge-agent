@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/a2aproject/a2a-go/a2a"
-	"github.com/a2aproject/a2a-go/a2aclient"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
@@ -40,7 +38,8 @@ type QueryMultipleAgentsResult struct {
 }
 
 // createParallelQueryTool creates a tool for querying multiple sub-agents in parallel
-func createParallelQueryTool(clients map[string]*a2aclient.Client) (tool.Tool, error) {
+// Works with both A2A and REST clients via the SubAgentClient interface
+func createParallelQueryTool(clients map[string]SubAgentClient) (tool.Tool, error) {
 	handler := createParallelQueryHandler(clients)
 
 	return functiontool.New(functiontool.Config{
@@ -63,7 +62,7 @@ This significantly reduces response time when multiple agents are needed.`,
 }
 
 // createParallelQueryHandler creates the handler function for parallel queries
-func createParallelQueryHandler(clients map[string]*a2aclient.Client) functiontool.Func[QueryMultipleAgentsArgs, QueryMultipleAgentsResult] {
+func createParallelQueryHandler(clients map[string]SubAgentClient) functiontool.Func[QueryMultipleAgentsArgs, QueryMultipleAgentsResult] {
 	return func(ctx tool.Context, args QueryMultipleAgentsArgs) (QueryMultipleAgentsResult, error) {
 		log := logger.Get()
 
@@ -131,7 +130,8 @@ func createParallelQueryHandler(clients map[string]*a2aclient.Client) functionto
 }
 
 // executeAgentQuery executes a single query to an agent (called from goroutine)
-func executeAgentQuery(ctx tool.Context, clients map[string]*a2aclient.Client, query ParallelQueryArgs) ParallelQueryResult {
+// Works with both A2A and REST clients via the SubAgentClient interface
+func executeAgentQuery(ctx tool.Context, clients map[string]SubAgentClient, query ParallelQueryArgs) ParallelQueryResult {
 	log := logger.Get()
 
 	log.Infow("Parallel query: executing agent call",
@@ -163,11 +163,8 @@ func executeAgentQuery(ctx tool.Context, clients map[string]*a2aclient.Client, q
 		}
 	}
 
-	// Create A2A message
-	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.TextPart{Text: query.Query})
-
-	// Send message to sub-agent
-	result, err := client.SendMessage(ctx, &a2a.MessageSendParams{Message: msg})
+	// Query the sub-agent using the unified interface
+	responseText, err := client.Query(ctx, query.Query)
 	if err != nil {
 		log.Errorw("Parallel query: agent call failed",
 			"agent", query.Agent,
@@ -180,8 +177,10 @@ func executeAgentQuery(ctx tool.Context, clients map[string]*a2aclient.Client, q
 		}
 	}
 
-	// Extract text from result
-	responseText := extractTextFromResult(result)
+	// Truncate response if too long
+	if len(responseText) > maxResponseTextLength {
+		responseText = responseText[:maxResponseTextLength] + "\n[TRUNCATED - response exceeded 100KB limit]"
+	}
 
 	log.Infow("Parallel query: agent call completed",
 		"agent", query.Agent,
@@ -206,7 +205,7 @@ func extractAgentNames(queries []ParallelQueryArgs) []string {
 }
 
 // getAvailableAgents returns list of available agent names
-func getAvailableAgents(clients map[string]*a2aclient.Client) []string {
+func getAvailableAgents(clients map[string]SubAgentClient) []string {
 	agents := make([]string, 0, len(clients))
 	for name := range clients {
 		agents = append(agents, name)
