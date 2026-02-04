@@ -107,7 +107,7 @@ curl http://localhost:8081/.well-known/agent-card.json
 
 ## Outbound A2A (Sub-agents)
 
-Knowledge Agent can delegate tasks to other ADK agents using the sub-agents pattern. Sub-agents are integrated using `remoteagent.NewA2A` from Google ADK.
+Knowledge Agent can delegate tasks to other ADK agents using the A2AToolset pattern. Each sub-agent becomes a tool (`query_<agent_name>`) that returns results to the LLM, enabling multi-agent queries without handoff.
 
 ### Configuration
 
@@ -136,17 +136,23 @@ a2a:
       timeout: 180
 ```
 
-### How Sub-agents Work
+### How Sub-agents Work (A2AToolset)
 
-1. At startup, Knowledge Agent creates remote agent wrappers using `remoteagent.NewA2A`
-2. These are added as sub-agents to the LLM agent
-3. The LLM (Claude) automatically decides when to delegate to each sub-agent
-4. Delegation uses the standard A2A protocol
+Unlike handoff-based approaches, A2AToolset creates dynamic tools that **return results to the LLM**, allowing:
+- Sequential calls to multiple sub-agents
+- Synthesis of results from multiple sources in a single response
+
+1. At startup, Knowledge Agent creates an `A2AToolset` with a tool for each configured sub-agent
+2. Each sub-agent becomes a tool named `query_<agent_name>` (e.g., `query_logs_agent`)
+3. The LLM decides when to call each tool based on the agent-card description
+4. Tool calls use A2A protocol via `a2aclient.Client.SendMessage()`
+5. Results are returned to the LLM (no handoff) for further processing
 
 **Key characteristics:**
-- **Lazy initialization**: Agent card is fetched when first used, not at startup
+- **Tool-based**: Each sub-agent is a callable tool, not a handoff target
+- **Multi-agent queries**: LLM can call multiple sub-agents and synthesize results
 - **Graceful degradation**: If a sub-agent fails to initialize, others continue working
-- **Automatic delegation**: LLM decides based on sub-agent descriptions
+- **Auto-discovery**: Tool descriptions come from agent-cards automatically
 
 ### Example Use Case
 
@@ -342,7 +348,7 @@ If unexpected, check:
 2. Check network connectivity to the remote agent
 3. Verify the remote agent is responding in time
 
-> **Note**: The `timeout` field in sub-agent configuration is reserved for future use. Currently, `remoteagent.NewA2A` manages timeouts internally.
+> **Note**: The `timeout` field configures the HTTP client timeout for A2A calls (default: 180 seconds). Increase this for sub-agents that process long-running tasks.
 
 ### LLM not using sub-agents
 

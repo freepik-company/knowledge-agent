@@ -138,6 +138,7 @@ type Agent struct {
 	responseCleaner   *ResponseCleaner
 	contextSummarizer *ContextSummarizer
 	keycloakClient    *keycloak.Client // nil if Keycloak is disabled
+	a2aToolset        *a2a.A2AToolset  // nil if A2A is disabled
 }
 
 // New creates a new agent instance with full ADK integration
@@ -272,20 +273,20 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		log.Debug("Keycloak integration disabled")
 	}
 
-	// 8c. Create A2A sub-agents using remoteagent (if enabled)
-	var subAgents []agent.Agent
+	// 8c. Create A2A toolset (if enabled) - tools for calling sub-agents without handoff
+	var a2aToolset *a2a.A2AToolset
 	if cfg.A2A.Enabled {
-		log.Infow("A2A integration enabled",
+		log.Infow("A2A integration enabled (toolset mode - no handoff)",
 			"self_name", cfg.A2A.SelfName,
 			"sub_agents", len(cfg.A2A.SubAgents),
 			"keycloak_enabled", keycloakClient != nil,
 		)
 
 		if len(cfg.A2A.SubAgents) > 0 {
-			subAgents, err = a2a.CreateSubAgents(&cfg.A2A, keycloakClient)
+			a2aToolset, err = a2a.NewA2AToolset(ctx, &cfg.A2A, keycloakClient)
 			if err != nil {
 				// Graceful degradation: log warning but don't fail agent startup
-				log.Warnw("Failed to create A2A sub-agents", "error", err)
+				log.Warnw("Failed to create A2A toolset", "error", err)
 			}
 		}
 	} else {
@@ -335,12 +336,18 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
 
-	// Build toolsets array (base + MCP)
+	// Build toolsets array (base + MCP + A2A)
 	toolsets := []tool.Toolset{
 		memoryToolset, // Uses wrapped permission memory service
 		webToolset,
 	}
 	toolsets = append(toolsets, mcpToolsets...)
+
+	// Add A2A toolset if available (provides query_<agent_name> tools)
+	if a2aToolset != nil {
+		toolsets = append(toolsets, a2aToolset)
+		log.Infow("A2A toolset added to agent", "tools_count", a2aToolset.ToolCount())
+	}
 
 	llmAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Knowledge Agent",
@@ -348,7 +355,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		Description: "An intelligent assistant that helps teams build and maintain their institutional knowledge base by ingesting and organizing conversation threads.",
 		Instruction: systemPromptWithPermissions,
 		Toolsets:    toolsets,
-		SubAgents:   subAgents, // A2A remote agents via remoteagent.NewA2A
+		// SubAgents removed - now using A2A toolset instead (no handoff)
 	})
 	if err != nil {
 		memoryService.Close()
@@ -385,6 +392,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		responseCleaner:   responseCleaner,
 		contextSummarizer: contextSummarizer,
 		keycloakClient:    keycloakClient,
+		a2aToolset:        a2aToolset,
 	}, nil
 }
 
@@ -416,6 +424,9 @@ func (a *Agent) Close() error {
 	}
 	if a.keycloakClient != nil {
 		resources = append(resources, resource{"keycloak_client", a.keycloakClient.Close})
+	}
+	if a.a2aToolset != nil {
+		resources = append(resources, resource{"a2a_toolset", a.a2aToolset.Close})
 	}
 	if a.sessionService != nil {
 		resources = append(resources, resource{"session_service", a.sessionService.Close})

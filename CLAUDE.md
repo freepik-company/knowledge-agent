@@ -163,7 +163,7 @@ a2a:
       endpoint: "http://metrics-agent:9000"
 ```
 
-Key files: `internal/server/a2a_handler.go`, `internal/a2a/subagents.go`
+Key files: `internal/server/a2a_handler.go`, `internal/a2a/toolset.go`
 
 ### Multimodal Capabilities
 
@@ -378,7 +378,7 @@ log:
 | `internal/config/config.go` | Configuration structs |
 | `internal/mcp/factory.go` | MCP toolset creation |
 | `internal/server/middleware.go` | Authentication middleware |
-| `internal/a2a/subagents.go` | A2A sub-agent creation |
+| `internal/a2a/toolset.go` | A2A toolset (query_<agent_name> tools) |
 | `internal/a2a/query_extractor.go` | Query extraction for sub-agents |
 
 ## Dependencies Note

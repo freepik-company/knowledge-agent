@@ -82,7 +82,7 @@ Knowledge Agent is a unified binary that can run in three modes:
 │    │  │  ├─ Memory Tools (search_memory, save_to_memory)        │  │      │
 │    │  │  ├─ Web Tools (fetch_url)                               │  │      │
 │    │  │  ├─ MCP Toolsets (optional external tools)              │  │      │
-│    │  │  └─ A2A Sub-Agents (remote agents via transfer_to_agent)│  │      │
+│    │  │  └─ A2A Sub-Agents (remote agents via query_<name> tools)│  │      │
 │    │  └─────────────────────────────────────────────────────────┘  │      │
 │    │                           │                                    │      │
 │    │  ┌─────────────────────────────────────────────────────────┐  │      │
@@ -303,8 +303,8 @@ This diagram shows the flow when another agent invokes Knowledge Agent via A2A p
        │                    │                          │                     │
        │                    │                          │ 9. May call         │
        │                    │                          │    sub-agents       │
-       │                    │                          │    (transfer_to_    │
-       │                    │                          │     agent)          │
+       │                    │                          │    (query_<name>    │
+       │                    │                          │     tools)          │
        │                    │                          │                     │
        │                    │◄─────────────────────────┤                     │
        │                    │   A2A Response           │                     │
@@ -328,7 +328,7 @@ This diagram shows the flow when another agent invokes Knowledge Agent via A2A p
 | 6 | ADK Agent | Create session with user_id from `knowledge_scope` config |
 | 7 | ADK Agent | Build prompt (no thread context, no Slack identity) |
 | 8 | ADK Agent | Execute LLM with tool loop |
-| 9 | ADK Agent | May invoke sub-agents via `transfer_to_agent` tool |
+| 9 | ADK Agent | May invoke sub-agents via `query_<name>` tools (no handoff) |
 
 ### A2A vs Slack: Key Differences
 
@@ -455,7 +455,7 @@ memoryService   → PostgreSQL memory with embeddings
     │  search_memory  ───► Query pgvector (semantic)      │ │
     │  save_to_memory ───► Generate embedding → Store     │ │
     │  fetch_url      ───► HTTP fetch → Extract content   │ │
-    │  transfer_to_agent → Call remote A2A agent          │ │
+    │  query_<name>      → Call remote A2A agent (no handoff) │
     │                                                      │ │
     └─────────────────────────────────────────────────────┘ │
                                                             │
