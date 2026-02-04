@@ -38,9 +38,9 @@ type RESTClientConfig struct {
 	KeycloakClient *keycloak.Client // Optional Keycloak client
 }
 
-// QueryRequest is the request body for /api/query
+// QueryRequest is the request body for REST sub-agent endpoints
 type QueryRequest struct {
-	Question  string `json:"question"`
+	Query     string `json:"query"`                    // The query to send (fc_logs_agent expects "query")
 	ChannelID string `json:"channel_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }
@@ -84,7 +84,7 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 
 	// Build request body
 	reqBody := QueryRequest{
-		Question:  question,
+		Query:     question,
 		ChannelID: "a2a-rest", // Marker for A2A REST calls in logs
 	}
 

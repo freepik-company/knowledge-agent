@@ -33,8 +33,8 @@ func TestRESTClient_Query_Success(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("failed to decode request: %v", err)
 		}
-		if req.Question != "What is the weather?" {
-			t.Errorf("expected question 'What is the weather?', got '%s'", req.Question)
+		if req.Query != "What is the weather?" {
+			t.Errorf("expected question 'What is the weather?', got '%s'", req.Query)
 		}
 
 		// Return success response
