@@ -3,6 +3,7 @@ package a2a
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -35,14 +36,13 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 		"self_name", cfg.SelfName,
 		"sub_agents_count", len(cfg.SubAgents),
 		"polling", cfg.Polling,
-		"retry_enabled", cfg.Retry.Enabled,
-		"context_cleaner_enabled", cfg.ContextCleaner.Enabled,
+		"query_extractor_enabled", cfg.QueryExtractor.Enabled,
 	)
 
 	var subAgents []agent.Agent
 
 	for _, subAgentCfg := range cfg.SubAgents {
-		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.Retry, cfg.ContextCleaner)
+		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.QueryExtractor)
 		if err != nil {
 			// Graceful degradation: log warning but continue with other agents
 			log.Warnw("Failed to create remote agent, skipping",
@@ -73,17 +73,15 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 }
 
 // createRemoteAgent creates a single remote agent using ADK's remoteagent package
-func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg config.RetryConfig, contextCleanerCfg config.A2AContextCleanerConfig) (agent.Agent, error) {
+func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtractorCfg config.A2AQueryExtractorConfig) (agent.Agent, error) {
 	log := logger.Get()
 
 	log.Debugw("Creating remote agent",
 		"name", cfg.Name,
 		"endpoint", cfg.Endpoint,
-		"description", cfg.Description,
 		"auth_type", cfg.Auth.Type,
 		"polling", polling,
-		"retry_enabled", retryCfg.Enabled,
-		"context_cleaner_enabled", contextCleanerCfg.Enabled,
+		"query_extractor_enabled", queryExtractorCfg.Enabled,
 	)
 
 	// Prepare auth headers if needed
@@ -135,35 +133,36 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 		card.Capabilities.Streaming = false
 	}
 
-	// Build client factory options
+	// Build HTTP client with configured timeout (default 180s if not set)
+	timeout := time.Duration(cfg.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 180 * time.Second
+	}
+	httpClient := &http.Client{Timeout: timeout}
+
+	log.Debugw("Configuring A2A HTTP client",
+		"agent", cfg.Name,
+		"timeout", timeout,
+	)
+
+	// Build client factory options with custom HTTP client
 	factoryOpts := []a2aclient.FactoryOption{
+		a2aclient.WithJSONRPCTransport(httpClient),
 		a2aclient.WithConfig(a2aclient.Config{
 			Polling: polling,
 		}),
 	}
 
-	// Add context cleaner interceptor if enabled (first interceptor - cleans context before other processing)
+	// Add query extractor interceptor if enabled (first interceptor - extracts relevant query before other processing)
 	// Pass card.Description for targeted query extraction based on agent capabilities
-	if contextCleanerCfg.Enabled {
-		log.Debugw("Adding context cleaner interceptor for sub-agent",
+	if queryExtractorCfg.Enabled {
+		log.Debugw("Adding query extractor interceptor for sub-agent",
 			"agent", cfg.Name,
-			"model", contextCleanerCfg.Model,
+			"model", queryExtractorCfg.Model,
 			"has_card_description", card.Description != "",
 		)
 		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
-			NewContextCleanerInterceptor(cfg.Name, card.Description, contextCleanerCfg),
-		))
-	}
-
-	// Add retry interceptor if enabled (before logging to capture retry attempts)
-	if retryCfg.Enabled {
-		log.Debugw("Adding retry interceptor for sub-agent",
-			"agent", cfg.Name,
-			"max_retries", retryCfg.MaxRetries,
-			"initial_delay", retryCfg.InitialDelay,
-		)
-		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
-			NewRetryInterceptor(cfg.Name, retryCfg),
+			NewQueryExtractorInterceptor(cfg.Name, card.Description, queryExtractorCfg),
 		))
 	}
 
@@ -180,11 +179,11 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, retryCfg conf
 		}))
 	}
 
-	// Build A2A config with pre-resolved card
+	// Build A2A config with pre-resolved card (description comes from agent-card)
 	a2aCfg := remoteagent.A2AConfig{
 		Name:          cfg.Name,
-		Description:   cfg.Description,
-		AgentCard:     card, // Use pre-resolved card (with streaming disabled if polling)
+		Description:   card.Description,
+		AgentCard:     card,
 		ClientFactory: a2aclient.NewFactory(factoryOpts...),
 	}
 

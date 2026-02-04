@@ -10,7 +10,7 @@ import (
 	"knowledge-agent/internal/config"
 )
 
-func TestContextCleanerInterceptor_ExtractTextFromParts(t *testing.T) {
+func TestQueryExtractorInterceptor_ExtractTextFromParts(t *testing.T) {
 	tests := []struct {
 		name     string
 		parts    a2a.ContentParts
@@ -72,7 +72,7 @@ func TestContextCleanerInterceptor_ExtractTextFromParts(t *testing.T) {
 	}
 }
 
-func TestContextCleanerInterceptor_ModifyParts(t *testing.T) {
+func TestQueryExtractorInterceptor_ModifyParts(t *testing.T) {
 	// Test that we can modify parts correctly
 	params := &a2a.MessageSendParams{
 		Message: &a2a.Message{
@@ -113,7 +113,7 @@ func TestContextCleanerInterceptor_ModifyParts(t *testing.T) {
 	}
 }
 
-func TestContextCleanerInterceptor_TypeAssertion(t *testing.T) {
+func TestQueryExtractorInterceptor_TypeAssertion(t *testing.T) {
 	// Test that payload type assertion works correctly
 	params := &a2a.MessageSendParams{
 		Message: &a2a.Message{
@@ -157,8 +157,8 @@ func TestContextCleanerInterceptor_TypeAssertion(t *testing.T) {
 	}
 }
 
-func TestContextCleanerInterceptor_DisabledSkipsProcessing(t *testing.T) {
-	ci := NewContextCleanerInterceptor("test_agent", "Test description", config.A2AContextCleanerConfig{
+func TestQueryExtractorInterceptor_DisabledSkipsProcessing(t *testing.T) {
+	ci := NewQueryExtractorInterceptor("test_agent", "Test description", config.A2AQueryExtractorConfig{
 		Enabled: true,
 		Model:   "claude-haiku-4-5-20251001",
 	})
@@ -193,8 +193,8 @@ func TestContextCleanerInterceptor_DisabledSkipsProcessing(t *testing.T) {
 	}
 }
 
-func TestContextCleanerInterceptor_NilPayloadSkipsProcessing(t *testing.T) {
-	ci := &contextCleanerInterceptor{
+func TestQueryExtractorInterceptor_NilPayloadSkipsProcessing(t *testing.T) {
+	ci := &queryExtractorInterceptor{
 		agentName: "test_agent",
 		enabled:   true,
 	}
@@ -213,8 +213,8 @@ func TestContextCleanerInterceptor_NilPayloadSkipsProcessing(t *testing.T) {
 	}
 }
 
-func TestContextCleanerInterceptor_WrongPayloadTypeSkipsProcessing(t *testing.T) {
-	ci := &contextCleanerInterceptor{
+func TestQueryExtractorInterceptor_WrongPayloadTypeSkipsProcessing(t *testing.T) {
+	ci := &queryExtractorInterceptor{
 		agentName: "test_agent",
 		enabled:   true,
 	}

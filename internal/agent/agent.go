@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"iter"
 	"strings"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"knowledge-agent/internal/logger"
 	"knowledge-agent/internal/mcp"
 	"knowledge-agent/internal/observability"
-	"knowledge-agent/internal/parallel"
 	"knowledge-agent/internal/tools"
 )
 
@@ -126,24 +124,17 @@ func resolveUserID(scope, channelID, slackUserID string) string {
 	}
 }
 
-// agentRunner is an interface that both *runner.Runner and *parallel.RunnerWrapper implement
-type agentRunner interface {
-	Run(ctx context.Context, userID, sessionID string, msg *genai.Content, cfg agent.RunConfig) iter.Seq2[*session.Event, error]
-}
-
 // Agent represents the knowledge agent
 type Agent struct {
-	config              *config.Config
-	llmAgent            agent.Agent
-	runner              agentRunner
-	baseRunner          *runner.Runner // Keep reference for closing
-	parallelWrapper     *parallel.RunnerWrapper
-	sessionService      *sessionredis.RedisSessionService
-	memoryService       *memorypostgres.PostgresMemoryService
-	contextHolder       *contextHolder
-	permissionChecker   *MemoryPermissionChecker
-	promptManager       *PromptManager
-	langfuseTracer      *observability.LangfuseTracer
+	config            *config.Config
+	llmAgent          agent.Agent
+	runner            *runner.Runner
+	sessionService    *sessionredis.RedisSessionService
+	memoryService     *memorypostgres.PostgresMemoryService
+	contextHolder     *contextHolder
+	permissionChecker *MemoryPermissionChecker
+	promptManager     *PromptManager
+	langfuseTracer    *observability.LangfuseTracer
 	responseCleaner   *ResponseCleaner
 	contextSummarizer *ContextSummarizer
 }
@@ -353,36 +344,18 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("failed to create runner: %w", err)
 	}
 
-	// 7. Wrap runner with parallel execution support
-	var agentRunnr agentRunner = baseRunner
-	var parallelWrapper *parallel.RunnerWrapper
-
-	if cfg.Parallel.Enabled {
-		log.Infow("Parallel tool execution enabled",
-			"max_parallelism", cfg.Parallel.MaxParallelism,
-			"tool_timeout", cfg.Parallel.ToolTimeout,
-			"sequential_tools", cfg.Parallel.SequentialTools,
-		)
-		parallelWrapper = parallel.NewRunnerWrapper(baseRunner, &cfg.Parallel)
-		agentRunnr = parallelWrapper
-	} else {
-		log.Debug("Parallel tool execution disabled")
-	}
-
 	log.Info("Knowledge Agent fully initialized with ADK and permission enforcement")
 
 	return &Agent{
-		config:               cfg,
-		llmAgent:             llmAgent,
-		runner:               agentRunnr,
-		baseRunner:           baseRunner,
-		parallelWrapper:      parallelWrapper,
-		sessionService:       sessionService,
-		memoryService:        memoryService,
-		contextHolder:        contextHolder,
-		permissionChecker:    permChecker,
-		promptManager:        promptManager,
-		langfuseTracer:       langfuseTracer,
+		config:            cfg,
+		llmAgent:          llmAgent,
+		runner:            baseRunner,
+		sessionService:    sessionService,
+		memoryService:     memoryService,
+		contextHolder:     contextHolder,
+		permissionChecker: permChecker,
+		promptManager:     promptManager,
+		langfuseTracer:    langfuseTracer,
 		responseCleaner:   responseCleaner,
 		contextSummarizer: contextSummarizer,
 	}, nil
@@ -479,21 +452,6 @@ func (a *Agent) GetLLMAgent() agent.Agent {
 // GetSessionService returns the session service for use with the ADK launcher
 func (a *Agent) GetSessionService() *sessionredis.RedisSessionService {
 	return a.sessionService
-}
-
-// GetConfig returns the agent configuration
-func (a *Agent) GetConfig() *config.Config {
-	return a.config
-}
-
-// GetParallelMetrics returns metrics about parallel tool execution
-// Returns nil if parallel execution is not enabled
-func (a *Agent) GetParallelMetrics() *parallel.ParallelMetrics {
-	if a.parallelWrapper == nil {
-		return nil
-	}
-	metrics := a.parallelWrapper.GetMetrics()
-	return &metrics
 }
 
 // IngestThread handles thread ingestion using ADK agent

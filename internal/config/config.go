@@ -22,9 +22,8 @@ type Config struct {
 	Prompt            PromptConfig            `yaml:"prompt" mapstructure:"prompt"`
 	Langfuse          LangfuseConfig          `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP               MCPConfig               `yaml:"mcp" mapstructure:"mcp"`
-	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                               // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
-	Parallel          ParallelConfig          `yaml:"parallel" mapstructure:"parallel"`                     // Parallel tool execution configuration
-	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"`     // Clean responses before sending to user
+	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                           // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
+	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"` // Clean responses before sending to user
 	ContextSummarizer ContextSummarizerConfig `yaml:"context_summarizer" mapstructure:"context_summarizer"` // Summarize long contexts before sending to LLM
 	APIKeys           map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                     // API keys with caller_id and role for authentication
 	Tools             ToolsConfig             `yaml:"tools" mapstructure:"tools"`                           // Tool-specific configuration
@@ -141,27 +140,22 @@ type A2AConfig struct {
 	MaxCallDepth   int                     `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`               // Maximum call chain depth
 	Polling        bool                    `yaml:"polling" mapstructure:"polling" default:"true"`                          // Use polling instead of streaming for sub-agents (required for large responses)
 	AgentURL       string                  `yaml:"agent_url" mapstructure:"agent_url"`                                     // Public URL for this agent (for A2A discovery/agent card)
-	Retry          RetryConfig             `yaml:"retry" mapstructure:"retry"`                                             // Retry configuration for A2A calls
 	SubAgents      []A2ASubAgentConfig     `yaml:"sub_agents" mapstructure:"sub_agents"`                                   // List of remote ADK agents to integrate as sub-agents
-	ContextCleaner A2AContextCleanerConfig `yaml:"context_cleaner" mapstructure:"context_cleaner"`                         // Context cleaner for sub-agent requests
+	QueryExtractor A2AQueryExtractorConfig `yaml:"query_extractor" mapstructure:"query_extractor"`                         // Query extractor for sub-agent requests
 }
 
-// A2AContextCleanerConfig holds configuration for the A2A context cleaner interceptor
-type A2AContextCleanerConfig struct {
-	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"true"`                  // Enable context cleaning before sending to sub-agents
+// A2AQueryExtractorConfig holds configuration for the A2A context cleaner interceptor
+type A2AQueryExtractorConfig struct {
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"true"`                  // Enable query extraction before sending to sub-agents
 	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for summarization
 }
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
 type A2ASubAgentConfig struct {
-	Name        string        `yaml:"name" mapstructure:"name"`               // Agent name (used in LLM instructions)
-	Description string        `yaml:"description" mapstructure:"description"` // Human-readable description for LLM
-	Endpoint    string        `yaml:"endpoint" mapstructure:"endpoint"`       // Agent card source URL (e.g., http://metrics-agent:9000)
-	Auth        A2AAuthConfig `yaml:"auth" mapstructure:"auth"`               // Authentication configuration (api_key, bearer, or none)
-	// NOTE: Timeout is not currently supported by remoteagent.NewA2A
-	// The ADK library uses its own internal timeouts for A2A communication
-	// This field is kept for future compatibility when/if ADK adds timeout support
-	Timeout int `yaml:"timeout" mapstructure:"timeout" default:"30"` // Reserved for future use (not currently applied)
+	Name     string        `yaml:"name" mapstructure:"name"`                    // Agent name (used in LLM instructions)
+	Endpoint string        `yaml:"endpoint" mapstructure:"endpoint"`            // Agent card source URL (e.g., http://metrics-agent:9000)
+	Auth     A2AAuthConfig `yaml:"auth" mapstructure:"auth"`                    // Authentication configuration (api_key, bearer, or none)
+	Timeout  int           `yaml:"timeout" mapstructure:"timeout" default:"180"` // HTTP client timeout in seconds for A2A calls (default: 180s)
 }
 
 // A2AAuthConfig holds authentication configuration for an external agent
@@ -170,14 +164,6 @@ type A2AAuthConfig struct {
 	Header   string `yaml:"header,omitempty" mapstructure:"header"`       // Header name for api_key auth (e.g., "X-API-Key")
 	KeyEnv   string `yaml:"key_env,omitempty" mapstructure:"key_env"`     // Environment variable containing API key
 	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"` // Environment variable containing bearer token
-}
-
-// ParallelConfig holds configuration for parallel tool execution
-type ParallelConfig struct {
-	Enabled         bool          `yaml:"enabled" mapstructure:"enabled" envconfig:"PARALLEL_ENABLED" default:"true"`                     // Enable parallel tool execution
-	MaxParallelism  int           `yaml:"max_parallelism" mapstructure:"max_parallelism" envconfig:"PARALLEL_MAX" default:"5"`            // Maximum number of tools to execute in parallel
-	ToolTimeout     time.Duration `yaml:"tool_timeout" mapstructure:"tool_timeout" envconfig:"PARALLEL_TOOL_TIMEOUT" default:"120s"`      // Timeout for individual tool execution
-	SequentialTools []string      `yaml:"sequential_tools" mapstructure:"sequential_tools"`                                               // Tools that must execute sequentially (e.g., save_to_memory after search)
 }
 
 // AnthropicConfig holds Anthropic API configuration
@@ -232,9 +218,8 @@ type RAGConfig struct {
 type ServerConfig struct {
 	AgentPort      int      `yaml:"agent_port" mapstructure:"agent_port" envconfig:"AGENT_PORT" default:"8081"`
 	SlackBotPort   int      `yaml:"slack_bot_port" mapstructure:"slack_bot_port" envconfig:"SLACK_BOT_PORT" default:"8080"`
-	ReadTimeout    int      `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`           // seconds
-	WriteTimeout   int      `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"`       // seconds (3 minutes for long operations)
-	RequestTimeout int      `yaml:"request_timeout" mapstructure:"request_timeout" envconfig:"SERVER_REQUEST_TIMEOUT" default:"120"` // seconds (2 minutes for agent operations)
+	ReadTimeout  int `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`     // seconds
+	WriteTimeout int `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"` // seconds (3 minutes for long operations)
 	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                                  // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
 }
 
@@ -341,9 +326,7 @@ func (c *Config) Validate() error {
 			if subAgent.Endpoint == "" {
 				return fmt.Errorf("a2a.sub_agents[%d] (%s): endpoint is required", i, subAgent.Name)
 			}
-			if subAgent.Description == "" {
-				return fmt.Errorf("a2a.sub_agents[%d] (%s): description is required", i, subAgent.Name)
-			}
+			// Description is optional - will use agent-card description as fallback
 		}
 	}
 

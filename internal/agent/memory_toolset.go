@@ -26,8 +26,3 @@ func (c *contextHolder) SetContext(ctx context.Context) {
 	c.ctx = ctx
 }
 
-// PermissionEnforcedAgent wraps agent functionality with permission checking
-type PermissionEnforcedAgent struct {
-	contextHolder     *contextHolder
-	permissionChecker *MemoryPermissionChecker
-}

@@ -292,24 +292,22 @@ a2a:
   # Sub-agents: Remote ADK agents that this agent can delegate tasks to
   # These are integrated using remoteagent.NewA2A and appear as sub-agents
   # The LLM will automatically decide when to delegate to each sub-agent
+  # Description is auto-discovered from the agent-card endpoint
   sub_agents: []
     # Example: Metrics agent for querying Prometheus
     # - name: metrics_agent
-    #   description: "Query Prometheus metrics and analyze performance data"
-    #   endpoint: http://metrics-agent:9000  # Agent card source URL
-    #   timeout: 30
+    #   endpoint: http://metrics-agent:9000
+    #   timeout: 180
 
     # Example: Logs agent for searching application logs
     # - name: logs_agent
-    #   description: "Search and analyze application logs from Loki"
     #   endpoint: http://logs-agent:9000
-    #   timeout: 30
+    #   timeout: 180
 
     # Example: Alerts agent for managing PagerDuty incidents
     # - name: alerts_agent
-    #   description: "Get current alerts, acknowledge incidents, and manage on-call schedules"
     #   endpoint: http://alerts-agent:9000
-    #   timeout: 30
+    #   timeout: 180
 
   # ============================================================================
   # Async Sub-Agent Invocation
@@ -345,25 +343,3 @@ a2a:
   # DEPRECATED: Legacy agents config (use sub_agents instead)
   # This config creates custom HTTP tools, not standard A2A sub-agents
   # agents: []
-
-# ============================================================================
-# Parallel Tool Execution
-# ============================================================================
-# Monitors tool call patterns and logs parallelization opportunities.
-# When the LLM makes multiple sequential tool calls that could have been parallel,
-# metrics are logged showing potential time savings.
-parallel:
-  # Enable/disable parallel execution monitoring (default: true)
-  enabled: true
-
-  # Maximum number of tools to execute concurrently (default: 5)
-  max_parallelism: 5
-
-  # Timeout for individual tool execution (default: 120s)
-  tool_timeout: 120s
-
-  # Tools that must execute sequentially (not in parallel)
-  # For example, save_to_memory should run after search_memory to avoid
-  # saving redundant information already in the knowledge base
-  sequential_tools:
-    - save_to_memory

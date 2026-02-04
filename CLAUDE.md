@@ -167,27 +167,6 @@ a2a:
 
 Key files: `internal/server/a2a_handler.go`, `internal/a2a/subagents.go`
 
-### Parallel Tool Execution
-
-Monitors and analyzes tool call patterns for parallelization opportunities. When enabled, tracks sequential tool calls that could have been executed in parallel.
-
-Quick reference:
-```yaml
-parallel:
-  enabled: true              # Enable parallel execution monitoring
-  max_parallelism: 5         # Maximum concurrent tool executions
-  tool_timeout: 120s         # Timeout per tool call
-  sequential_tools:          # Tools that must execute sequentially
-    - save_to_memory         # Should run after search_memory
-```
-
-Key files: `internal/parallel/executor.go`, `internal/parallel/runner_wrapper.go`
-
-**Metrics logged**:
-- `parallel_would_be_ms`: Time if calls were parallel
-- `saved_ms`: Potential time savings
-- `savings_percent`: Parallelization efficiency
-
 ### Multimodal Capabilities
 
 - Slack images automatically downloaded and passed to agent as base64
@@ -390,8 +369,8 @@ log:
 | `internal/config/config.go` | Configuration structs |
 | `internal/mcp/factory.go` | MCP toolset creation |
 | `internal/server/middleware.go` | Authentication middleware |
-| `internal/parallel/executor.go` | Parallel tool execution |
-| `internal/parallel/runner_wrapper.go` | ADK runner wrapper for metrics |
+| `internal/a2a/subagents.go` | A2A sub-agent creation |
+| `internal/a2a/query_extractor.go` | Query extraction for sub-agents |
 
 ## Dependencies Note
 

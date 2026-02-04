@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	defaultContextCleanerModel = "claude-haiku-4-5-20251001"
+	defaultQueryExtractorModel = "claude-haiku-4-5-20251001"
 
-	// contextCleanerPromptWithDescription is used when the agent-card has a description
+	// queryExtractorPromptWithDescription is used when the agent-card has a description
 	// This allows for more targeted query extraction based on what the agent does
-	contextCleanerPromptWithDescription = `You are extracting the relevant query for the "%s" agent.
+	queryExtractorPromptWithDescription = `You are extracting the relevant query for the "%s" agent.
 
 Agent Purpose (from agent-card):
 %s
@@ -38,8 +38,8 @@ Context:
 
 Extracted query:`
 
-	// contextCleanerPromptGeneric is the fallback when no agent description is available
-	contextCleanerPromptGeneric = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
+	// queryExtractorPromptGeneric is the fallback when no agent description is available
+	queryExtractorPromptGeneric = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
 
 Given the following conversation or task description, create a clear, concise summary that:
 1. Identifies the main task or question being asked
@@ -53,10 +53,10 @@ Context to summarize:
 %s`
 )
 
-// contextCleanerInterceptor implements a2aclient.CallInterceptor to summarize
+// queryExtractorInterceptor implements a2aclient.CallInterceptor to summarize
 // context before sending to sub-agents. This reduces token consumption and
 // improves sub-agent performance by providing focused context.
-type contextCleanerInterceptor struct {
+type queryExtractorInterceptor struct {
 	a2aclient.PassthroughInterceptor
 	agentName        string
 	agentDescription string // From agent-card, used for targeted query extraction
@@ -65,25 +65,25 @@ type contextCleanerInterceptor struct {
 	enabled          bool
 }
 
-// NewContextCleanerInterceptor creates a new context cleaner interceptor.
+// NewQueryExtractorInterceptor creates a new query extractor interceptor.
 // It reads the Anthropic API key from ANTHROPIC_API_KEY env var.
 // The agentDescription parameter comes from the resolved agent-card and enables
 // more targeted query extraction based on what the agent actually does.
-func NewContextCleanerInterceptor(agentName, agentDescription string, cfg config.A2AContextCleanerConfig) *contextCleanerInterceptor {
+func NewQueryExtractorInterceptor(agentName, agentDescription string, cfg config.A2AQueryExtractorConfig) *queryExtractorInterceptor {
 	log := logger.Get()
 
 	model := cfg.Model
 	if model == "" {
-		model = defaultContextCleanerModel
+		model = defaultQueryExtractorModel
 	}
 
 	// Get API key from environment
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 	if anthropicKey == "" {
-		log.Warnw("Context cleaner disabled: ANTHROPIC_API_KEY not set",
+		log.Warnw("Query extractor disabled: ANTHROPIC_API_KEY not set",
 			"agent", agentName,
 		)
-		return &contextCleanerInterceptor{
+		return &queryExtractorInterceptor{
 			agentName:        agentName,
 			agentDescription: agentDescription,
 			enabled:          false,
@@ -92,13 +92,13 @@ func NewContextCleanerInterceptor(agentName, agentDescription string, cfg config
 
 	client := anthropic.NewClient(option.WithAPIKey(anthropicKey))
 
-	log.Debugw("Context cleaner initialized",
+	log.Debugw("Query extractor initialized",
 		"agent", agentName,
 		"has_description", agentDescription != "",
 		"description_len", len(agentDescription),
 	)
 
-	return &contextCleanerInterceptor{
+	return &queryExtractorInterceptor{
 		agentName:        agentName,
 		agentDescription: agentDescription,
 		client:           client,
@@ -110,7 +110,7 @@ func NewContextCleanerInterceptor(agentName, agentDescription string, cfg config
 // Before intercepts the request and summarizes the context before sending to sub-agent.
 // IMPORTANT: We modify the *a2a.MessageSendParams directly because the a2aclient
 // uses the original pointer, not req.Payload, when calling the transport.
-func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
+func (ci *queryExtractorInterceptor) Before(ctx context.Context, req *a2aclient.Request) (context.Context, error) {
 	log := logger.Get()
 
 	// Skip if not enabled
@@ -126,7 +126,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 	// Type assert to *a2a.MessageSendParams - this is what SendMessage receives
 	params, ok := req.Payload.(*a2a.MessageSendParams)
 	if !ok {
-		log.Debugw("Context cleaner skipped: payload is not *a2a.MessageSendParams",
+		log.Debugw("Query extractor skipped: payload is not *a2a.MessageSendParams",
 			"agent", ci.agentName,
 			"payload_type", fmt.Sprintf("%T", req.Payload),
 		)
@@ -135,7 +135,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 
 	// Skip if no message
 	if params.Message == nil || len(params.Message.Parts) == 0 {
-		log.Debugw("Context cleaner skipped: no message or parts",
+		log.Debugw("Query extractor skipped: no message or parts",
 			"agent", ci.agentName,
 		)
 		return ctx, nil
@@ -152,7 +152,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 
 	originalText := strings.Join(texts, "\n")
 	if originalText == "" {
-		log.Debugw("Context cleaner skipped: no text found in parts",
+		log.Debugw("Query extractor skipped: no text found in parts",
 			"agent", ci.agentName,
 		)
 		return ctx, nil
@@ -161,7 +161,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 	originalLen := len(originalText)
 	originalPartsCount := len(params.Message.Parts)
 
-	log.Debugw("Context cleaner: inspecting payload",
+	log.Debugw("Query extractor: inspecting payload",
 		"agent", ci.agentName,
 		"parts_count", originalPartsCount,
 		"text_length", originalLen,
@@ -172,7 +172,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 	summarized, err := ci.summarizeContext(ctx, originalText)
 	if err != nil {
 		// Graceful degradation: log warning and continue with original
-		log.Warnw("Context cleaner failed, using original payload",
+		log.Warnw("Query extractor failed, using original payload",
 			"agent", ci.agentName,
 			"error", err,
 		)
@@ -181,7 +181,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 
 	// Only replace if the summary is shorter
 	if len(summarized) >= originalLen {
-		log.Debugw("Context cleaner skipped: summary not shorter than original",
+		log.Debugw("Query extractor skipped: summary not shorter than original",
 			"agent", ci.agentName,
 			"original_length", originalLen,
 			"summary_length", len(summarized),
@@ -198,7 +198,7 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 		},
 	}
 
-	log.Infow("Context cleaned for sub-agent",
+	log.Infow("Query extracted for sub-agent",
 		"agent", ci.agentName,
 		"original_length", originalLen,
 		"original_parts", originalPartsCount,
@@ -218,14 +218,14 @@ func (ci *contextCleanerInterceptor) Before(ctx context.Context, req *a2aclient.
 
 // summarizeContext calls Haiku to create a concise summary of the context
 // If agentDescription is available, uses a targeted prompt for better extraction
-func (ci *contextCleanerInterceptor) summarizeContext(ctx context.Context, text string) (string, error) {
+func (ci *queryExtractorInterceptor) summarizeContext(ctx context.Context, text string) (string, error) {
 	var prompt string
 	if ci.agentDescription != "" {
 		// Use targeted prompt with agent description from agent-card
-		prompt = fmt.Sprintf(contextCleanerPromptWithDescription, ci.agentName, ci.agentDescription, text)
+		prompt = fmt.Sprintf(queryExtractorPromptWithDescription, ci.agentName, ci.agentDescription, text)
 	} else {
 		// Fallback to generic summarization
-		prompt = fmt.Sprintf(contextCleanerPromptGeneric, text)
+		prompt = fmt.Sprintf(queryExtractorPromptGeneric, text)
 	}
 
 	// Add timeout to prevent indefinite blocking (10s is enough for summarization)

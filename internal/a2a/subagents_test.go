@@ -70,7 +70,6 @@ func TestCreateSubAgents_AgentCardResolution(t *testing.T) {
 		SubAgents: []config.A2ASubAgentConfig{
 			{
 				Name:        "test-agent",
-				Description: "This will be created with card resolution",
 				Endpoint:    "http://some-endpoint:9000",
 			},
 		},
@@ -96,12 +95,10 @@ func TestCreateSubAgents_GracefulDegradation(t *testing.T) {
 		SubAgents: []config.A2ASubAgentConfig{
 			{
 				Name:        "agent1",
-				Description: "First agent (will fail - no server)",
 				Endpoint:    "http://non-existent-agent1:9000",
 			},
 			{
 				Name:        "agent2",
-				Description: "Second agent (will fail - no server)",
 				Endpoint:    "http://non-existent-agent2:9000",
 			},
 		},
@@ -126,11 +123,10 @@ func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
 
 	cfg := config.A2ASubAgentConfig{
 		Name:        "test-agent",
-		Description: "Test description",
 		Endpoint:    "http://some-endpoint:9000",
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}, config.A2AContextCleanerConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -143,12 +139,11 @@ func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
 func TestCreateRemoteAgent_EmptyEndpoint(t *testing.T) {
 	cfg := config.A2ASubAgentConfig{
 		Name:        "test-agent",
-		Description: "Test description",
 		Endpoint:    "",
 	}
 
 	// Empty endpoint should fail during card resolution
-	_, err := createRemoteAgent(cfg, true, config.RetryConfig{}, config.A2AContextCleanerConfig{})
+	_, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{})
 
 	// Should fail because endpoint is empty
 	if err == nil {
@@ -265,7 +260,6 @@ func TestCreateRemoteAgent_WithAuth(t *testing.T) {
 
 	cfg := config.A2ASubAgentConfig{
 		Name:        "auth-agent",
-		Description: "Agent with authentication",
 		Endpoint:    "http://some-endpoint:9000",
 		Auth: config.A2AAuthConfig{
 			Type:   "api_key",
@@ -274,7 +268,7 @@ func TestCreateRemoteAgent_WithAuth(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}, config.A2AContextCleanerConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
 
 	// Agent should be created successfully
 	if err != nil {
@@ -290,7 +284,6 @@ func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
 	// (before even attempting to resolve agent card)
 	cfg := config.A2ASubAgentConfig{
 		Name:        "auth-agent",
-		Description: "Agent with missing auth",
 		Endpoint:    "http://some-endpoint:9000",
 		Auth: config.A2AAuthConfig{
 			Type:   "api_key",
@@ -299,7 +292,7 @@ func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.RetryConfig{}, config.A2AContextCleanerConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
 
 	// Should fail because env var is missing (auth resolution happens before card fetch)
 	if err == nil {

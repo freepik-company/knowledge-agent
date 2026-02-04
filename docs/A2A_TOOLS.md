@@ -121,21 +121,19 @@ a2a:
   max_call_depth: 5
 
   # Sub-agents: Remote ADK agents that this agent can delegate to
+  # Description is auto-discovered from the agent-card
   sub_agents:
     - name: metrics_agent
-      description: "Query Prometheus metrics and analyze performance data"
-      endpoint: http://metrics-agent:9000  # Agent card source URL
-      timeout: 30
+      endpoint: http://metrics-agent:9000
+      timeout: 180
 
     - name: logs_agent
-      description: "Search and analyze application logs from Loki"
       endpoint: http://logs-agent:9000
-      timeout: 30
+      timeout: 180
 
     - name: alerts_agent
-      description: "Get current alerts and manage on-call schedules"
       endpoint: http://alerts-agent:9000
-      timeout: 30
+      timeout: 180
 ```
 
 ### How Sub-agents Work
@@ -256,9 +254,9 @@ When delegating tasks to sub-agents, Knowledge Agent automatically extracts the 
 a2a:
   enabled: true
 
-  # Context cleaner: extracts relevant queries before sending to sub-agents
-  context_cleaner:
-    enabled: true                         # Enable context cleaning (default: true)
+  # Query extractor: extracts relevant queries before sending to sub-agents
+  query_extractor:
+    enabled: true                         # Enable query extraction (default: true)
     model: claude-haiku-4-5-20251001      # Model for extraction (default: Haiku)
     # Note: 10 second timeout for extraction calls
 ```
