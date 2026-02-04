@@ -117,9 +117,8 @@ func TestRESTClient_Query_PropagatesIdentity(t *testing.T) {
 	if capturedHeaders.Get(HeaderCallerID) != "test-caller" {
 		t.Errorf("expected X-Caller-Id=test-caller, got %s", capturedHeaders.Get(HeaderCallerID))
 	}
-	if capturedHeaders.Get(HeaderSessionID) != "session-123" {
-		t.Errorf("expected X-Session-Id=session-123, got %s", capturedHeaders.Get(HeaderSessionID))
-	}
+	// NOTE: X-Session-Id is intentionally NOT propagated to REST sub-agents
+	// because some agents interpret it as an existing session to validate/resume
 
 	// Verify groups are JSON encoded
 	groupsJSON := capturedHeaders.Get(HeaderUserGroups)
@@ -289,7 +288,7 @@ func TestExtractBaseURL(t *testing.T) {
 	}
 }
 
-func TestRESTClient_Query_SessionIDInBody(t *testing.T) {
+func TestRESTClient_Query_BodyFormat(t *testing.T) {
 	var capturedBody QueryRequest
 
 	// Create mock server that captures request body
@@ -309,20 +308,21 @@ func TestRESTClient_Query_SessionIDInBody(t *testing.T) {
 		Timeout: 10 * time.Second,
 	})
 
-	// Create context with session ID
-	ctx := context.WithValue(context.Background(), ctxutil.SessionIDKey, "parent-session-123")
-
 	// Execute query
-	_, err := client.Query(ctx, "test query")
+	_, err := client.Query(context.Background(), "test query")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify session ID was included in body
-	if capturedBody.SessionID != "parent-session-123" {
-		t.Errorf("expected session_id=parent-session-123, got %s", capturedBody.SessionID)
+	// Verify body format: query and channel_id only (no session_id)
+	if capturedBody.Query != "test query" {
+		t.Errorf("expected query='test query', got '%s'", capturedBody.Query)
 	}
 	if capturedBody.ChannelID != "a2a-rest" {
 		t.Errorf("expected channel_id=a2a-rest, got %s", capturedBody.ChannelID)
+	}
+	// session_id should NOT be sent in body (sub-agents create their own sessions)
+	if capturedBody.SessionID != "" {
+		t.Errorf("expected empty session_id, got %s", capturedBody.SessionID)
 	}
 }

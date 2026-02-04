@@ -83,14 +83,11 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 	log := logger.Get()
 
 	// Build request body
+	// Note: session_id is propagated via X-Session-Id header, not in body
+	// (fc_logs_agent validates session_id format strictly)
 	reqBody := QueryRequest{
 		Query:     question,
 		ChannelID: "a2a-rest", // Marker for A2A REST calls in logs
-	}
-
-	// Propagate session ID if available in context
-	if sessionID := ctxutil.SessionID(ctx); sessionID != "" {
-		reqBody.SessionID = sessionID
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -187,10 +184,9 @@ func (c *RESTClient) propagateIdentity(ctx context.Context, req *http.Request) {
 		req.Header.Set(HeaderCallerID, callerID)
 	}
 
-	// Propagate session ID (for Langfuse trace correlation)
-	if sessionID := ctxutil.SessionID(ctx); sessionID != "" {
-		req.Header.Set(HeaderSessionID, sessionID)
-	}
+	// NOTE: We do NOT propagate X-Session-Id to REST sub-agents because some
+	// agents interpret it as an existing session to validate/resume.
+	// Each sub-agent creates its own session. X-User-ID is still propagated.
 
 	// Propagate user groups as JSON array
 	if userGroups := ctxutil.UserGroups(ctx); len(userGroups) > 0 {
