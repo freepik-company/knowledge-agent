@@ -205,8 +205,9 @@ func (c *RESTClient) propagateIdentity(ctx context.Context, req *http.Request) {
 		}
 	}
 
-	// Add Keycloak JWT if enabled
-	if c.keycloakClient != nil && c.keycloakClient.IsEnabled() {
+	// Add Keycloak JWT only if NO other auth is configured
+	// (avoid sending both X-API-Key and Authorization which confuses some agents)
+	if c.authHeaderName == "" && c.keycloakClient != nil && c.keycloakClient.IsEnabled() {
 		userEmail := ctxutil.UserEmail(ctx)
 		token, extraHeaders, err := c.keycloakClient.GetTokenWithUserClaim(ctx, userEmail)
 		if err != nil {
