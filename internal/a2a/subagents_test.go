@@ -14,7 +14,7 @@ func TestCreateSubAgents_Disabled(t *testing.T) {
 		},
 	}
 
-	agents, err := CreateSubAgents(cfg)
+	agents, err := CreateSubAgents(cfg, nil)
 
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
@@ -31,7 +31,7 @@ func TestCreateSubAgents_NoSubAgents(t *testing.T) {
 		SubAgents: []config.A2ASubAgentConfig{},
 	}
 
-	agents, err := CreateSubAgents(cfg)
+	agents, err := CreateSubAgents(cfg, nil)
 
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
@@ -48,7 +48,7 @@ func TestCreateSubAgents_NilSubAgents(t *testing.T) {
 		SubAgents: nil,
 	}
 
-	agents, err := CreateSubAgents(cfg)
+	agents, err := CreateSubAgents(cfg, nil)
 
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
@@ -69,13 +69,13 @@ func TestCreateSubAgents_AgentCardResolution(t *testing.T) {
 		SelfName: "test-agent",
 		SubAgents: []config.A2ASubAgentConfig{
 			{
-				Name:        "test-agent",
-				Endpoint:    "http://some-endpoint:9000",
+				Name:     "test-agent",
+				Endpoint: "http://some-endpoint:9000",
 			},
 		},
 	}
 
-	agents, err := CreateSubAgents(cfg)
+	agents, err := CreateSubAgents(cfg, nil)
 
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
@@ -94,18 +94,18 @@ func TestCreateSubAgents_GracefulDegradation(t *testing.T) {
 		SelfName: "test-agent",
 		SubAgents: []config.A2ASubAgentConfig{
 			{
-				Name:        "agent1",
-				Endpoint:    "http://non-existent-agent1:9000",
+				Name:     "agent1",
+				Endpoint: "http://non-existent-agent1:9000",
 			},
 			{
-				Name:        "agent2",
-				Endpoint:    "http://non-existent-agent2:9000",
+				Name:     "agent2",
+				Endpoint: "http://non-existent-agent2:9000",
 			},
 		},
 	}
 
 	// Should NOT return an error (graceful degradation)
-	agents, err := CreateSubAgents(cfg)
+	agents, err := CreateSubAgents(cfg, nil)
 
 	if err != nil {
 		t.Errorf("expected no error (graceful degradation), got: %v", err)
@@ -122,11 +122,11 @@ func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
 	t.Skip("Skipping - requires real A2A server for agent card resolution")
 
 	cfg := config.A2ASubAgentConfig{
-		Name:        "test-agent",
-		Endpoint:    "http://some-endpoint:9000",
+		Name:     "test-agent",
+		Endpoint: "http://some-endpoint:9000",
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}, nil) // polling=true
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -138,12 +138,12 @@ func TestCreateRemoteAgent_ValidConfig(t *testing.T) {
 
 func TestCreateRemoteAgent_EmptyEndpoint(t *testing.T) {
 	cfg := config.A2ASubAgentConfig{
-		Name:        "test-agent",
-		Endpoint:    "",
+		Name:     "test-agent",
+		Endpoint: "",
 	}
 
 	// Empty endpoint should fail during card resolution
-	_, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{})
+	_, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}, nil)
 
 	// Should fail because endpoint is empty
 	if err == nil {
@@ -259,8 +259,8 @@ func TestCreateRemoteAgent_WithAuth(t *testing.T) {
 	t.Setenv("TEST_AGENT_KEY", "secret-key-123")
 
 	cfg := config.A2ASubAgentConfig{
-		Name:        "auth-agent",
-		Endpoint:    "http://some-endpoint:9000",
+		Name:     "auth-agent",
+		Endpoint: "http://some-endpoint:9000",
 		Auth: config.A2AAuthConfig{
 			Type:   "api_key",
 			Header: "X-API-Key",
@@ -268,7 +268,7 @@ func TestCreateRemoteAgent_WithAuth(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}, nil) // polling=true
 
 	// Agent should be created successfully
 	if err != nil {
@@ -283,8 +283,8 @@ func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
 	// Don't set the environment variable - should fail during auth resolution
 	// (before even attempting to resolve agent card)
 	cfg := config.A2ASubAgentConfig{
-		Name:        "auth-agent",
-		Endpoint:    "http://some-endpoint:9000",
+		Name:     "auth-agent",
+		Endpoint: "http://some-endpoint:9000",
 		Auth: config.A2AAuthConfig{
 			Type:   "api_key",
 			Header: "X-API-Key",
@@ -292,7 +292,7 @@ func TestCreateRemoteAgent_AuthFailure(t *testing.T) {
 		},
 	}
 
-	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}) // polling=true
+	agent, err := createRemoteAgent(cfg, true, config.A2AQueryExtractorConfig{}, nil) // polling=true
 
 	// Should fail because env var is missing (auth resolution happens before card fetch)
 	if err == nil {
@@ -345,7 +345,7 @@ func TestCreateSubAgentsConfigValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			agents, err := CreateSubAgents(tc.cfg)
+			agents, err := CreateSubAgents(tc.cfg, nil)
 
 			if tc.expectError && err == nil {
 				t.Error("expected error but got nil")

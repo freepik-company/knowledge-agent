@@ -8,6 +8,9 @@ const (
 	CallerIDKey    contextKey = "caller_id"
 	SlackUserIDKey contextKey = "slack_user_id"
 	RoleKey        contextKey = "role"
+	UserEmailKey   contextKey = "user_email"  // User's email from Slack or JWT
+	SessionIDKey   contextKey = "session_id"  // Session ID for Langfuse grouping and A2A propagation
+	UserGroupsKey  contextKey = "user_groups" // User's groups from JWT (for permission checking)
 )
 
 // Role constants
@@ -44,4 +47,57 @@ func Role(ctx context.Context) string {
 // CanWrite returns true if the context has write permissions
 func CanWrite(ctx context.Context) bool {
 	return Role(ctx) == RoleWrite
+}
+
+// UserEmail extracts the user's email from the request context
+func UserEmail(ctx context.Context) string {
+	if email, ok := ctx.Value(UserEmailKey).(string); ok {
+		return email
+	}
+	return ""
+}
+
+// SessionID extracts the session ID from the request context
+func SessionID(ctx context.Context) string {
+	if id, ok := ctx.Value(SessionIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// UserGroups extracts the user's groups from the request context
+func UserGroups(ctx context.Context) []string {
+	if groups, ok := ctx.Value(UserGroupsKey).([]string); ok {
+		return groups
+	}
+	return nil
+}
+
+// HasGroup checks if the user has a specific group
+func HasGroup(ctx context.Context, group string) bool {
+	groups := UserGroups(ctx)
+	for _, g := range groups {
+		if g == group {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyGroup checks if the user has any of the specified groups
+func HasAnyGroup(ctx context.Context, groups []string) bool {
+	userGroups := UserGroups(ctx)
+	if len(userGroups) == 0 {
+		return false
+	}
+	userGroupSet := make(map[string]bool, len(userGroups))
+	for _, g := range userGroups {
+		userGroupSet[g] = true
+	}
+	for _, required := range groups {
+		if userGroupSet[required] {
+			return true
+		}
+	}
+	return false
 }

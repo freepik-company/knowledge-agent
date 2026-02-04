@@ -44,6 +44,7 @@ type QueryRequest struct {
 	Messages     []map[string]any `json:"messages,omitempty"`       // Current thread context
 	UserName     string           `json:"user_name,omitempty"`      // Slack @username
 	UserRealName string           `json:"user_real_name,omitempty"` // User's real name
+	UserEmail    string           `json:"user_email,omitempty"`     // User's email (requires users:read.email scope)
 }
 
 // QueryResponse represents a query response

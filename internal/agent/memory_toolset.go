@@ -25,4 +25,3 @@ func (c *contextHolder) SetContext(ctx context.Context) {
 	defer c.mu.Unlock()
 	c.ctx = ctx
 }
-

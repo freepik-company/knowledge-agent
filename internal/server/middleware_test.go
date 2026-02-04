@@ -161,8 +161,10 @@ func TestAuthMiddleware_APIKey(t *testing.T) {
 }
 
 func TestAuthMiddleware_APIKeyWithSlackUserID(t *testing.T) {
-	// SECURITY: External API keys should NOT be able to pass Slack User ID
-	// This prevents external agents from spoofing Slack user identity
+	// A2A Identity Propagation: API keys from trusted A2A sources CAN propagate
+	// identity headers (X-Slack-User-Id, X-User-Email, X-User-Groups).
+	// This enables sub-agents to receive the original user's identity from upstream agents.
+	// The identity_interceptor in the calling agent sets these headers after validation.
 	cfg := &config.Config{
 		APIKeys: map[string]config.APIKeyConfig{
 			"secret-key": {CallerID: "external-agent", Role: "read"},
@@ -178,7 +180,7 @@ func TestAuthMiddleware_APIKeyWithSlackUserID(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("X-API-Key", "secret-key")
-	req.Header.Set("X-Slack-User-Id", "U1234567890") // This should be IGNORED for external API keys
+	req.Header.Set("X-Slack-User-Id", "U1234567890") // Propagated from upstream A2A agent
 
 	rec := httptest.NewRecorder()
 
@@ -187,9 +189,9 @@ func TestAuthMiddleware_APIKeyWithSlackUserID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
-	// Slack User ID should be empty - external API keys cannot spoof user identity
-	if rec.Body.String() != "external-agent:read:" {
-		t.Errorf("got body %q, want %q (Slack User ID should be ignored for external API keys)", rec.Body.String(), "external-agent:read:")
+	// Slack User ID should be propagated from trusted A2A sources
+	if rec.Body.String() != "external-agent:read:U1234567890" {
+		t.Errorf("got body %q, want %q (Slack User ID should be propagated from A2A sources)", rec.Body.String(), "external-agent:read:U1234567890")
 	}
 }
 

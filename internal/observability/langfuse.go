@@ -69,7 +69,8 @@ type QueryTrace struct {
 }
 
 // StartQueryTrace starts tracing a query
-func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, metadata map[string]any) *QueryTrace {
+// sessionID groups related traces in Langfuse's Sessions view (e.g., "thread-C123-1234567890.123456")
+func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, sessionID string, metadata map[string]any) *QueryTrace {
 	if !t.enabled {
 		return &QueryTrace{
 			tracer:    t,
@@ -88,6 +89,11 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, m
 	trace.Tags = []string{"query", "knowledge-agent"}
 	trace.Metadata = metadata
 
+	// Set session ID for grouping in Langfuse Sessions view
+	if sessionID != "" {
+		trace.SessionID = sessionID
+	}
+
 	// Extract user_name from metadata for UserID
 	if userName, ok := metadata["user_name"].(string); ok && userName != "" {
 		trace.UserID = userName
@@ -95,6 +101,7 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, m
 
 	log.Infow("Langfuse trace created",
 		"trace_id", trace.ID,
+		"session_id", sessionID,
 		"question_length", len(question),
 		"metadata_keys", getKeys(metadata),
 	)
@@ -405,9 +412,9 @@ func (it *IngestTrace) End(success bool, summary string) {
 
 	// Set trace output
 	it.trace.Output = map[string]any{
-		"success":       success,
-		"summary":       truncateForLog(summary, 500),
-		"duration_ms":   time.Since(it.startTime).Milliseconds(),
+		"success":        success,
+		"summary":        truncateForLog(summary, 500),
+		"duration_ms":    time.Since(it.startTime).Milliseconds(),
 		"memories_saved": it.memorySaves,
 	}
 
@@ -467,8 +474,13 @@ func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery strin
 		"original_len":   len(originalQuery),
 		"cleaned_len":    len(cleanedQuery),
 	}
+	// Calculate reduction percentage (avoid division by zero)
+	reductionPercent := 0.0
+	if len(originalQuery) > 0 {
+		reductionPercent = float64(len(originalQuery)-len(cleanedQuery)) / float64(len(originalQuery)) * 100
+	}
 	span.Output = map[string]any{
-		"reduction_percent": fmt.Sprintf("%.1f%%", float64(len(originalQuery)-len(cleanedQuery))/float64(len(originalQuery))*100),
+		"reduction_percent": fmt.Sprintf("%.1f%%", reductionPercent),
 	}
 	span.End()
 

@@ -47,7 +47,8 @@ func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.S
 
 	// Extract caller information for logging
 	callerID := ctxutil.CallerID(requestCtx)
-	slackUserID := ctxutil.SlackUserID(requestCtx)
+	userEmail := ctxutil.UserEmail(requestCtx)
+	userGroups := ctxutil.UserGroups(requestCtx)
 	role := ctxutil.Role(requestCtx)
 
 	logFields := []any{
@@ -58,8 +59,11 @@ func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.S
 		"permission_reason", permissionReason,
 		"session_id", sess.ID(),
 	}
-	if slackUserID != "" {
-		logFields = append(logFields, "slack_user_id", slackUserID)
+	if userEmail != "" {
+		logFields = append(logFields, "user_email", userEmail)
+	}
+	if len(userGroups) > 0 {
+		logFields = append(logFields, "user_groups", userGroups)
 	}
 
 	// If user doesn't have permission, reject immediately

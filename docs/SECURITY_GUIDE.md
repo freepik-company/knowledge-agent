@@ -530,61 +530,73 @@ grep "rate limit" logs/agent.log
 
 ## Permissions System (save_to_memory Control)
 
-The Knowledge Agent implements **fine-grained permissions** to control who can save information to the knowledge base.
+The Knowledge Agent implements **fine-grained permissions** to control who can save information to the knowledge base using **JWT claims** (email and groups).
 
 ### Configuration
 
 ```yaml
 permissions:
-  # Lista de Slack User IDs permitidos para guardar
-  allowed_slack_users:
-    - U02ABC123  # john.doe
-    - U03DEF456  # jane.smith
+  # Path in JWT token to extract groups (depends on your identity provider)
+  groups_claim_path: "groups"  # Default. For Keycloak realm roles: "realm_access.roles"
 
-  # Lista de caller IDs con permisos de administrador (siempre pueden guardar)
-  admin_caller_ids:
-    - root-agent      # Servicio A2A raíz
-    - monitoring      # Servicio de monitoreo
+  # List of emails with permissions
+  allowed_emails:
+    - value: "admin@company.com"
+      role: "write"    # Can save to memory
+    - value: "viewer@company.com"
+      role: "read"     # Can only search memory
+
+  # List of groups from JWT with permissions
+  allowed_groups:
+    - value: "/google-workspace/devops@company.com"  # Google Workspace group
+      role: "write"
+    - value: "knowledge-admins"  # Keycloak group or realm role
+      role: "write"
+    - value: "knowledge-readers"
+      role: "read"
 ```
 
 ### Permission Modes
 
-#### Restrictive Mode (Default - Empty Lists Deny All)
+#### Open Mode (No Restrictions)
 
-When permission lists are empty or not configured, **no one** can save:
+When permission lists are empty, **everyone with role=write can save**:
 
 ```yaml
 permissions:
-  allowed_slack_users: []
-  admin_caller_ids: []
+  allowed_emails: []
+  allowed_groups: []
 ```
 
-**Result**: All save attempts are blocked. Secure by default.
+**Result**: Any authenticated user with write role can save.
 
 #### Controlled Access Mode
 
-When you configure specific users/services, **only they** can save:
+When you configure specific emails/groups, **only they** can save:
 
 ```yaml
 permissions:
-  allowed_slack_users:
-    - U02ABC123  # Only this Slack user
-  admin_caller_ids:
-    - root-agent  # Only this A2A service
+  groups_claim_path: "groups"
+  allowed_emails:
+    - value: "admin@company.com"
+      role: "write"
+  allowed_groups:
+    - value: "devops-team"
+      role: "write"
 ```
 
 **Result**:
-- ✅ User U02ABC123 → Can save
-- ✅ Service root-agent → Can save
-- ❌ Other Slack users → **Cannot** save
-- ❌ Other A2A services → **Cannot** save
+- ✅ admin@company.com → Can save
+- ✅ Users in "devops-team" group → Can save
+- ❌ Other users → **Cannot** save (even with JWT)
 
 ### How It Works
 
-1. **Authentication Layer**: Request authenticated → caller_id + slack_user_id set in context
+1. **Authentication Layer**: JWT parsed → email and groups extracted to context
 2. **Permission Check**: When `save_to_memory` tool is called:
-   - Check if caller_id is in `admin_caller_ids` → Allow
-   - Check if slack_user_id is in `allowed_slack_users` → Allow
+   - Check if role="read" in context → Block (read-only access)
+   - Check if email is in `allowed_emails` with role="write" → Allow
+   - Check if any user group is in `allowed_groups` with role="write" → Allow
    - Otherwise → **Block with error**
 3. **Error to Agent**: Permission error returned to LLM agent, which informs user
 
@@ -596,75 +608,75 @@ Permissions are enforced at the **tool level** using a wrapper pattern:
 // internal/agent/permission_memory_service.go
 type PermissionMemoryService struct {
     baseService       memory.Service
-    permissionChecker *permissions.MemoryPermissionChecker
+    permissionChecker *MemoryPermissionChecker
     contextHolder     *contextHolder
 }
 
 func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.Session) error {
-    // Get request context with caller_id and slack_user_id
-    requestCtx := s.contextHolder.GetContext()
+    requestCtx := s.resolvePermissionContext(ctx)
 
     // Check permissions FIRST
     canSave, reason := s.permissionChecker.CanSaveToMemory(requestCtx)
 
     if !canSave {
-        return fmt.Errorf("⛔ Permisos insuficientes. Razón: %s", reason)
+        return fmt.Errorf("⛔ Insufficient permissions. Reason: %s", reason)
     }
 
-    // Proceed with save
     return s.baseService.AddSession(ctx, sess)
 }
 ```
 
 ### Use Cases
 
-#### Case 1: Only Admin Users
+#### Case 1: Team-Based Access (Google Workspace)
 
 ```yaml
 permissions:
-  allowed_slack_users:
-    - U02JOHN123  # John (admin)
-    - U03JANE456  # Jane (admin)
-  admin_caller_ids:
-    - root-agent  # A2A services always allowed
+  groups_claim_path: "groups"
+  allowed_groups:
+    - value: "/google-workspace/devops@company.com"
+      role: "write"
+    - value: "/google-workspace/engineering@company.com"
+      role: "write"
+    - value: "/google-workspace/all@company.com"
+      role: "read"
 ```
 
 **Behavior**:
-- John and Jane can save from Slack
-- Other users can only search (search_memory)
-- A2A services (root-agent) can always save
+- DevOps and Engineering teams can save
+- Everyone else can only search
 
-#### Case 2: Only A2A Services
+#### Case 2: Keycloak Realm Roles
 
 ```yaml
 permissions:
-  allowed_slack_users: []  # No Slack users
-  admin_caller_ids:
-    - root-agent
-    - monitoring
-    - backup-service
+  groups_claim_path: "realm_access.roles"
+  allowed_groups:
+    - value: "knowledge-admin"
+      role: "write"
+    - value: "knowledge-user"
+      role: "read"
 ```
 
 **Behavior**:
-- **No** Slack user can save
-- Only authorized A2A services can save
-- Slack users can only search
+- Users with `knowledge-admin` realm role can save
+- Users with `knowledge-user` role can only search
 
-#### Case 3: Specific Team
+#### Case 3: Named Users Only
 
 ```yaml
 permissions:
-  allowed_slack_users:
-    - U02JOHN123   # Tech Lead
-    - U03JANE456   # Senior Dev
-    - U04BOB789    # DevOps
-  admin_caller_ids:
-    - root-agent
+  allowed_emails:
+    - value: "john.doe@company.com"
+      role: "write"
+    - value: "jane.smith@company.com"
+      role: "write"
+  allowed_groups: []
 ```
 
 **Behavior**:
-- Only technical team can save knowledge
-- Rest of company can search and query
+- Only John and Jane can save knowledge
+- Rest of company can only search
 
 ### Logging & Auditing
 
@@ -672,20 +684,22 @@ Every request logs permission status:
 
 ```log
 INFO  agent/permission_memory_service.go  save_to_memory permission granted
-      caller_id=slack-bridge
-      slack_user_id=U02JOHN123
+      caller_id=john.doe@company.com
+      user_email=john.doe@company.com
+      user_groups=["/google-workspace/devops@company.com", "/google-workspace/all@company.com"]
       can_save=true
-      permission_reason="slack_user_id 'U02JOHN123' is allowed"
+      permission_reason="group '/google-workspace/devops@company.com' has write permission"
       session_id=query-C123XYZ-1234567890
 ```
 
 **Blocked save:**
 ```log
 WARN  agent/permission_memory_service.go  save_to_memory BLOCKED: insufficient permissions
-      caller_id=slack-bridge
-      slack_user_id=U05GUEST999
+      caller_id=guest@company.com
+      user_email=guest@company.com
+      user_groups=["/google-workspace/all@company.com"]
       can_save=false
-      permission_reason="slack_user_id 'U05GUEST999' is not authorized to save to memory"
+      permission_reason="no matching email or group found in allowed permissions"
       session_id=query-C123XYZ-1234567891
 ```
 
@@ -704,40 +718,31 @@ Bot: ✅ I've saved the information about deployments.
 ```
 User: @bot save that we deploy on Tuesdays
 
-Bot: ⛔ Permisos insuficientes. Solo los usuarios autorizados
-     pueden guardar información en la base de conocimiento.
-     Razón: slack_user_id 'U05GUEST999' is not authorized to save to memory
+Bot: ⛔ Insufficient permissions. Only authorized users can save
+     information to the knowledge base.
 ```
 
 The agent receives the error from the tool and communicates it to the user.
 
-### Getting Slack User IDs
+### Configuring Groups Claim Path
 
-**Method 1: Hover over user in Slack**
-1. Open Slack
-2. Hover over user's name
-3. Click "View full profile"
-4. Click the ⋮ menu → "Copy member ID"
+The `groups_claim_path` depends on your identity provider:
 
-**Method 2: From logs**
-Check logs when a user makes a request:
-```bash
-grep "slack_user_id" logs | grep "U0"
-```
-
-**Method 3: Slack API**
-```bash
-curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-  https://slack.com/api/users.list | jq '.members[] | {id, name, real_name}'
-```
+| Provider | Typical Path | Example JWT Claim |
+|----------|-------------|-------------------|
+| Google Workspace (via Keycloak) | `groups` | `"groups": ["/google-workspace/dev@company.com"]` |
+| Keycloak Realm Roles | `realm_access.roles` | `"realm_access": {"roles": ["admin"]}` |
+| Keycloak Groups | `groups` | `"groups": ["/admins", "/developers"]` |
+| Auth0 | `https://myapp/groups` | Custom claim path |
+| Azure AD | `groups` | `"groups": ["guid1", "guid2"]` |
 
 ### Security Notes
 
-- **Restrictive by default**: Empty lists deny all saves
-- **Admin override**: admin_caller_ids always bypass user checks
+- **JWT-based**: Permissions extracted from validated JWT tokens
+- **Role precedence**: `role="read"` in context blocks saves regardless of email/group
 - **Tool-level enforcement**: Cannot be bypassed by prompt engineering
-- **Audit trail**: All permission checks logged with context
-- **A2A compatibility**: Works with both Slack and direct API access
+- **Audit trail**: All permission checks logged with email and groups
+- **A2A identity propagation**: User identity flows through sub-agent calls
 
 ---
 

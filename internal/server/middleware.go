@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"knowledge-agent/internal/auth/keycloak"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
@@ -25,22 +26,54 @@ func jsonError(w http.ResponseWriter, message string, statusCode int) {
 // AuthMiddleware validates that the request comes from an authorized source
 // It supports three authentication methods (checked in order):
 // 1. Internal token via X-Internal-Token header (for Slack Bridge - TRUSTED)
-// 2. API Key via X-API-Key header (for external A2A access - UNTRUSTED for user identity)
-// 3. Slack signature via X-Slack-Signature header (legacy, for direct Slack webhooks)
+// 2. JWT Bearer token via Authorization header (for Keycloak-authenticated requests)
+// 3. API Key via X-API-Key header (for external A2A access)
+// 4. Slack signature via X-Slack-Signature header (legacy, for direct Slack webhooks)
 //
-// Authentication modes:
-// - If internal_token is configured: Internal requests require X-Internal-Token
-// - If api_keys is configured: External requests require X-API-Key
-// - If neither is configured: Open mode (no authentication required)
+// JWT handling:
+// - When a Bearer token is present, it is parsed to extract email and groups
+// - Groups are used for permission checking (allowed_groups in config)
+// - The JWT is NOT validated cryptographically (assumes API Gateway or Keycloak already validated)
 //
 // Security notes:
 // - X-Slack-User-Id header is ONLY accepted from internal token auth (Slack Bridge)
 // - External API key callers CANNOT spoof Slack user identity
-// - Roles: "write" = read+write, "read" = read-only (no save_to_memory)
+// - Groups from JWT are trusted (should be validated by upstream API Gateway)
 func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			log := logger.Get()
+
+			// Try to extract JWT claims from Authorization header (if present)
+			// This is done early so claims are available for all auth methods
+			var jwtClaims *keycloak.JWTClaims
+			if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+				if token := keycloak.ExtractBearerToken(authHeader); token != "" {
+					// Determine groups claim path from config
+					groupsPath := cfg.Permissions.GroupsClaimPath
+					if groupsPath == "" && cfg.Keycloak.GroupsClaimPath != "" {
+						groupsPath = cfg.Keycloak.GroupsClaimPath
+					}
+					if groupsPath == "" {
+						groupsPath = "groups" // Default
+					}
+
+					claims, err := keycloak.ParseJWTClaims(token, groupsPath)
+					if err != nil {
+						log.Debugw("Failed to parse JWT claims (non-fatal)",
+							"error", err,
+							"path", r.URL.Path,
+						)
+					} else {
+						jwtClaims = claims
+						log.Debugw("JWT claims extracted",
+							"email", claims.Email,
+							"groups_count", len(claims.Groups),
+							"path", r.URL.Path,
+						)
+					}
+				}
+			}
 
 			// Option 1: Internal token (Slack Bridge → Agent) - TRUSTED SOURCE
 			// Only internal token auth can pass X-Slack-User-Id for user-level permissions
@@ -51,10 +84,21 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 						ctx := context.WithValue(r.Context(), ctxutil.CallerIDKey, "slack-bridge")
 						ctx = context.WithValue(ctx, ctxutil.RoleKey, ctxutil.RoleWrite) // Internal always has write
 
-						// ONLY accept Slack user ID from trusted internal source (Slack Bridge)
-						// This prevents external agents from spoofing user identity
+						// Accept Slack user ID from trusted internal source
 						if slackUserID := r.Header.Get("X-Slack-User-Id"); slackUserID != "" {
 							ctx = context.WithValue(ctx, ctxutil.SlackUserIDKey, slackUserID)
+						}
+
+						// Add user email from request body or JWT
+						if userEmail := r.Header.Get("X-User-Email"); userEmail != "" {
+							ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
+						} else if jwtClaims != nil && jwtClaims.Email != "" {
+							ctx = context.WithValue(ctx, ctxutil.UserEmailKey, jwtClaims.Email)
+						}
+
+						// Add groups from JWT if available
+						if jwtClaims != nil && len(jwtClaims.Groups) > 0 {
+							ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, jwtClaims.Groups)
 						}
 
 						next.ServeHTTP(w, r.WithContext(ctx))
@@ -71,8 +115,41 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 				// No internal token provided - continue to check other auth methods
 			}
 
-			// Option 2: API Key (external A2A access) - UNTRUSTED for user identity
-			// External callers authenticate as a service, NOT as a Slack user
+			// Option 2: JWT Bearer token (Keycloak-authenticated requests)
+			// This handles requests that come with a validated JWT from API Gateway
+			if jwtClaims != nil {
+				ctx := r.Context()
+
+				// Determine caller ID from JWT
+				callerID := "jwt-user"
+				if jwtClaims.PreferredUser != "" {
+					callerID = jwtClaims.PreferredUser
+				} else if jwtClaims.Email != "" {
+					callerID = jwtClaims.Email
+				}
+				ctx = context.WithValue(ctx, ctxutil.CallerIDKey, callerID)
+				ctx = context.WithValue(ctx, ctxutil.RoleKey, ctxutil.RoleWrite) // JWT users default to write
+
+				// Add email and groups from JWT
+				if jwtClaims.Email != "" {
+					ctx = context.WithValue(ctx, ctxutil.UserEmailKey, jwtClaims.Email)
+				}
+				if len(jwtClaims.Groups) > 0 {
+					ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, jwtClaims.Groups)
+				}
+
+				log.Debugw("Authenticated via JWT",
+					"caller_id", callerID,
+					"email", jwtClaims.Email,
+					"groups_count", len(jwtClaims.Groups),
+					"path", r.URL.Path,
+				)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Option 3: API Key (external A2A access)
+			// External callers authenticate as a service, NOT as a user
 			if len(cfg.APIKeys) > 0 {
 				if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
 					// Search for the API key configuration
@@ -82,20 +159,28 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 							ctx := context.WithValue(r.Context(), ctxutil.CallerIDKey, keyCfg.CallerID)
 							ctx = context.WithValue(ctx, ctxutil.RoleKey, keyCfg.Role)
 
-							// SECURITY: Do NOT accept X-Slack-User-Id from external API keys
-							// External agents authenticate as a service, not as a user
-							// If they send X-Slack-User-Id, we ignore it to prevent spoofing
-							if r.Header.Get("X-Slack-User-Id") != "" {
-								log.Warnw("External API key attempted to pass Slack user ID (ignored)",
-									"caller_id", keyCfg.CallerID,
-									"attempted_slack_user_id", r.Header.Get("X-Slack-User-Id"),
-									"path", r.URL.Path,
-								)
+							// Accept propagated identity headers from trusted A2A sources
+							// These headers are set by the identity interceptor in upstream agents
+							if userEmail := r.Header.Get("X-User-Email"); userEmail != "" {
+								ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
+							}
+							if slackUserID := r.Header.Get("X-Slack-User-Id"); slackUserID != "" {
+								ctx = context.WithValue(ctx, ctxutil.SlackUserIDKey, slackUserID)
+							}
+
+							// Accept groups from X-User-Groups header (JSON array)
+							// This is set by upstream agents that have already validated the JWT
+							if groupsHeader := r.Header.Get("X-User-Groups"); groupsHeader != "" {
+								var groups []string
+								if err := json.Unmarshal([]byte(groupsHeader), &groups); err == nil {
+									ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, groups)
+								}
 							}
 
 							log.Debugw("Authenticated via API key",
 								"caller_id", keyCfg.CallerID,
 								"role", keyCfg.Role,
+								"has_user_email", r.Header.Get("X-User-Email") != "",
 								"path", r.URL.Path,
 							)
 							next.ServeHTTP(w, r.WithContext(ctx))
@@ -112,7 +197,7 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Option 3: Slack signature (legacy, for direct Slack webhooks to agent)
+			// Option 4: Slack signature (legacy, for direct Slack webhooks to agent)
 			if r.Header.Get("X-Slack-Signature") != "" && cfg.Slack.SigningSecret != "" {
 				if err := slack.VerifySlackRequest(r, cfg.Slack.SigningSecret); err == nil {
 					ctx := context.WithValue(r.Context(), ctxutil.CallerIDKey, "slack-direct")

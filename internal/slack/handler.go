@@ -22,9 +22,9 @@ import (
 type Handler struct {
 	config        *config.Config
 	client        *Client
-	agentURL      string // URL of the Knowledge Agent service
-	internalToken string // Internal token for authenticating with the Knowledge Agent
-	botUserID     string // Bot's own user ID (for filtering self-messages in DMs)
+	agentURL      string        // URL of the Knowledge Agent service
+	internalToken string        // Internal token for authenticating with the Knowledge Agent
+	botUserID     string        // Bot's own user ID (for filtering self-messages in DMs)
 	ackGenerator  *AckGenerator // Generator for contextual acknowledgment messages
 }
 
@@ -282,7 +282,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	)
 
 	// 1. Fetch user information for personalization
-	var userName, userRealName string
+	var userName, userRealName, userEmail string
 	userInfo, err := h.client.GetUserInfo(event.User)
 	if err != nil {
 		log.Warnw("Failed to fetch user info (continuing without name)",
@@ -293,10 +293,12 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	} else {
 		userName = userInfo.Name         // @username
 		userRealName = userInfo.RealName // John Doe
+		userEmail = userInfo.Email       // user@example.com (requires users:read.email scope)
 		log.Debugw("User info fetched",
 			"user_id", event.User,
 			"name", userName,
 			"real_name", userRealName,
+			"has_email", userEmail != "",
 		)
 		observability.RecordSlackAPICall("users.info", true)
 	}
@@ -483,6 +485,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		"messages":       messageData,
 		"user_name":      userName,     // @username for display
 		"user_real_name": userRealName, // Real name for personalization
+		"user_email":     userEmail,    // Email for Keycloak identity propagation
 	}
 
 	// 4. Send to Knowledge Agent

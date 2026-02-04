@@ -59,6 +59,7 @@ type User struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	RealName string `json:"real_name"`
+	Email    string `json:"email"` // Requires users:read.email scope
 }
 
 // ClientConfig holds configuration for the Slack client
@@ -432,7 +433,7 @@ func splitMessage(text string, maxLength int) []string {
 	return chunks
 }
 
-// GetUserInfo retrieves user information
+// GetUserInfo retrieves user information including email (requires users:read.email scope)
 func (c *Client) GetUserInfo(userID string) (*User, error) {
 	user, err := c.api.GetUserInfo(userID)
 	if err != nil {
@@ -443,6 +444,7 @@ func (c *Client) GetUserInfo(userID string) (*User, error) {
 		ID:       user.ID,
 		Name:     user.Name,
 		RealName: user.RealName,
+		Email:    user.Profile.Email, // Requires users:read.email scope
 	}, nil
 }
 

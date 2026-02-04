@@ -218,13 +218,24 @@ API_KEYS='{"ka_secret_key":"caller-id"}'
 
 ## Permissions System
 
-Controls who can use `save_to_memory`. **Full guide: `docs/SECURITY_GUIDE.md`**
+Controls who can use `save_to_memory` based on JWT claims (email and groups). **Full guide: `docs/SECURITY_GUIDE.md`**
 
 ```yaml
 permissions:
-  allowed_slack_users: [U01ABC123DE, U02XYZ789GH]  # Whitelist
-  admin_caller_ids: [root-agent]  # Bypass user restrictions
+  groups_claim_path: "groups"  # JWT claim path for groups (or "realm_access.roles" for Keycloak)
+  allowed_emails:
+    - value: "admin@company.com"
+      role: "write"
+    - value: "viewer@company.com"
+      role: "read"
+  allowed_groups:
+    - value: "/google-workspace/devops@company.com"  # Google Workspace group
+      role: "write"
+    - value: "knowledge-readers"
+      role: "read"
 ```
+
+Roles: `write` (full access) or `read` (no save_to_memory)
 
 Implementation: `internal/agent/permissions.go`, `internal/agent/permission_memory_service.go`
 

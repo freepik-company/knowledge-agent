@@ -21,6 +21,7 @@ import (
 	"github.com/git-hulk/langfuse-go/pkg/traces"
 
 	"knowledge-agent/internal/a2a"
+	"knowledge-agent/internal/auth/keycloak"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
@@ -28,7 +29,6 @@ import (
 	"knowledge-agent/internal/observability"
 	"knowledge-agent/internal/tools"
 )
-
 
 const (
 	appName = "knowledge-agent"
@@ -137,6 +137,7 @@ type Agent struct {
 	langfuseTracer    *observability.LangfuseTracer
 	responseCleaner   *ResponseCleaner
 	contextSummarizer *ContextSummarizer
+	keycloakClient    *keycloak.Client // nil if Keycloak is disabled
 }
 
 // New creates a new agent instance with full ADK integration
@@ -247,16 +248,41 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		log.Debug("MCP integration disabled")
 	}
 
-	// 8b. Create A2A sub-agents using remoteagent (if enabled)
+	// 8b. Initialize Keycloak client (for user identity propagation to sub-agents)
+	var keycloakClient *keycloak.Client
+	if cfg.Keycloak.Enabled {
+		log.Infow("Initializing Keycloak client for user identity propagation",
+			"server_url", cfg.Keycloak.ServerURL,
+			"realm", cfg.Keycloak.Realm,
+		)
+		keycloakClient, err = keycloak.NewClient(keycloak.Config{
+			Enabled:         cfg.Keycloak.Enabled,
+			ServerURL:       cfg.Keycloak.ServerURL,
+			Realm:           cfg.Keycloak.Realm,
+			ClientID:        cfg.Keycloak.ClientID,
+			ClientSecret:    cfg.Keycloak.ClientSecret,
+			UserClaimName:   cfg.Keycloak.UserClaimName,
+			GroupsClaimPath: cfg.Keycloak.GroupsClaimPath,
+		})
+		if err != nil {
+			// Graceful degradation: log warning but don't fail agent startup
+			log.Warnw("Failed to create Keycloak client", "error", err)
+		}
+	} else {
+		log.Debug("Keycloak integration disabled")
+	}
+
+	// 8c. Create A2A sub-agents using remoteagent (if enabled)
 	var subAgents []agent.Agent
 	if cfg.A2A.Enabled {
 		log.Infow("A2A integration enabled",
 			"self_name", cfg.A2A.SelfName,
 			"sub_agents", len(cfg.A2A.SubAgents),
+			"keycloak_enabled", keycloakClient != nil,
 		)
 
 		if len(cfg.A2A.SubAgents) > 0 {
-			subAgents, err = a2a.CreateSubAgents(&cfg.A2A)
+			subAgents, err = a2a.CreateSubAgents(&cfg.A2A, keycloakClient)
 			if err != nil {
 				// Graceful degradation: log warning but don't fail agent startup
 				log.Warnw("Failed to create A2A sub-agents", "error", err)
@@ -358,6 +384,7 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		langfuseTracer:    langfuseTracer,
 		responseCleaner:   responseCleaner,
 		contextSummarizer: contextSummarizer,
+		keycloakClient:    keycloakClient,
 	}, nil
 }
 
@@ -386,6 +413,9 @@ func (a *Agent) Close() error {
 	}
 	if a.promptManager != nil {
 		resources = append(resources, resource{"prompt_manager", a.promptManager.Close})
+	}
+	if a.keycloakClient != nil {
+		resources = append(resources, resource{"keycloak_client", a.keycloakClient.Close})
 	}
 	if a.sessionService != nil {
 		resources = append(resources, resource{"session_service", a.sessionService.Close})
@@ -763,14 +793,18 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	callerID := ctxutil.CallerID(ctx)
 	slackUserID := ctxutil.SlackUserID(ctx)
 
-	// Start Langfuse trace
-	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, map[string]any{
+	// Resolve session ID for Langfuse grouping (client-provided or auto-generated from thread context)
+	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
+
+	// Start Langfuse trace with session ID for grouping in Sessions view
+	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, sessionID, map[string]any{
 		"caller_id":      callerID,
 		"slack_user_id":  slackUserID,
 		"channel_id":     req.ChannelID,
 		"thread_ts":      req.ThreadTS,
 		"user_name":      req.UserName,
 		"user_real_name": req.UserRealName,
+		"session_id":     sessionID,
 	})
 	defer func() {
 		// Finalize trace at the end
@@ -805,9 +839,6 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	defer func() {
 		observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
 	}()
-
-	// Resolve session ID (client-provided or auto-generated from thread context)
-	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
 
 	// Determine user_id based on knowledge_scope configuration
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
@@ -963,6 +994,12 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 	// Add QueryTrace to context for A2A interceptors to use
 	ctx = observability.ContextWithQueryTrace(ctx, trace)
+
+	// Add user email and session ID to context for identity propagation to sub-agents
+	if req.UserEmail != "" {
+		ctx = context.WithValue(ctx, ctxutil.UserEmailKey, req.UserEmail)
+	}
+	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
 
 	eventCount := 0
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {

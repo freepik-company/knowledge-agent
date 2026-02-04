@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/remoteagent"
 
+	"knowledge-agent/internal/auth/keycloak"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
 	"knowledge-agent/internal/observability"
@@ -20,7 +21,8 @@ import (
 
 // CreateSubAgents creates remote ADK agents from configuration using remoteagent.NewA2A
 // These agents can be used as sub-agents in the main LLM agent
-func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
+// keycloakClient can be nil if Keycloak integration is disabled
+func CreateSubAgents(cfg *config.A2AConfig, keycloakClient *keycloak.Client) ([]agent.Agent, error) {
 	log := logger.Get()
 
 	if !cfg.Enabled {
@@ -37,12 +39,13 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 		"sub_agents_count", len(cfg.SubAgents),
 		"polling", cfg.Polling,
 		"query_extractor_enabled", cfg.QueryExtractor.Enabled,
+		"keycloak_enabled", keycloakClient != nil && keycloakClient.IsEnabled(),
 	)
 
 	var subAgents []agent.Agent
 
 	for _, subAgentCfg := range cfg.SubAgents {
-		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.QueryExtractor)
+		remoteAgent, err := createRemoteAgent(subAgentCfg, cfg.Polling, cfg.QueryExtractor, keycloakClient)
 		if err != nil {
 			// Graceful degradation: log warning but continue with other agents
 			log.Warnw("Failed to create remote agent, skipping",
@@ -73,7 +76,8 @@ func CreateSubAgents(cfg *config.A2AConfig) ([]agent.Agent, error) {
 }
 
 // createRemoteAgent creates a single remote agent using ADK's remoteagent package
-func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtractorCfg config.A2AQueryExtractorConfig) (agent.Agent, error) {
+// keycloakClient can be nil if Keycloak integration is disabled
+func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtractorCfg config.A2AQueryExtractorConfig, keycloakClient *keycloak.Client) (agent.Agent, error) {
 	log := logger.Get()
 
 	log.Debugw("Creating remote agent",
@@ -82,6 +86,7 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtracto
 		"auth_type", cfg.Auth.Type,
 		"polling", polling,
 		"query_extractor_enabled", queryExtractorCfg.Enabled,
+		"keycloak_enabled", keycloakClient != nil && keycloakClient.IsEnabled(),
 	)
 
 	// Prepare auth headers if needed
@@ -153,7 +158,13 @@ func createRemoteAgent(cfg config.A2ASubAgentConfig, polling bool, queryExtracto
 		}),
 	}
 
-	// Add query extractor interceptor if enabled (first interceptor - extracts relevant query before other processing)
+	// Add identity interceptor FIRST - propagates user identity (Slack ID, email, session ID) and Keycloak JWT
+	// This must be before other interceptors so identity is available for all subsequent processing
+	factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
+		NewIdentityInterceptor(cfg.Name, keycloakClient),
+	))
+
+	// Add query extractor interceptor if enabled (extracts relevant query before other processing)
 	// Pass card.Description for targeted query extraction based on agent capabilities
 	if queryExtractorCfg.Enabled {
 		log.Debugw("Adding query extractor interceptor for sub-agent",

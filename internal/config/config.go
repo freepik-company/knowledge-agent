@@ -22,8 +22,9 @@ type Config struct {
 	Prompt            PromptConfig            `yaml:"prompt" mapstructure:"prompt"`
 	Langfuse          LangfuseConfig          `yaml:"langfuse" mapstructure:"langfuse"`
 	MCP               MCPConfig               `yaml:"mcp" mapstructure:"mcp"`
-	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                           // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
-	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"` // Clean responses before sending to user
+	A2A               A2AConfig               `yaml:"a2a" mapstructure:"a2a"`                               // Agent-to-Agent tool integration (also configures inbound A2A endpoints)
+	Keycloak          KeycloakConfig          `yaml:"keycloak" mapstructure:"keycloak"`                     // Keycloak integration for user identity propagation to sub-agents
+	ResponseCleaner   ResponseCleanerConfig   `yaml:"response_cleaner" mapstructure:"response_cleaner"`     // Clean responses before sending to user
 	ContextSummarizer ContextSummarizerConfig `yaml:"context_summarizer" mapstructure:"context_summarizer"` // Summarize long contexts before sending to LLM
 	APIKeys           map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"`                     // API keys with caller_id and role for authentication
 	Tools             ToolsConfig             `yaml:"tools" mapstructure:"tools"`                           // Tool-specific configuration
@@ -74,9 +75,17 @@ type APIKeyConfig struct {
 }
 
 // PermissionsConfig holds permissions configuration for memory operations
+// Permissions are checked based on user email and groups extracted from JWT
 type PermissionsConfig struct {
-	AllowedSlackUsers []string `yaml:"allowed_slack_users" mapstructure:"allowed_slack_users"` // List of Slack User IDs allowed to save to memory
-	AdminCallerIDs    []string `yaml:"admin_caller_ids" mapstructure:"admin_caller_ids"`       // List of caller IDs with admin permissions (can save without restrictions)
+	GroupsClaimPath string            `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"` // JWT claim path for groups (e.g., "groups", "realm_access.roles")
+	AllowedEmails   []PermissionEntry `yaml:"allowed_emails" mapstructure:"allowed_emails"`                        // Emails with explicit permissions
+	AllowedGroups   []PermissionEntry `yaml:"allowed_groups" mapstructure:"allowed_groups"`                        // Groups (from JWT) with permissions
+}
+
+// PermissionEntry defines a permission for an email or group
+type PermissionEntry struct {
+	Value string `yaml:"value" mapstructure:"value"` // Email address or group name
+	Role  string `yaml:"role" mapstructure:"role"`   // "write" (read+write) or "read" (read-only)
 }
 
 // PromptConfig holds prompt configuration
@@ -144,6 +153,17 @@ type A2AConfig struct {
 	QueryExtractor A2AQueryExtractorConfig `yaml:"query_extractor" mapstructure:"query_extractor"`                         // Query extractor for sub-agent requests
 }
 
+// KeycloakConfig holds Keycloak integration configuration for user identity propagation
+type KeycloakConfig struct {
+	Enabled         bool   `yaml:"enabled" mapstructure:"enabled" envconfig:"KEYCLOAK_ENABLED" default:"false"`       // Enable Keycloak integration
+	ServerURL       string `yaml:"server_url" mapstructure:"server_url" envconfig:"KEYCLOAK_SERVER_URL"`              // Keycloak server URL (e.g., https://keycloak.example.com)
+	Realm           string `yaml:"realm" mapstructure:"realm" envconfig:"KEYCLOAK_REALM"`                             // Keycloak realm
+	ClientID        string `yaml:"client_id" mapstructure:"client_id" envconfig:"KEYCLOAK_CLIENT_ID"`                 // Service account client ID
+	ClientSecret    string `yaml:"client_secret" mapstructure:"client_secret" envconfig:"KEYCLOAK_CLIENT_SECRET"`     // Service account client secret
+	UserClaimName   string `yaml:"user_claim_name" mapstructure:"user_claim_name" default:"X-User-Email"`             // Header name for propagating user email to sub-agents
+	GroupsClaimPath string `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"`               // JWT claim path for groups (e.g., "groups", "realm_access.roles")
+}
+
 // A2AQueryExtractorConfig holds configuration for the A2A context cleaner interceptor
 type A2AQueryExtractorConfig struct {
 	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"true"`                  // Enable query extraction before sending to sub-agents
@@ -152,9 +172,9 @@ type A2AQueryExtractorConfig struct {
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent
 type A2ASubAgentConfig struct {
-	Name     string        `yaml:"name" mapstructure:"name"`                    // Agent name (used in LLM instructions)
-	Endpoint string        `yaml:"endpoint" mapstructure:"endpoint"`            // Agent card source URL (e.g., http://metrics-agent:9000)
-	Auth     A2AAuthConfig `yaml:"auth" mapstructure:"auth"`                    // Authentication configuration (api_key, bearer, or none)
+	Name     string        `yaml:"name" mapstructure:"name"`                     // Agent name (used in LLM instructions)
+	Endpoint string        `yaml:"endpoint" mapstructure:"endpoint"`             // Agent card source URL (e.g., http://metrics-agent:9000)
+	Auth     A2AAuthConfig `yaml:"auth" mapstructure:"auth"`                     // Authentication configuration (api_key, bearer, or none)
 	Timeout  int           `yaml:"timeout" mapstructure:"timeout" default:"180"` // HTTP client timeout in seconds for A2A calls (default: 180s)
 }
 
@@ -218,9 +238,9 @@ type RAGConfig struct {
 type ServerConfig struct {
 	AgentPort      int      `yaml:"agent_port" mapstructure:"agent_port" envconfig:"AGENT_PORT" default:"8081"`
 	SlackBotPort   int      `yaml:"slack_bot_port" mapstructure:"slack_bot_port" envconfig:"SLACK_BOT_PORT" default:"8080"`
-	ReadTimeout  int `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`     // seconds
-	WriteTimeout int `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"` // seconds (3 minutes for long operations)
-	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                                  // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
+	ReadTimeout    int      `yaml:"read_timeout" mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30"`     // seconds
+	WriteTimeout   int      `yaml:"write_timeout" mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"180"` // seconds (3 minutes for long operations)
+	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`                                            // List of trusted proxy IPs/CIDRs for X-Forwarded-For (empty = don't trust any)
 }
 
 // LogConfig holds logging configuration
