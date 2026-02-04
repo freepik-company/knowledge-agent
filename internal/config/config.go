@@ -77,9 +77,10 @@ type APIKeyConfig struct {
 // PermissionsConfig holds permissions configuration for memory operations
 // Permissions are checked based on user email and groups extracted from JWT
 type PermissionsConfig struct {
-	GroupsClaimPath string            `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"` // JWT claim path for groups (e.g., "groups", "realm_access.roles")
-	AllowedEmails   []PermissionEntry `yaml:"allowed_emails" mapstructure:"allowed_emails"`                        // Emails with explicit permissions
-	AllowedGroups   []PermissionEntry `yaml:"allowed_groups" mapstructure:"allowed_groups"`                        // Groups (from JWT) with permissions
+	GroupsClaimPath   string            `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"`  // JWT claim path for groups (e.g., "groups", "realm_access.roles")
+	RequireMembership bool              `yaml:"require_membership" mapstructure:"require_membership" default:"false"` // If true, users must be in allowed_emails or allowed_groups to access the API
+	AllowedEmails     []PermissionEntry `yaml:"allowed_emails" mapstructure:"allowed_emails"`                         // Emails with explicit permissions
+	AllowedGroups     []PermissionEntry `yaml:"allowed_groups" mapstructure:"allowed_groups"`                         // Groups (from JWT) with permissions
 }
 
 // PermissionEntry defines a permission for an email or group

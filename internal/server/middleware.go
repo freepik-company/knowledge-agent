@@ -270,3 +270,78 @@ func AuthMiddlewareWithKeycloak(cfg *config.Config, keycloakClient *keycloak.Cli
 		})
 	}
 }
+
+// MembershipMiddleware verifies that authenticated users have access based on permissions config.
+// When require_membership is true, users must be in allowed_emails or allowed_groups to access the API.
+// This middleware should be applied AFTER authentication middleware.
+func MembershipMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+	// Pre-compute lookup maps for fast membership checks
+	emailSet := make(map[string]bool)
+	groupSet := make(map[string]bool)
+
+	for _, entry := range cfg.Permissions.AllowedEmails {
+		emailSet[entry.Value] = true
+	}
+	for _, entry := range cfg.Permissions.AllowedGroups {
+		groupSet[entry.Value] = true
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip if require_membership is disabled
+			if !cfg.Permissions.RequireMembership {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Skip if no permissions are configured (open access)
+			if len(cfg.Permissions.AllowedEmails) == 0 && len(cfg.Permissions.AllowedGroups) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			log := logger.Get()
+			ctx := r.Context()
+
+			userEmail := ctxutil.UserEmail(ctx)
+			userGroups := ctxutil.UserGroups(ctx)
+			callerID := ctxutil.CallerID(ctx)
+
+			// Check email membership
+			if userEmail != "" {
+				if emailSet[userEmail] {
+					log.Debugw("Membership granted via email",
+						"caller_id", callerID,
+						"email", userEmail,
+						"path", r.URL.Path,
+					)
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// Check group membership
+			for _, group := range userGroups {
+				if groupSet[group] {
+					log.Debugw("Membership granted via group",
+						"caller_id", callerID,
+						"email", userEmail,
+						"group", group,
+						"path", r.URL.Path,
+					)
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// No matching membership found
+			log.Warnw("Access denied: user not in allowed emails or groups",
+				"caller_id", callerID,
+				"email", userEmail,
+				"groups", userGroups,
+				"path", r.URL.Path,
+			)
+			jsonError(w, "Access denied: you are not authorized to use this service", http.StatusForbidden)
+		})
+	}
+}

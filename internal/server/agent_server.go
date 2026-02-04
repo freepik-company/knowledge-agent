@@ -97,12 +97,13 @@ func (s *AgentServer) SetupA2A(llmAgent adkagent.Agent, sessionSvc session.Servi
 	// Agent card is PUBLIC (no auth) - needed for agent discovery
 	s.mux.Handle("/.well-known/agent-card.json", a2aHandler.AgentCardHandler())
 
-	// A2A invoke is PROTECTED (with auth middleware)
+	// A2A invoke is PROTECTED (with auth + membership middleware)
 	loopPreventionMiddleware := a2a.LoopPreventionMiddleware(&s.config.A2A)
 	authMiddleware := AuthMiddlewareWithKeycloak(s.config, s.keycloakClient)
+	membershipMiddleware := MembershipMiddleware(s.config)
 
 	s.mux.Handle("/a2a/invoke",
-		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(a2aHandler.InvokeHandler()))))
+		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(membershipMiddleware(a2aHandler.InvokeHandler())))))
 
 	log.Infow("A2A endpoints configured",
 		"agent_card", "/.well-known/agent-card.json (public)",
@@ -128,14 +129,16 @@ func (s *AgentServer) registerRoutes() {
 	// Create middleware chain:
 	// 1. Rate limiting (first, to prevent DoS)
 	// 2. A2A loop prevention (before auth, to fail fast on loops)
-	// 3. Authentication (last, to identify caller)
+	// 3. Authentication (identifies caller, extracts email/groups)
+	// 4. Membership verification (requires user to be in allowed_emails/allowed_groups if enabled)
 	// Note: keycloakClient enables group lookup from Keycloak when user has email but no JWT groups
 	loopPreventionMiddleware := a2a.LoopPreventionMiddleware(&s.config.A2A)
 	authMiddleware := AuthMiddlewareWithKeycloak(s.config, s.keycloakClient)
+	membershipMiddleware := MembershipMiddleware(s.config)
 
-	// API endpoints (protected with rate limiting, loop prevention, and authentication)
+	// API endpoints (protected with rate limiting, loop prevention, authentication, and membership)
 	s.mux.Handle("/api/query",
-		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(http.HandlerFunc(s.handleQuery)))))
+		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(membershipMiddleware(http.HandlerFunc(s.handleQuery))))))
 }
 
 // Close stops the rate limiter cleanup routine
