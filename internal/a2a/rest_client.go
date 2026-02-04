@@ -205,8 +205,8 @@ func (c *RESTClient) propagateIdentity(ctx context.Context, req *http.Request) {
 		}
 	}
 
-	// Add Keycloak JWT for identity propagation via Authorization header
-	// With token exchange, the JWT contains the user's email claim
+	// Add Keycloak JWT for identity propagation (separate from X-API-Key auth)
+	// Uses X-Identity-Token to avoid conflicts with authentication headers
 	if c.keycloakClient != nil && c.keycloakClient.IsEnabled() {
 		userEmail := ctxutil.UserEmail(ctx)
 		token, extraHeaders, err := c.keycloakClient.GetTokenWithUserClaim(ctx, userEmail)
@@ -216,14 +216,14 @@ func (c *RESTClient) propagateIdentity(ctx context.Context, req *http.Request) {
 				"error", err,
 			)
 		} else if token != "" {
-			req.Header.Set(HeaderAuthorization, "Bearer "+token)
+			req.Header.Set(HeaderIdentityToken, token)
 
-			// Add extra headers from Keycloak (fallback user claim if token exchange unavailable)
+			// Add extra headers from Keycloak (e.g., X-User-Email)
 			for k, v := range extraHeaders {
 				req.Header.Set(k, v)
 			}
 
-			log.Debugw("Keycloak token added to REST request",
+			log.Debugw("Keycloak identity token added to REST request",
 				"agent", c.name,
 				"has_user_email", userEmail != "",
 				"extra_headers", len(extraHeaders),
