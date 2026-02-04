@@ -145,15 +145,13 @@ type MCPAuthConfig struct {
 
 // A2AConfig holds Agent-to-Agent tool integration configuration
 type A2AConfig struct {
-	Enabled            bool                    `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"`                       // Enable A2A tool integration
-	SelfName           string                  `yaml:"self_name" mapstructure:"self_name"`                                                           // This agent's identifier for loop prevention
-	MaxCallDepth       int                     `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`                                     // Maximum call chain depth
-	Polling            bool                    `yaml:"polling" mapstructure:"polling" default:"true"`                                                // Use polling instead of streaming for sub-agents (required for large responses)
-	AgentURL           string                  `yaml:"agent_url" mapstructure:"agent_url"`                                                           // Public URL for this agent (for A2A discovery/agent card)
-	ParallelExecution  bool                    `yaml:"parallel_execution" mapstructure:"parallel_execution" default:"false"`                         // Enable parallel execution of A2A calls when multiple sub-agents are invoked
-	MaxConcurrentCalls int                     `yaml:"max_concurrent_calls" mapstructure:"max_concurrent_calls" default:"5"`                         // Maximum number of concurrent A2A calls (only applies when parallel_execution is true)
-	SubAgents          []A2ASubAgentConfig     `yaml:"sub_agents" mapstructure:"sub_agents"`                                                         // List of remote ADK agents to integrate as sub-agents
-	QueryExtractor     A2AQueryExtractorConfig `yaml:"query_extractor" mapstructure:"query_extractor"`                                               // Query extractor for sub-agent requests
+	Enabled        bool                    `yaml:"enabled" mapstructure:"enabled" envconfig:"A2A_ENABLED" default:"false"` // Enable A2A tool integration
+	SelfName       string                  `yaml:"self_name" mapstructure:"self_name"`                                     // This agent's identifier for loop prevention
+	MaxCallDepth   int                     `yaml:"max_call_depth" mapstructure:"max_call_depth" default:"5"`               // Maximum call chain depth
+	Polling        bool                    `yaml:"polling" mapstructure:"polling" default:"true"`                          // Use polling instead of streaming for sub-agents (required for large responses)
+	AgentURL       string                  `yaml:"agent_url" mapstructure:"agent_url"`                                     // Public URL for this agent (for A2A discovery/agent card)
+	SubAgents      []A2ASubAgentConfig     `yaml:"sub_agents" mapstructure:"sub_agents"`                                   // List of remote ADK agents to integrate as sub-agents
+	QueryExtractor A2AQueryExtractorConfig `yaml:"query_extractor" mapstructure:"query_extractor"`                         // Query extractor for sub-agent requests
 }
 
 // KeycloakConfig holds Keycloak integration configuration for user identity propagation
