@@ -289,6 +289,21 @@ a2a:
   # Maximum call chain depth (prevents infinite loops)
   max_call_depth: 5
 
+  # ============================================================================
+  # Parallel Execution of A2A Calls
+  # ============================================================================
+  # When enabled, multiple sub-agent calls can run concurrently, significantly
+  # reducing response times for queries that require information from multiple agents.
+  #
+  # Example: A query to metrics_agent (2.5s) + logs_agent (1.8s) + alerts_agent (3.2s)
+  # - Sequential: ~7.5s total
+  # - Parallel:   ~3.2s total (max of individual times)
+  #
+  # Partial failures are handled gracefully - successful results are returned
+  # even if some sub-agents fail.
+  parallel_execution: false  # Enable parallel A2A execution (default: false)
+  max_concurrent_calls: 5    # Maximum concurrent A2A calls (default: 5)
+
   # Sub-agents: Remote ADK agents that this agent can delegate tasks to
   # These are integrated using remoteagent.NewA2A and appear as sub-agents
   # The LLM will automatically decide when to delegate to each sub-agent

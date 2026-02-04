@@ -120,6 +120,30 @@ var (
 		Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60},
 	}, []string{"sub_agent"})
 
+	// A2A parallel batch metrics
+	a2aParallelBatchTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "knowledge_agent_a2a_parallel_batches_total",
+		Help: "Total number of parallel A2A batch executions",
+	})
+
+	a2aParallelBatchSize = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_a2a_parallel_batch_size",
+		Help:    "Number of A2A calls per parallel batch",
+		Buckets: []float64{1, 2, 3, 4, 5, 7, 10},
+	})
+
+	a2aParallelBatchLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_a2a_parallel_batch_latency_seconds",
+		Help:    "Total latency for parallel A2A batch execution",
+		Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60, 120},
+	})
+
+	a2aParallelBatchSuccessRate = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "knowledge_agent_a2a_parallel_batch_success_rate",
+		Help:    "Success rate (0.0-1.0) for parallel A2A batches",
+		Buckets: []float64{0, 0.25, 0.5, 0.75, 1.0},
+	})
+
 	// Ingest metrics
 	ingestTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "knowledge_agent_ingest_total",
@@ -217,6 +241,20 @@ func recordA2ACallPrometheus(subAgent string, duration time.Duration, success bo
 		status = "error"
 	}
 	a2aCallsTotal.WithLabelValues(subAgent, status).Inc()
+}
+
+// recordA2AParallelBatchPrometheus records parallel A2A batch metrics to Prometheus
+func recordA2AParallelBatchPrometheus(batchSize int, successCount int, duration time.Duration) {
+	a2aParallelBatchTotal.Inc()
+	a2aParallelBatchSize.Observe(float64(batchSize))
+	a2aParallelBatchLatency.Observe(duration.Seconds())
+
+	// Calculate success rate (0.0 to 1.0)
+	successRate := 0.0
+	if batchSize > 0 {
+		successRate = float64(successCount) / float64(batchSize)
+	}
+	a2aParallelBatchSuccessRate.Observe(successRate)
 }
 
 // recordIngestPrometheus records ingest metrics to Prometheus

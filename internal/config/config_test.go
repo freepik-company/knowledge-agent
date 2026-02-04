@@ -36,6 +36,38 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestA2AConfig_ParallelExecution(t *testing.T) {
+	// Test that parallel execution config fields have correct defaults
+	cfg := &A2AConfig{}
+
+	// Default values should be false and 0
+	if cfg.ParallelExecution {
+		t.Error("ParallelExecution should default to false")
+	}
+	if cfg.MaxConcurrentCalls != 0 {
+		t.Errorf("MaxConcurrentCalls should default to 0, got: %d", cfg.MaxConcurrentCalls)
+	}
+
+	// Test with explicit values
+	cfg = &A2AConfig{
+		Enabled:            true,
+		SelfName:           "test-agent",
+		ParallelExecution:  true,
+		MaxConcurrentCalls: 10,
+		SubAgents: []A2ASubAgentConfig{
+			{Name: "agent1", Endpoint: "http://localhost:9000"},
+			{Name: "agent2", Endpoint: "http://localhost:9001"},
+		},
+	}
+
+	if !cfg.ParallelExecution {
+		t.Error("ParallelExecution should be true")
+	}
+	if cfg.MaxConcurrentCalls != 10 {
+		t.Errorf("MaxConcurrentCalls should be 10, got: %d", cfg.MaxConcurrentCalls)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
