@@ -534,6 +534,11 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		req.Header.Set("X-Slack-User-Id", event.User)
 	}
 
+	// Add user email for membership verification
+	if userEmail != "" {
+		req.Header.Set("X-User-Email", userEmail)
+	}
+
 	// Send request - context controls the timeout (5 min)
 	// No Client.Timeout to avoid conflicts with context cancellation
 	client := &http.Client{}
