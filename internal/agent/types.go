@@ -20,25 +20,11 @@ var (
 	RoleUser           = genai.RoleUser
 )
 
-// IngestRequest represents a thread ingestion request
-type IngestRequest struct {
-	SessionID string           `json:"session_id,omitempty"` // Optional: client-provided session ID (takes precedence over auto-generated)
-	ThreadTS  string           `json:"thread_ts"`
-	ChannelID string           `json:"channel_id"`
-	Messages  []map[string]any `json:"messages"`
-}
-
-// IngestResponse represents an ingestion response
-type IngestResponse struct {
-	Success       bool   `json:"success"`
-	Message       string `json:"message"`
-	MemoriesAdded int    `json:"memories_added"`
-}
-
 // QueryRequest represents a question/query request
 type QueryRequest struct {
-	SessionID    string           `json:"session_id,omitempty"` // Optional: client-provided session ID (takes precedence over auto-generated)
+	SessionID    string           `json:"session_id,omitempty"`     // Optional: client-provided session ID (takes precedence over auto-generated)
 	Question     string           `json:"question"`
+	Intent       string           `json:"intent,omitempty"`         // "query" (default) or "ingest" - determines behavior
 	ThreadTS     string           `json:"thread_ts,omitempty"`
 	ChannelID    string           `json:"channel_id,omitempty"`
 	Messages     []map[string]any `json:"messages,omitempty"`       // Current thread context

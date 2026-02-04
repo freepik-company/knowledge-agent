@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Script de prueba para el endpoint /api/ingest-thread
+# Script de prueba para ingesta de threads via /api/query con intent: ingest
 #
 # Uso:
 #   ./test_webhook.sh                    # Usa ejemplo incluido
@@ -16,10 +16,10 @@ NC='\033[0m' # No Color
 
 # Configuración
 AGENT_URL="${KNOWLEDGE_AGENT_URL:-http://localhost:8081}"
-ENDPOINT="${AGENT_URL}/api/ingest-thread"
+ENDPOINT="${AGENT_URL}/api/query"
 
 echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║       Knowledge Agent - Webhook Test                     ║${NC}"
+echo -e "${YELLOW}║       Knowledge Agent - Thread Ingest Test               ║${NC}"
 echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -63,15 +63,18 @@ echo "  • Channel: ${CHANNEL_ID}"
 echo "  • Messages: ${MSG_COUNT}"
 echo ""
 
+# Construir el payload con intent: ingest
+PAYLOAD=$(jq --arg q "Ingest this thread" '. + {question: $q, intent: "ingest"}' "$JSON_FILE")
+
 # Enviar request
-echo "🚀 Sending thread to Knowledge Agent..."
+echo "🚀 Sending thread to Knowledge Agent (intent: ingest)..."
 echo "   Endpoint: ${ENDPOINT}"
 echo ""
 
-RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+RESPONSE=$(echo "$PAYLOAD" | curl -s -w "\nHTTP_STATUS:%{http_code}" \
     -X POST "${ENDPOINT}" \
     -H "Content-Type: application/json" \
-    -d @"${JSON_FILE}")
+    -d @-)
 
 HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d: -f2)
 BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
@@ -83,15 +86,13 @@ echo ""
 # Verificar respuesta
 if [ "$HTTP_STATUS" -eq 200 ]; then
     SUCCESS=$(echo "$BODY" | jq -r '.success')
-    MEMORIES=$(echo "$BODY" | jq -r '.memories_added')
-    MESSAGE=$(echo "$BODY" | jq -r '.message')
+    ANSWER=$(echo "$BODY" | jq -r '.answer')
 
     if [ "$SUCCESS" = "true" ]; then
         echo -e "${GREEN}✅ SUCCESS!${NC}"
-        echo "   Memories added: ${MEMORIES}"
         echo ""
         echo "Agent Response:"
-        echo "${MESSAGE}" | fold -w 70 -s
+        echo "${ANSWER}" | fold -w 70 -s
         echo ""
 
         # Sugerencia de verificación
@@ -100,7 +101,7 @@ if [ "$HTTP_STATUS" -eq 200 ]; then
         echo "   SELECT COUNT(*) FROM memories WHERE app_name='knowledge-agent';"
     else
         echo -e "${RED}❌ FAILED${NC}"
-        echo "   Message: ${MESSAGE}"
+        echo "   Message: ${ANSWER}"
         exit 1
     fi
 else

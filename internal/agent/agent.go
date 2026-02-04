@@ -490,225 +490,6 @@ func (a *Agent) GetKeycloakClient() *keycloak.Client {
 	return a.keycloakClient
 }
 
-// IngestThread handles thread ingestion using ADK agent
-func (a *Agent) IngestThread(ctx context.Context, req IngestRequest) (*IngestResponse, error) {
-	log := logger.Get()
-	startTime := time.Now()
-
-	// Extract caller information from context
-	callerID := ctxutil.CallerID(ctx)
-	slackUserID := ctxutil.SlackUserID(ctx)
-
-	// Start Langfuse ingest trace
-	ingestTrace := a.langfuseTracer.StartIngestTrace(ctx, req.ThreadTS, req.ChannelID, len(req.Messages), map[string]any{
-		"caller_id":     callerID,
-		"slack_user_id": slackUserID,
-	})
-
-	// Update context holder for permission checks
-	a.contextHolder.SetContext(ctx)
-
-	// Check if user has save permissions and log it
-	canSave, permissionReason := a.permissionChecker.CanSaveToMemory(ctx)
-	isEmpty := a.permissionChecker.IsEmpty()
-
-	logFields := []any{
-		"caller_id", callerID,
-		"thread_ts", req.ThreadTS,
-		"channel_id", req.ChannelID,
-		"message_count", len(req.Messages),
-	}
-	if slackUserID != "" {
-		logFields = append(logFields, "slack_user_id", slackUserID)
-	}
-	if !isEmpty {
-		logFields = append(logFields, "can_save_to_memory", canSave, "permission_reason", permissionReason)
-	}
-
-	log.Infow("Starting thread ingestion via ADK", logFields...)
-
-	// Resolve session ID (client-provided or auto-generated from thread context)
-	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
-	// For ingestion, add prefix to distinguish from query sessions
-	if req.SessionID == "" {
-		sessionID = "ingest-" + sessionID
-	}
-
-	// Determine user_id based on knowledge_scope configuration
-	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
-
-	// Create new session
-	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		log.Warnw("Failed to create session (may already exist)", "error", err)
-	}
-
-	// Build thread context for the agent
-	threadContext := a.buildThreadContext(req)
-
-	// Get current date for temporal context
-	currentDate := time.Now().Format("Monday, January 2, 2006")
-
-	// Build permission context for LLM if permissions are configured
-	permissionContext := ""
-	if !isEmpty {
-		permissionContext = fmt.Sprintf("\n**Current Request Context**:\n- Caller ID: %s\n- Slack User ID: %s\n- Can Save to Memory: %t\n", callerID, slackUserID, canSave)
-	}
-
-	// Create instruction for the agent
-	instruction := fmt.Sprintf(`You are receiving a conversation thread to ingest into the knowledge base.
-
-**Current Date**: %s%s
-
-Thread Information:
-- Thread ID: %s
-- Channel: %s
-- Number of messages: %d
-
-Here is the complete conversation thread:
-
-%s
-
-Your task:
-1. Analyze this conversation carefully
-2. Identify all important information, decisions, solutions, or insights
-3. Use the save_to_memory tool to store each piece of valuable information
-4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
-5. After saving everything, provide a summary of what you saved
-
-Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), threadContext)
-
-	// Create user message with the thread content
-	userMsg := genai.NewContentFromText(instruction, genai.RoleUser)
-
-	// Run agent to process and save the thread
-	var responseText string
-	var memoriesSaved int
-	var ingestErr error
-	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
-
-	log.Info("Running agent for thread ingestion")
-	eventCount := 0
-	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
-		if err != nil {
-			log.Errorw("Runner error during ingestion", "error", err)
-			ingestErr = fmt.Errorf("ingestion failed: %w", err)
-			break
-		}
-
-		eventCount++
-		log.Debugw("Ingestion event received",
-			"event_number", eventCount,
-			"has_content", event.Content != nil,
-			"error_code", event.ErrorCode,
-		)
-
-		if event.ErrorCode != "" {
-			log.Errorw("Event error during ingestion",
-				"error_code", event.ErrorCode,
-				"error_message", event.ErrorMessage,
-			)
-			ingestErr = fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
-			break
-		}
-
-		// Process event content
-		if event.Content != nil {
-			log.Debugw("Processing ingestion event content",
-				"parts_count", len(event.Content.Parts),
-				"role", event.Content.Role,
-			)
-
-			// Collect response text
-			if len(event.Content.Parts) > 0 && event.Content.Parts[0].Text != "" {
-				responseText += event.Content.Parts[0].Text
-			}
-
-			// Count and log memory saves with tool metrics
-			for _, part := range event.Content.Parts {
-				if part.FunctionCall != nil {
-					toolName := part.FunctionCall.Name
-					toolStartTimes[toolName] = time.Now()
-
-					log.Infow("Agent calling tool during ingestion",
-						"tool", toolName,
-						"trace_id", ingestTrace.TraceID,
-					)
-				}
-				if part.FunctionResponse != nil {
-					toolName := part.FunctionResponse.Name
-					var duration time.Duration
-					if start, ok := toolStartTimes[toolName]; ok {
-						duration = time.Since(start)
-						delete(toolStartTimes, toolName)
-					}
-
-					success := !containsError(part.FunctionResponse.Response)
-
-					log.Infow("Tool response during ingestion",
-						"tool", toolName,
-						"duration_ms", duration.Milliseconds(),
-						"success", success,
-					)
-
-					// Record tool metrics
-					observability.GetMetrics().RecordToolCall(toolName, duration, success)
-
-					// Track memory saves in Langfuse trace
-					if toolName == "save_to_memory" && success {
-						memoriesSaved++
-						// Extract content for trace if available
-						contentPreview := ""
-						if part.FunctionResponse.Response != nil {
-							if content, ok := part.FunctionResponse.Response["content"].(string); ok {
-								contentPreview = content
-							}
-						}
-						ingestTrace.RecordMemorySave(contentPreview)
-						log.Debugw("Memory save detected",
-							"total_saves", memoriesSaved,
-						)
-					}
-				}
-			}
-		}
-	}
-
-	// Record ingest metrics
-	duration := time.Since(startTime)
-	observability.GetMetrics().RecordIngest(duration, ingestErr)
-
-	// End Langfuse ingest trace
-	ingestTrace.End(ingestErr == nil, responseText)
-
-	// Return error if ingestion failed
-	if ingestErr != nil {
-		return nil, ingestErr
-	}
-
-	completionLogFields := []any{
-		"caller_id", callerID,
-		"memories_saved", memoriesSaved,
-		"total_events", eventCount,
-		"response_length", len(responseText),
-		"duration_ms", duration.Milliseconds(),
-	}
-	if slackUserID != "" {
-		completionLogFields = append(completionLogFields, "slack_user_id", slackUserID)
-	}
-	log.Infow("Thread ingestion completed", completionLogFields...)
-
-	return &IngestResponse{
-		Success:       true,
-		Message:       responseText,
-		MemoriesAdded: memoriesSaved,
-	}, nil
-}
-
 // preSearchMemory executes search_memory programmatically before the LLM loop.
 // This ensures the agent always has relevant memory context before deciding what to do.
 // NOTE: Uses memoryService directly (not permission-wrapped) because reads
@@ -790,10 +571,15 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 	return resultsText
 }
 
-// Query handles question answering using the knowledge base
+// Query handles question answering and thread ingestion using the knowledge base.
+// When req.Intent is "ingest", it processes threads for knowledge extraction.
+// Otherwise (default), it handles question answering.
 func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
 	log := logger.Get()
 	startTime := time.Now()
+
+	// Determine if this is an ingest request
+	isIngest := req.Intent == "ingest"
 
 	// Extract caller information from context
 	callerID := ctxutil.CallerID(ctx)
@@ -801,6 +587,10 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 	// Resolve session ID for Langfuse grouping (client-provided or auto-generated from thread context)
 	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
+	// For ingestion, add prefix to distinguish from query sessions
+	if isIngest && req.SessionID == "" {
+		sessionID = "ingest-" + sessionID
+	}
 
 	// Start Langfuse trace with session ID for grouping in Sessions view
 	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, sessionID, map[string]any{
@@ -811,6 +601,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		"user_name":      req.UserName,
 		"user_real_name": req.UserRealName,
 		"session_id":     sessionID,
+		"intent":         req.Intent,
 	})
 	defer func() {
 		// Finalize trace at the end
@@ -829,6 +620,9 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		"question", req.Question,
 		"channel_id", req.ChannelID,
 	}
+	if isIngest {
+		logFields = append(logFields, "intent", "ingest", "message_count", len(req.Messages))
+	}
 	if req.UserName != "" {
 		logFields = append(logFields, "user_name", req.UserName)
 	}
@@ -839,11 +633,19 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		logFields = append(logFields, "can_save_to_memory", canSave, "permission_reason", permissionReason)
 	}
 
-	log.Infow("Processing query", logFields...)
+	if isIngest {
+		log.Infow("Processing ingest request", logFields...)
+	} else {
+		log.Infow("Processing query", logFields...)
+	}
 
-	// Record query metrics
+	// Record query metrics (also used for ingest)
 	defer func() {
-		observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
+		if isIngest {
+			observability.GetMetrics().RecordIngest(time.Since(startTime), nil)
+		} else {
+			observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
+		}
 	}()
 
 	// Determine user_id based on knowledge_scope configuration
@@ -871,8 +673,8 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		}
 	}
 
-	// Summarize context if it exceeds token threshold
-	if a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
+	// Summarize context if it exceeds token threshold (skip for ingest to preserve full context)
+	if !isIngest && a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
 		summarizedContext, err := a.contextSummarizer.Summarize(ctx, contextStr)
 		if err != nil {
 			log.Warnw("Context summarization failed, using original", "error", err)
@@ -881,9 +683,12 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		}
 	}
 
-	// Pre-search memory: always execute search_memory BEFORE the LLM loop
-	// This ensures the agent has relevant memory context before deciding what to do
-	preSearchResults := a.preSearchMemory(ctx, req.Question, userID)
+	// Pre-search memory: execute search_memory BEFORE the LLM loop for queries only
+	// Skip pre-search for ingest requests as they focus on saving, not retrieving
+	var preSearchResults string
+	if !isIngest {
+		preSearchResults = a.preSearchMemory(ctx, req.Question, userID)
+	}
 
 	// Get current date for temporal context
 	currentDate := time.Now().Format("Monday, January 2, 2006")
@@ -904,7 +709,30 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 	// Create instruction for the agent
 	var instruction string
-	if hasImages {
+	if isIngest {
+		// Ingest instruction: focus on extracting and saving knowledge
+		instruction = fmt.Sprintf(`You are receiving a conversation thread to ingest into the knowledge base.
+
+**Current Date**: %s%s
+
+Thread Information:
+- Thread ID: %s
+- Channel: %s
+- Number of messages: %d
+
+Here is the complete conversation thread:
+
+%s
+
+Your task:
+1. Analyze this conversation carefully
+2. Identify all important information, decisions, solutions, or insights
+3. Use the save_to_memory tool to store each piece of valuable information
+4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
+5. After saving everything, provide a summary of what you saved
+
+Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
+	} else if hasImages {
 		// Special instruction when images are present
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
 
@@ -996,7 +824,11 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	var currentGeneration *traces.Observation
 	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
 
-	log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
+	if isIngest {
+		log.Infow("Running agent for ingest", "user_id", userID, "session_id", sessionID)
+	} else {
+		log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
+	}
 
 	// Add QueryTrace to context for A2A interceptors to use
 	ctx = observability.ContextWithQueryTrace(ctx, trace)

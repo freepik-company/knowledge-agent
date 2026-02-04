@@ -69,8 +69,7 @@ Knowledge Agent is a unified binary that can run in three modes:
 │    │  └─ /.well-known/agent-card.json (A2A discovery)              │      │
 │    ├────────────────────────────────────────────────────────────────┤      │
 │    │  PROTECTED ENDPOINTS (Auth + Rate Limit + Loop Prevention)     │      │
-│    │  ├─ /api/query               (question answering)              │      │
-│    │  ├─ /api/ingest-thread       (thread ingestion)                │      │
+│    │  ├─ /api/query               (question answering & ingestion)  │      │
 │    │  └─ /a2a/invoke              (A2A JSON-RPC)                    │      │
 │    └────────────────────────────────────────────────────────────────┘      │
 │                                    │                                        │
@@ -379,8 +378,7 @@ sendToAgent()       → Forward to Agent Server with context
 | `/health`, `/ready`, `/live` | Public | Health checks |
 | `/metrics` | Public | Prometheus metrics |
 | `/.well-known/agent-card.json` | Public | A2A agent discovery |
-| `/api/query` | Protected | Query the knowledge base |
-| `/api/ingest-thread` | Protected | Ingest a thread |
+| `/api/query` | Protected | Query knowledge base or ingest threads (via `intent` field) |
 | `/a2a/invoke` | Protected | A2A JSON-RPC endpoint |
 
 ### 3. ADK Agent (`internal/agent/agent.go`)

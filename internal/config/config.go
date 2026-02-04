@@ -155,13 +155,13 @@ type A2AConfig struct {
 
 // KeycloakConfig holds Keycloak integration configuration for user identity propagation
 type KeycloakConfig struct {
-	Enabled         bool   `yaml:"enabled" mapstructure:"enabled" envconfig:"KEYCLOAK_ENABLED" default:"false"`       // Enable Keycloak integration
-	ServerURL       string `yaml:"server_url" mapstructure:"server_url" envconfig:"KEYCLOAK_SERVER_URL"`              // Keycloak server URL (e.g., https://keycloak.example.com)
-	Realm           string `yaml:"realm" mapstructure:"realm" envconfig:"KEYCLOAK_REALM"`                             // Keycloak realm
-	ClientID        string `yaml:"client_id" mapstructure:"client_id" envconfig:"KEYCLOAK_CLIENT_ID"`                 // Service account client ID
-	ClientSecret    string `yaml:"client_secret" mapstructure:"client_secret" envconfig:"KEYCLOAK_CLIENT_SECRET"`     // Service account client secret
-	UserClaimName   string `yaml:"user_claim_name" mapstructure:"user_claim_name" default:"X-User-Email"`             // Header name for propagating user email to sub-agents
-	GroupsClaimPath string `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"`               // JWT claim path for groups (e.g., "groups", "realm_access.roles")
+	Enabled         bool   `yaml:"enabled" mapstructure:"enabled" envconfig:"KEYCLOAK_ENABLED" default:"false"`   // Enable Keycloak integration
+	ServerURL       string `yaml:"server_url" mapstructure:"server_url" envconfig:"KEYCLOAK_SERVER_URL"`          // Keycloak server URL (e.g., https://keycloak.example.com)
+	Realm           string `yaml:"realm" mapstructure:"realm" envconfig:"KEYCLOAK_REALM"`                         // Keycloak realm
+	ClientID        string `yaml:"client_id" mapstructure:"client_id" envconfig:"KEYCLOAK_CLIENT_ID"`             // Service account client ID
+	ClientSecret    string `yaml:"client_secret" mapstructure:"client_secret" envconfig:"KEYCLOAK_CLIENT_SECRET"` // Service account client secret
+	UserClaimName   string `yaml:"user_claim_name" mapstructure:"user_claim_name" default:"X-User-Email"`         // Header name for propagating user email to sub-agents
+	GroupsClaimPath string `yaml:"groups_claim_path" mapstructure:"groups_claim_path" default:"groups"`           // JWT claim path for groups (e.g., "groups", "realm_access.roles")
 }
 
 // A2AQueryExtractorConfig holds configuration for the A2A context cleaner interceptor

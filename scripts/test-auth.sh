@@ -143,14 +143,16 @@ else
 fi
 echo ""
 
-# Test 6: Ingest endpoint with valid auth
+# Test 6: Ingest with valid auth (using intent: ingest)
 echo "======================================"
-echo "Test 6: Ingest Thread with Valid API Key"
+echo "Test 6: Ingest Thread with Valid API Key (intent: ingest)"
 echo "======================================"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$AGENT_URL/api/ingest-thread" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$AGENT_URL/api/query" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $VALID_API_KEY" \
   -d '{
+    "question": "Ingest this thread",
+    "intent": "ingest",
     "thread_ts": "test-thread-123",
     "channel_id": "test-channel",
     "messages": [

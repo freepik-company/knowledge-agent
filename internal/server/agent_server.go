@@ -26,7 +26,6 @@ const MaxRequestBodySize = 1 << 20 // 1 MB
 
 // AgentInterface defines the interface for the agent
 type AgentInterface interface {
-	IngestThread(ctx context.Context, req agent.IngestRequest) (*agent.IngestResponse, error)
 	Query(ctx context.Context, req agent.QueryRequest) (*agent.QueryResponse, error)
 	Close() error
 }
@@ -135,8 +134,6 @@ func (s *AgentServer) registerRoutes() {
 	authMiddleware := AuthMiddlewareWithKeycloak(s.config, s.keycloakClient)
 
 	// API endpoints (protected with rate limiting, loop prevention, and authentication)
-	s.mux.Handle("/api/ingest-thread",
-		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(http.HandlerFunc(s.handleIngestThread)))))
 	s.mux.Handle("/api/query",
 		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(http.HandlerFunc(s.handleQuery)))))
 }
@@ -152,81 +149,6 @@ func (s *AgentServer) Close() error {
 // Handler returns the HTTP handler
 func (s *AgentServer) Handler() http.Handler {
 	return s.mux
-}
-
-// handleIngestThread handles thread ingestion requests
-func (s *AgentServer) handleIngestThread(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-
-	if r.Method != http.MethodPost {
-		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	callerID := ctxutil.CallerID(r.Context())
-	log := logger.Get()
-
-	// Limit request body size to prevent DoS
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
-
-	var req agent.IngestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// Check if error is due to body size limit
-		if err.Error() == "http: request body too large" {
-			log.Warnw("Request body too large", "caller", callerID, "max_size", MaxRequestBodySize)
-			jsonError(w, "Request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		log.Warnw("Invalid ingest request body", "error", err, "caller", callerID)
-		jsonError(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Validate required fields
-	if req.ThreadTS == "" || req.ChannelID == "" {
-		log.Warnw("Missing required fields", "caller", callerID)
-		jsonError(w, "thread_ts and channel_id are required", http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Messages) == 0 {
-		log.Warnw("Empty messages array", "caller", callerID)
-		jsonError(w, "messages array cannot be empty", http.StatusBadRequest)
-		return
-	}
-
-	log.Infow("IngestThread request received",
-		"caller", callerID,
-		"thread_ts", req.ThreadTS,
-		"channel_id", req.ChannelID,
-		"message_count", len(req.Messages),
-	)
-
-	ctx := r.Context()
-	resp, err := s.agent.IngestThread(ctx, req)
-	if err != nil {
-		log.Errorw("Ingest error",
-			"error", err,
-			"caller", callerID,
-			"duration_ms", time.Since(startTime).Milliseconds(),
-		)
-		jsonError(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	log.Infow("IngestThread completed",
-		"caller", callerID,
-		"thread_ts", req.ThreadTS,
-		"channel_id", req.ChannelID,
-		"duration_ms", time.Since(startTime).Milliseconds(),
-		"success", true,
-	)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Errorw("Failed to encode response", "error", err)
-	}
 }
 
 // handleQuery handles query requests

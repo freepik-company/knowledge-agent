@@ -28,8 +28,7 @@ Knowledge Agent is an intelligent AI assistant that helps teams capture and retr
         ┌─────────────────┴─────────────────┐
    Port 8081 (Agent)                   Port 8080 (Slack)
    /api/query (auth)                   /slack/events
-   /api/ingest-thread (auth)           Socket mode listener
-   /a2a/invoke (auth)
+   /a2a/invoke (auth)                  Socket mode listener
    /.well-known/agent-card (public)
    /health, /metrics, /ready, /live
                           │
@@ -67,7 +66,6 @@ make dev-slack          # Slack Bridge only (:8080)
 make test               # Unit tests
 make integration-test   # Integration tests
 make test-query         # Test query endpoint
-make test-webhook       # Test thread ingestion
 ```
 
 ### Database Operations

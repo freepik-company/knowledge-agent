@@ -66,7 +66,7 @@ class SlackToKnowledgeAgent:
 
     def send_to_knowledge_agent(self, thread_data: dict) -> dict:
         """
-        Enviar thread al Knowledge Agent
+        Enviar thread al Knowledge Agent usando intent: ingest
 
         Args:
             thread_data: Dict con thread_ts, channel_id, y messages
@@ -74,10 +74,17 @@ class SlackToKnowledgeAgent:
         Returns:
             Respuesta del Knowledge Agent
         """
-        endpoint = f"{self.knowledge_agent_url}/api/ingest-thread"
+        endpoint = f"{self.knowledge_agent_url}/api/query"
+
+        # Use the unified /api/query endpoint with intent: "ingest"
+        payload = {
+            "question": "Ingest this thread",
+            "intent": "ingest",
+            **thread_data
+        }
 
         try:
-            response = requests.post(endpoint, json=thread_data, timeout=30)
+            response = requests.post(endpoint, json=payload, timeout=30)
             response.raise_for_status()
             return response.json()
 

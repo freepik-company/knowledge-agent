@@ -10,7 +10,6 @@ Complete REST API documentation for Knowledge Agent.
   - [Health Check](#get-health)
   - [Metrics](#get-metrics)
   - [Query](#post-apiquery)
-  - [Ingest Thread](#post-apiingest-thread)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
 - [Examples](#examples)
@@ -24,7 +23,7 @@ Knowledge Agent exposes APIs on two ports:
 ### Port 8081 - Custom HTTP API
 
 - **Public endpoints** (no authentication): `/health`, `/metrics`, `/.well-known/agent-card.json`
-- **Protected endpoints** (authentication required): `/api/query`, `/api/ingest-thread`, `/a2a/invoke`
+- **Protected endpoints** (authentication required): `/api/query`, `/a2a/invoke`
 
 **Base URL**: `http://localhost:8081` (default)
 
@@ -152,7 +151,7 @@ curl http://localhost:8081/metrics
 
 ### POST /api/query
 
-Query the knowledge base with natural language questions.
+Query the knowledge base with natural language questions or ingest threads for knowledge extraction.
 
 **Authentication**: Required
 
@@ -172,6 +171,7 @@ Query the knowledge base with natural language questions.
 ```json
 {
   "question": "What is our deployment process?",
+  "intent": "query",
   "channel_id": "C01ABC123",
   "thread_ts": "1234567890.123456",
   "messages": [
@@ -199,7 +199,8 @@ Query the knowledge base with natural language questions.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `question` | string | **Yes** | User's question |
+| `question` | string | **Yes** | User's question or instruction |
+| `intent` | string | No | `"query"` (default) or `"ingest"` - determines behavior |
 | `session_id` | string | No | Custom session ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
 | `channel_id` | string | No | Slack channel ID (for context) |
 | `thread_ts` | string | No | Thread timestamp (for threading) |
@@ -208,6 +209,13 @@ Query the knowledge base with natural language questions.
 | `user_real_name` | string | No | Real name (e.g., "John Doe") |
 | `slack_user_id` | string | No | Slack user ID (for permissions) |
 | `images` | array | No | Base64-encoded images for multimodal analysis |
+
+#### Intent Modes
+
+| Intent | Behavior |
+|--------|----------|
+| `query` (default) | Queries the knowledge base, performs pre-search, returns answers |
+| `ingest` | Analyzes thread messages and saves valuable information to memory |
 
 **Messages array schema**:
 ```json
@@ -339,132 +347,6 @@ curl -X POST http://localhost:8081/api/query \
       }
     ]
   }"
-```
-
----
-
-### POST /api/ingest-thread
-
-Ingest a Slack thread into the knowledge base.
-
-**Authentication**: Required
-
-**Rate Limit**: 10 requests/second per IP, burst of 20
-
-#### Request Headers
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `Content-Type` | Yes | Must be `application/json` |
-| `X-Internal-Token` | Conditional | Internal authentication token |
-| `X-API-Key` | Conditional | API key for A2A access |
-| `X-Slack-User-Id` | Optional | Slack user ID for permissions |
-
-#### Request Body
-
-```json
-{
-  "thread_ts": "1234567890.123456",
-  "channel_id": "C01ABC123",
-  "messages": [
-    {
-      "user": "U01USER123",
-      "text": "We deploy using GitHub Actions",
-      "ts": "1234567890.123456",
-      "type": "message"
-    },
-    {
-      "user": "U02USER456",
-      "text": "The workflow is in .github/workflows/deploy.yml",
-      "ts": "1234567891.234567",
-      "type": "message"
-    }
-  ]
-}
-```
-
-#### Request Schema
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `session_id` | string | No | Custom session ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
-| `thread_ts` | string | **Yes** | Thread timestamp (unique identifier) |
-| `channel_id` | string | **Yes** | Slack channel ID |
-| `messages` | array | **Yes** | Thread messages (non-empty) |
-
-**Messages array schema**: Same as `/api/query`
-
-#### Response Body
-
-**Success** (`200 OK`):
-```json
-{
-  "success": true,
-  "message": "Thread ingested successfully",
-  "memories_saved": 3
-}
-```
-
-**Error** (`400 Bad Request`):
-```json
-{
-  "error": "thread_ts and channel_id are required"
-}
-```
-
-**Error** (`401 Unauthorized`):
-```json
-{
-  "error": "Authentication required"
-}
-```
-
-**Error** (`429 Too Many Requests`):
-```json
-{
-  "error": "Rate limit exceeded. Please try again later."
-}
-```
-
-**Error** (`500 Internal Server Error`):
-```json
-{
-  "error": "Internal server error"
-}
-```
-
-#### Response Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether ingestion succeeded |
-| `message` | string | Success/error message |
-| `memories_saved` | integer | Number of memories saved (optional) |
-
-#### Example
-
-```bash
-curl -X POST http://localhost:8081/api/ingest-thread \
-  -H "Content-Type: application/json" \
-  -H "X-Internal-Token: your-token" \
-  -d '{
-    "thread_ts": "1234567890.123456",
-    "channel_id": "C01ABC123",
-    "messages": [
-      {
-        "user": "U01USER123",
-        "text": "Our API uses JWT authentication",
-        "ts": "1234567890.123456",
-        "type": "message"
-      },
-      {
-        "user": "U02USER456",
-        "text": "Token expiry is 24 hours",
-        "ts": "1234567891.234567",
-        "type": "message"
-      }
-    ]
-  }'
 ```
 
 ---
@@ -605,7 +487,7 @@ All endpoints return JSON error responses with appropriate HTTP status codes.
 
 ## Rate Limiting
 
-Protected endpoints (`/api/query`, `/api/ingest-thread`) are rate-limited per IP address:
+Protected endpoint (`/api/query`) is rate-limited per IP address:
 
 - **Rate**: 10 requests per second
 - **Burst**: 20 requests (token bucket)
@@ -659,12 +541,14 @@ curl -s -X POST "$AGENT_URL/api/query" \
     "question": "What is our deployment process?"
   }' | jq .
 
-# 4. Ingest thread
+# 4. Ingest thread (using intent: "ingest")
 echo -e "\nIngesting thread..."
-curl -s -X POST "$AGENT_URL/api/ingest-thread" \
+curl -s -X POST "$AGENT_URL/api/query" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
+    "question": "Ingest this thread",
+    "intent": "ingest",
     "thread_ts": "1234567890.123456",
     "channel_id": "C01ABC123",
     "messages": [
@@ -740,14 +624,16 @@ class KnowledgeAgentClient:
         return resp.json()
 
     def ingest_thread(self, thread_ts: str, channel_id: str, messages: list) -> dict:
-        """Ingest a thread into knowledge base"""
+        """Ingest a thread into knowledge base using intent: ingest"""
         payload = {
+            'question': 'Ingest this thread',
+            'intent': 'ingest',
             'thread_ts': thread_ts,
             'channel_id': channel_id,
             'messages': messages
         }
         resp = requests.post(
-            f'{self.base_url}/api/ingest-thread',
+            f'{self.base_url}/api/query',
             headers=self.headers,
             json=payload
         )
