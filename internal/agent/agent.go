@@ -600,6 +600,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		"thread_ts":      req.ThreadTS,
 		"user_name":      req.UserName,
 		"user_real_name": req.UserRealName,
+		"user_email":     req.UserEmail, // For Langfuse UserID (preferred over user_name)
 		"session_id":     sessionID,
 		"intent":         req.Intent,
 	})

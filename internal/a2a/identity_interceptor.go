@@ -13,6 +13,7 @@ import (
 
 // Standard headers for identity propagation to sub-agents
 const (
+	HeaderUserID        = "X-User-ID"       // User identity for Langfuse (email preferred)
 	HeaderUserEmail     = "X-User-Email"    // User's email for Keycloak identity
 	HeaderUserGroups    = "X-User-Groups"   // User's groups as JSON array (for permission checking)
 	HeaderSlackUserID   = "X-Slack-User-Id" // Original Slack user ID
@@ -62,6 +63,8 @@ func (ii *IdentityInterceptor) Before(ctx context.Context, req *a2aclient.Reques
 	// Propagate user email
 	if userEmail != "" {
 		req.Meta[HeaderUserEmail] = []string{userEmail}
+		// Also send as X-User-ID for Langfuse compatibility (fc-logs-agent reads this)
+		req.Meta[HeaderUserID] = []string{userEmail}
 	}
 
 	// Propagate user groups as JSON array (for permission checking in sub-agents)

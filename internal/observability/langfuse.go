@@ -94,8 +94,10 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 		trace.SessionID = sessionID
 	}
 
-	// Extract user_name from metadata for UserID
-	if userName, ok := metadata["user_name"].(string); ok && userName != "" {
+	// Extract user identity for UserID - prefer email over username
+	if userEmail, ok := metadata["user_email"].(string); ok && userEmail != "" {
+		trace.UserID = userEmail
+	} else if userName, ok := metadata["user_name"].(string); ok && userName != "" {
 		trace.UserID = userName
 	}
 
@@ -360,8 +362,10 @@ func (t *LangfuseTracer) StartIngestTrace(ctx context.Context, threadTS, channel
 	trace.Tags = []string{"ingest", "knowledge-agent"}
 	trace.Metadata = metadata
 
-	// Extract user_name from metadata for UserID
-	if userName, ok := metadata["user_name"].(string); ok && userName != "" {
+	// Extract user identity for UserID - prefer email over username
+	if userEmail, ok := metadata["user_email"].(string); ok && userEmail != "" {
+		trace.UserID = userEmail
+	} else if userName, ok := metadata["user_name"].(string); ok && userName != "" {
 		trace.UserID = userName
 	}
 
