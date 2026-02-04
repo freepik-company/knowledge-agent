@@ -19,8 +19,7 @@ const (
 	HeaderSlackUserID   = "X-Slack-User-Id" // Original Slack user ID
 	HeaderCallerID      = "X-Caller-Id"     // Caller identifier (for logging/permissions)
 	HeaderSessionID     = "X-Session-Id"    // Session ID for Langfuse trace correlation
-	HeaderAuthorization = "Authorization"   // JWT Bearer token from Keycloak (for A2A protocol)
-	HeaderIdentityToken = "X-Identity-Token" // JWT token for identity (REST protocol, avoids auth conflicts)
+	HeaderAuthorization = "Authorization" // JWT Bearer token from Keycloak
 )
 
 // IdentityInterceptor propagates user identity to A2A sub-agent requests
@@ -95,9 +94,9 @@ func (ii *IdentityInterceptor) Before(ctx context.Context, req *a2aclient.Reques
 			)
 			// Continue without token - don't fail the request
 		} else if token != "" {
-			req.Meta[HeaderIdentityToken] = []string{token}
+			req.Meta[HeaderAuthorization] = []string{"Bearer " + token}
 
-			// Add extra headers from Keycloak (e.g., custom user claim)
+			// Add extra headers from Keycloak (e.g., custom user claim for fallback)
 			for k, v := range extraHeaders {
 				req.Meta[k] = []string{v}
 			}
