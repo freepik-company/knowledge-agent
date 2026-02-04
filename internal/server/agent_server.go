@@ -13,6 +13,7 @@ import (
 
 	"knowledge-agent/internal/a2a"
 	"knowledge-agent/internal/agent"
+	"knowledge-agent/internal/auth/keycloak"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
@@ -43,15 +44,23 @@ type AgentServer struct {
 	rateLimiter    *RateLimiter
 	a2aHandler     *A2AHandler
 	readinessState *ReadinessState
+	keycloakClient *keycloak.Client
 }
 
 // NewAgentServer creates a new HTTP server for the agent service
 func NewAgentServer(agnt AgentInterface, cfg *config.Config) *AgentServer {
+	return NewAgentServerWithKeycloak(agnt, cfg, nil)
+}
+
+// NewAgentServerWithKeycloak creates a new HTTP server with Keycloak integration
+// for looking up user groups when not available from JWT
+func NewAgentServerWithKeycloak(agnt AgentInterface, cfg *config.Config, keycloakClient *keycloak.Client) *AgentServer {
 	s := &AgentServer{
 		agent:          agnt,
 		config:         cfg,
 		mux:            http.NewServeMux(),
 		readinessState: NewReadinessState(),
+		keycloakClient: keycloakClient,
 	}
 
 	// Register routes
@@ -91,7 +100,7 @@ func (s *AgentServer) SetupA2A(llmAgent adkagent.Agent, sessionSvc session.Servi
 
 	// A2A invoke is PROTECTED (with auth middleware)
 	loopPreventionMiddleware := a2a.LoopPreventionMiddleware(&s.config.A2A)
-	authMiddleware := AuthMiddleware(s.config)
+	authMiddleware := AuthMiddlewareWithKeycloak(s.config, s.keycloakClient)
 
 	s.mux.Handle("/a2a/invoke",
 		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(a2aHandler.InvokeHandler()))))
@@ -121,8 +130,9 @@ func (s *AgentServer) registerRoutes() {
 	// 1. Rate limiting (first, to prevent DoS)
 	// 2. A2A loop prevention (before auth, to fail fast on loops)
 	// 3. Authentication (last, to identify caller)
+	// Note: keycloakClient enables group lookup from Keycloak when user has email but no JWT groups
 	loopPreventionMiddleware := a2a.LoopPreventionMiddleware(&s.config.A2A)
-	authMiddleware := AuthMiddleware(s.config)
+	authMiddleware := AuthMiddlewareWithKeycloak(s.config, s.keycloakClient)
 
 	// API endpoints (protected with rate limiting, loop prevention, and authentication)
 	s.mux.Handle("/api/ingest-thread",

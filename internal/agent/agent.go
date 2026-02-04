@@ -484,6 +484,12 @@ func (a *Agent) GetSessionService() *sessionredis.RedisSessionService {
 	return a.sessionService
 }
 
+// GetKeycloakClient returns the Keycloak client for server middleware
+// Returns nil if Keycloak is disabled
+func (a *Agent) GetKeycloakClient() *keycloak.Client {
+	return a.keycloakClient
+}
+
 // IngestThread handles thread ingestion using ADK agent
 func (a *Agent) IngestThread(ctx context.Context, req IngestRequest) (*IngestResponse, error) {
 	log := logger.Get()

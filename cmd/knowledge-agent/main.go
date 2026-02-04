@@ -95,8 +95,8 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 	}
 	// Agent will be closed explicitly in shutdown sequence (don't defer)
 
-	// Create HTTP server with handlers
-	agentServer := server.NewAgentServer(agentInstance, cfg)
+	// Create HTTP server with handlers (pass Keycloak client for group lookup)
+	agentServer := server.NewAgentServerWithKeycloak(agentInstance, cfg, agentInstance.GetKeycloakClient())
 
 	// Setup A2A endpoints if enabled
 	if cfg.A2A.Enabled {
@@ -301,8 +301,8 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 	}
 	// Agent will be closed explicitly in shutdown sequence (don't defer)
 
-	// Create Agent HTTP server
-	agentServer := server.NewAgentServer(agentInstance, cfg)
+	// Create Agent HTTP server (pass Keycloak client for group lookup)
+	agentServer := server.NewAgentServerWithKeycloak(agentInstance, cfg, agentInstance.GetKeycloakClient())
 
 	// Setup A2A endpoints if enabled
 	if cfg.A2A.Enabled {

@@ -35,11 +35,21 @@ func jsonError(w http.ResponseWriter, message string, statusCode int) {
 // - Groups are used for permission checking (allowed_groups in config)
 // - The JWT is NOT validated cryptographically (assumes API Gateway or Keycloak already validated)
 //
+// Keycloak groups lookup:
+// - When keycloakClient is provided and user has email but no groups, lookup groups from Keycloak
+// - This enables group-based permissions for Slack users (who don't have JWT)
+//
 // Security notes:
 // - X-Slack-User-Id header is ONLY accepted from internal token auth (Slack Bridge)
 // - External API key callers CANNOT spoof Slack user identity
 // - Groups from JWT are trusted (should be validated by upstream API Gateway)
 func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+	return AuthMiddlewareWithKeycloak(cfg, nil)
+}
+
+// AuthMiddlewareWithKeycloak is like AuthMiddleware but accepts a Keycloak client
+// for looking up user groups when not available from JWT
+func AuthMiddlewareWithKeycloak(cfg *config.Config, keycloakClient *keycloak.Client) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			log := logger.Get()
@@ -89,19 +99,46 @@ func AuthMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 							ctx = context.WithValue(ctx, ctxutil.SlackUserIDKey, slackUserID)
 						}
 
-						// Add user email from request body or JWT
-						if userEmail := r.Header.Get("X-User-Email"); userEmail != "" {
-							ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
-						} else if jwtClaims != nil && jwtClaims.Email != "" {
-							ctx = context.WithValue(ctx, ctxutil.UserEmailKey, jwtClaims.Email)
+						// Add user email from request header or JWT
+					var userEmail string
+					if userEmail = r.Header.Get("X-User-Email"); userEmail == "" {
+						if jwtClaims != nil && jwtClaims.Email != "" {
+							userEmail = jwtClaims.Email
 						}
+					}
+					if userEmail != "" {
+						ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
+					}
 
-						// Add groups from JWT if available
-						if jwtClaims != nil && len(jwtClaims.Groups) > 0 {
-							ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, jwtClaims.Groups)
+					// Add groups from JWT if available
+					var userGroups []string
+					if jwtClaims != nil && len(jwtClaims.Groups) > 0 {
+						userGroups = jwtClaims.Groups
+					}
+
+					// If we have email but no groups, lookup groups from Keycloak
+					if userEmail != "" && len(userGroups) == 0 && keycloakClient != nil && keycloakClient.IsEnabled() {
+						groups, err := keycloakClient.GetUserGroups(r.Context(), userEmail)
+						if err != nil {
+							log.Warnw("Failed to lookup user groups from Keycloak",
+								"email", userEmail,
+								"error", err,
+							)
+							// Continue without groups - permission check will use email only
+						} else if len(groups) > 0 {
+							userGroups = groups
+							log.Debugw("Retrieved user groups from Keycloak",
+								"email", userEmail,
+								"groups_count", len(groups),
+							)
 						}
+					}
 
-						next.ServeHTTP(w, r.WithContext(ctx))
+					if len(userGroups) > 0 {
+						ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, userGroups)
+					}
+
+					next.ServeHTTP(w, r.WithContext(ctx))
 						return
 					}
 					// Invalid internal token - don't fall through, reject immediately

@@ -232,6 +232,130 @@ func (c *Client) GetTokenWithUserClaim(ctx context.Context, userEmail string) (t
 	return token, extraHeaders, nil
 }
 
+// keycloakUser represents a user from the Keycloak Admin API
+type keycloakUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+// keycloakGroup represents a group from the Keycloak Admin API
+type keycloakGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// GetUserGroups retrieves the groups for a user by their email address
+// Uses the Keycloak Admin API to lookup the user and their groups
+// Requires the service account to have 'view-users' role in realm-management
+func (c *Client) GetUserGroups(ctx context.Context, email string) ([]string, error) {
+	if c == nil || !c.config.Enabled {
+		return nil, nil
+	}
+
+	if email == "" {
+		return nil, nil
+	}
+
+	log := logger.Get()
+
+	// Get service token for Admin API access
+	token, err := c.GetServiceToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get service token: %w", err)
+	}
+
+	// Step 1: Find user by email
+	userURL := fmt.Sprintf("%s/admin/realms/%s/users?email=%s&exact=true",
+		strings.TrimSuffix(c.config.ServerURL, "/"),
+		c.config.Realm,
+		url.QueryEscape(email),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", userURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create user lookup request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup user: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Warnw("Keycloak user lookup failed",
+			"email", email,
+			"status_code", resp.StatusCode,
+			"response", string(body),
+		)
+		return nil, fmt.Errorf("user lookup failed with status %d", resp.StatusCode)
+	}
+
+	var users []keycloakUser
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, fmt.Errorf("failed to parse user lookup response: %w", err)
+	}
+
+	if len(users) == 0 {
+		log.Debugw("User not found in Keycloak", "email", email)
+		return nil, nil
+	}
+
+	userID := users[0].ID
+
+	// Step 2: Get user's groups
+	groupsURL := fmt.Sprintf("%s/admin/realms/%s/users/%s/groups",
+		strings.TrimSuffix(c.config.ServerURL, "/"),
+		c.config.Realm,
+		userID,
+	)
+
+	req, err = http.NewRequestWithContext(ctx, "GET", groupsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create groups request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user groups: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Warnw("Keycloak groups lookup failed",
+			"email", email,
+			"user_id", userID,
+			"status_code", resp.StatusCode,
+			"response", string(body),
+		)
+		return nil, fmt.Errorf("groups lookup failed with status %d", resp.StatusCode)
+	}
+
+	var groups []keycloakGroup
+	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
+		return nil, fmt.Errorf("failed to parse groups response: %w", err)
+	}
+
+	// Extract group paths (e.g., "/google-workspace/dev@freepik.com")
+	groupPaths := make([]string, len(groups))
+	for i, g := range groups {
+		groupPaths[i] = g.Path
+	}
+
+	log.Debugw("Retrieved user groups from Keycloak",
+		"email", email,
+		"groups_count", len(groupPaths),
+	)
+
+	return groupPaths, nil
+}
+
 // Close performs cleanup (currently no-op, but included for interface consistency)
 func (c *Client) Close() error {
 	return nil
