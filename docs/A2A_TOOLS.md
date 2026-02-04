@@ -140,19 +140,62 @@ a2a:
 
 Unlike handoff-based approaches, A2AToolset creates dynamic tools that **return results to the LLM**, allowing:
 - Sequential calls to multiple sub-agents
+- **Parallel execution** via `query_multiple_agents` for faster multi-agent queries
 - Synthesis of results from multiple sources in a single response
 
 1. At startup, Knowledge Agent creates an `A2AToolset` with a tool for each configured sub-agent
 2. Each sub-agent becomes a tool named `query_<agent_name>` (e.g., `query_logs_agent`)
-3. The LLM decides when to call each tool based on the agent-card description
-4. Tool calls use A2A protocol via `a2aclient.Client.SendMessage()`
-5. Results are returned to the LLM (no handoff) for further processing
+3. If 2+ sub-agents are configured, a `query_multiple_agents` tool is also created for parallel execution
+4. The LLM decides when to call each tool based on the agent-card description
+5. Tool calls use A2A protocol via `a2aclient.Client.SendMessage()`
+6. Results are returned to the LLM (no handoff) for further processing
 
 **Key characteristics:**
 - **Tool-based**: Each sub-agent is a callable tool, not a handoff target
 - **Multi-agent queries**: LLM can call multiple sub-agents and synthesize results
+- **Parallel execution**: `query_multiple_agents` executes calls concurrently for better performance
 - **Graceful degradation**: If a sub-agent fails to initialize, others continue working
 - **Auto-discovery**: Tool descriptions come from agent-cards automatically
+
+### Parallel Execution
+
+When querying multiple sub-agents, use `query_multiple_agents` instead of calling individual tools sequentially. This executes all queries **in parallel using goroutines**, significantly reducing response time.
+
+**Individual calls (sequential):**
+```
+query_logs_agent    → 40s
+query_metrics_agent → 57s  (waits for logs)
+query_kube_agent    → 32s  (waits for metrics)
+Total: ~129s
+```
+
+**Parallel call:**
+```
+query_multiple_agents({
+  "queries": [
+    {"agent": "logs_agent", "query": "Search errors in payment service"},
+    {"agent": "metrics_agent", "query": "Get error rate for payment"},
+    {"agent": "kube_agent", "query": "Check pod status for payment"}
+  ]
+})
+Total: ~57s (max of individual times)
+```
+
+**Response format:**
+```json
+{
+  "results": [
+    {"agent": "logs_agent", "success": true, "response": "Found 10 errors..."},
+    {"agent": "metrics_agent", "success": true, "response": "Error rate: 0.5%..."},
+    {"agent": "kube_agent", "success": false, "error": "connection timeout"}
+  ],
+  "total_agents": 3,
+  "successful": 2,
+  "failed": 1
+}
+```
+
+> **Note**: The `query_multiple_agents` tool is only created when 2 or more sub-agents are configured.
 
 ### Example Use Case
 

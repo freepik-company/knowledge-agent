@@ -37,9 +37,12 @@ const (
 // Each sub-agent becomes a tool named "query_<agent_name>" that the LLM can call.
 // Unlike remoteagent.NewA2A which performs a handoff (terminating the parent agent flow),
 // these tools return results to the LLM allowing sequential/multiple sub-agent calls.
+// Additionally, a "query_multiple_agents" tool enables parallel execution of multiple
+// sub-agent calls for improved performance.
 type A2AToolset struct {
-	tools   []tool.Tool
-	clients []*a2aclient.Client
+	tools      []tool.Tool
+	clients    []*a2aclient.Client
+	clientsMap map[string]*a2aclient.Client // For parallel query tool
 }
 
 // QuerySubAgentArgs are the arguments for sub-agent query tools
@@ -78,8 +81,9 @@ func NewA2AToolset(ctx context.Context, cfg *config.A2AConfig, keycloakClient *k
 	)
 
 	toolset := &A2AToolset{
-		tools:   make([]tool.Tool, 0, len(cfg.SubAgents)),
-		clients: make([]*a2aclient.Client, 0, len(cfg.SubAgents)),
+		tools:      make([]tool.Tool, 0, len(cfg.SubAgents)+1), // +1 for parallel query tool
+		clients:    make([]*a2aclient.Client, 0, len(cfg.SubAgents)),
+		clientsMap: make(map[string]*a2aclient.Client),
 	}
 
 	for _, subAgentCfg := range cfg.SubAgents {
@@ -95,6 +99,7 @@ func NewA2AToolset(ctx context.Context, cfg *config.A2AConfig, keycloakClient *k
 
 		toolset.tools = append(toolset.tools, t)
 		toolset.clients = append(toolset.clients, client)
+		toolset.clientsMap[subAgentCfg.Name] = client // Store by name for parallel queries
 		log.Infow("Sub-agent tool created",
 			"name", t.Name(),
 			"endpoint", subAgentCfg.Endpoint,
@@ -103,9 +108,26 @@ func NewA2AToolset(ctx context.Context, cfg *config.A2AConfig, keycloakClient *k
 		)
 	}
 
+	// Create parallel query tool if we have at least 2 sub-agents
+	if len(toolset.clientsMap) >= 2 {
+		parallelTool, err := createParallelQueryTool(toolset.clientsMap)
+		if err != nil {
+			log.Warnw("Failed to create parallel query tool",
+				"error", err,
+			)
+		} else {
+			toolset.tools = append(toolset.tools, parallelTool)
+			log.Infow("Parallel query tool created",
+				"available_agents", getAvailableAgents(toolset.clientsMap),
+			)
+		}
+	}
+
 	if len(toolset.tools) > 0 {
 		log.Infow("A2A toolset created successfully",
 			"tools_count", len(toolset.tools),
+			"sub_agents", len(toolset.clientsMap),
+			"parallel_enabled", len(toolset.clientsMap) >= 2,
 		)
 	} else if len(cfg.SubAgents) > 0 {
 		log.Warn("A2A enabled but no sub-agent tools were created successfully")
