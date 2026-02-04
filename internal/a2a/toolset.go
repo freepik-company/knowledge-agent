@@ -77,13 +77,13 @@ func (w *restClientWrapper) Query(ctx context.Context, question string) (string,
 	if err != nil {
 		return "", err
 	}
-	if !resp.Success {
+	if !resp.IsSuccess() {
 		if resp.Message != "" {
 			return "", fmt.Errorf("agent returned error: %s", resp.Message)
 		}
 		return "", fmt.Errorf("agent returned success=false")
 	}
-	return resp.Answer, nil
+	return resp.GetAnswer(), nil
 }
 
 func (w *restClientWrapper) Close() error {
@@ -362,20 +362,20 @@ func createRESTSubAgentHandler(agentName string, client *RESTClient) functiontoo
 			}, nil
 		}
 
-		responseText := resp.Answer
+		responseText := resp.GetAnswer()
 		if len(responseText) > maxResponseTextLength {
 			responseText = responseText[:maxResponseTextLength] + "\n[TRUNCATED - response exceeded 100KB limit]"
 		}
 
 		log.Infow("REST sub-agent call completed",
 			"agent", agentName,
-			"success", resp.Success,
+			"success", resp.IsSuccess(),
 			"response_length", len(responseText),
 			"response_preview", truncateString(responseText, 100),
 		)
 
 		return QuerySubAgentResult{
-			Success:  resp.Success,
+			Success:  resp.IsSuccess(),
 			Response: responseText,
 		}, nil
 	}

@@ -37,7 +37,7 @@ func TestRESTClient_Query_Success(t *testing.T) {
 			t.Errorf("expected question 'What is the weather?', got '%s'", req.Query)
 		}
 
-		// Return success response
+		// Return success response (simple format)
 		resp := QueryResponse{
 			Success: true,
 			Answer:  "The weather is sunny.",
@@ -62,11 +62,55 @@ func TestRESTClient_Query_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !resp.Success {
+	if !resp.IsSuccess() {
 		t.Error("expected success=true")
 	}
-	if resp.Answer != "The weather is sunny." {
-		t.Errorf("expected answer 'The weather is sunny.', got '%s'", resp.Answer)
+	if resp.GetAnswer() != "The weather is sunny." {
+		t.Errorf("expected answer 'The weather is sunny.', got '%s'", resp.GetAnswer())
+	}
+}
+
+func TestRESTClient_Query_ADKFormat(t *testing.T) {
+	// Create mock server that returns ADK format (agents built with Google ADK)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return ADK format response (response field instead of answer)
+		resp := map[string]interface{}{
+			"response":        "Found 15 errors in the last hour.",
+			"conversation_id": "session-123",
+			"model":           "claude-sonnet-4-5",
+			"tool_calls":      []interface{}{},
+			"tool_results":    []interface{}{},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Create client
+	client := NewRESTClient(RESTClientConfig{
+		Name:    "logs-agent",
+		BaseURL: server.URL,
+		Timeout: 10 * time.Second,
+	})
+
+	// Execute query
+	resp, err := client.Query(context.Background(), "Show me errors")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify ADK format is handled correctly
+	if !resp.IsSuccess() {
+		t.Error("expected IsSuccess()=true for ADK format")
+	}
+	if resp.GetAnswer() != "Found 15 errors in the last hour." {
+		t.Errorf("expected GetAnswer() to return response field, got '%s'", resp.GetAnswer())
+	}
+	if resp.ConversationID != "session-123" {
+		t.Errorf("expected conversation_id='session-123', got '%s'", resp.ConversationID)
+	}
+	if resp.Model != "claude-sonnet-4-5" {
+		t.Errorf("expected model='claude-sonnet-4-5', got '%s'", resp.Model)
 	}
 }
 

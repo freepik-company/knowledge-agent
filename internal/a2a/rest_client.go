@@ -46,10 +46,36 @@ type QueryRequest struct {
 }
 
 // QueryResponse is the response body from /api/query
+// Supports multiple formats:
+// - Simple format: {"success": true, "answer": "..."}
+// - ADK format: {"response": "...", "conversation_id": "...", "model": "..."}
 type QueryResponse struct {
+	// Simple format fields
 	Success bool   `json:"success"`
 	Answer  string `json:"answer"`
 	Message string `json:"message,omitempty"`
+
+	// ADK format fields (fc-logs-agent, etc.)
+	Response       string `json:"response,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Model          string `json:"model,omitempty"`
+}
+
+// GetAnswer returns the answer from either format
+func (r *QueryResponse) GetAnswer() string {
+	if r.Answer != "" {
+		return r.Answer
+	}
+	return r.Response
+}
+
+// IsSuccess returns true if the response indicates success
+func (r *QueryResponse) IsSuccess() bool {
+	// ADK format doesn't have explicit success field - presence of response indicates success
+	if r.Response != "" {
+		return true
+	}
+	return r.Success
 }
 
 // NewRESTClient creates a new REST client for calling sub-agents
@@ -155,8 +181,8 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 
 	log.Infow("REST client received response",
 		"agent", c.name,
-		"success", queryResp.Success,
-		"answer_length", len(queryResp.Answer),
+		"success", queryResp.IsSuccess(),
+		"answer_length", len(queryResp.GetAnswer()),
 		"duration_ms", duration.Milliseconds(),
 	)
 
