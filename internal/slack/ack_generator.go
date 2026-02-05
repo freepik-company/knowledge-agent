@@ -7,6 +7,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
 )
 
@@ -19,39 +20,8 @@ const (
 	AckMaxTokens = 50
 )
 
-// AckGenerator generates contextual acknowledgment messages using Haiku
-type AckGenerator struct {
-	client  anthropic.Client
-	enabled bool
-}
-
-// NewAckGenerator creates a new acknowledgment generator
-func NewAckGenerator(apiKey string) *AckGenerator {
-	if apiKey == "" {
-		return &AckGenerator{enabled: false}
-	}
-
-	client := anthropic.NewClient(option.WithAPIKey(apiKey))
-	return &AckGenerator{
-		client:  client,
-		enabled: true,
-	}
-}
-
-// GenerateAck generates a contextual acknowledgment message based on the user's input
-// Returns a fallback message if generation fails
-func (g *AckGenerator) GenerateAck(ctx context.Context, userMessage string) string {
-	log := logger.Get()
-
-	if g == nil || !g.enabled {
-		return defaultAckMessage()
-	}
-
-	// Create a context with timeout for fast response
-	ctx, cancel := context.WithTimeout(ctx, AckTimeout)
-	defer cancel()
-
-	prompt := fmt.Sprintf(`Generate a short and natural response (max 15 words) to indicate you are processing this message.
+// DefaultAckPrompt is the default prompt used for generating acknowledgment messages
+const DefaultAckPrompt = `Generate a short and natural response (max 15 words) to indicate you are processing this message.
 Be casual and friendly. Use appropriate emojis. Don't use "Processing" or generic phrases.
 Respond ONLY with the message, no explanations.
 IMPORTANT: Respond in the SAME LANGUAGE as the user's message.
@@ -61,7 +31,65 @@ Examples:
 - User: "How do we deploy to production?" → ":thinking_face: Let me find info about deployments..."
 - User: "There's an error in the payment service" → ":mag: Investigating the payment service..."
 
-User message: %s`, userMessage)
+User message: %s`
+
+// DefaultAckMessage is the default fallback message when ack generation fails
+const DefaultAckMessage = ":mag: Give me a moment..."
+
+// AckGenerator generates contextual acknowledgment messages using Haiku
+type AckGenerator struct {
+	client         anthropic.Client
+	enabled        bool
+	prompt         string
+	defaultMessage string
+}
+
+// NewAckGenerator creates a new acknowledgment generator
+func NewAckGenerator(apiKey string, ackCfg config.AckConfig) *AckGenerator {
+	// Determine the default message
+	defaultMsg := ackCfg.DefaultMessage
+	if defaultMsg == "" {
+		defaultMsg = DefaultAckMessage
+	}
+
+	// If API key is missing or ack generation is explicitly disabled
+	if apiKey == "" || !ackCfg.Enabled {
+		return &AckGenerator{
+			enabled:        false,
+			defaultMessage: defaultMsg,
+		}
+	}
+
+	// Determine the prompt to use
+	prompt := ackCfg.Prompt
+	if prompt == "" {
+		prompt = DefaultAckPrompt
+	}
+
+	client := anthropic.NewClient(option.WithAPIKey(apiKey))
+	return &AckGenerator{
+		client:         client,
+		enabled:        true,
+		prompt:         prompt,
+		defaultMessage: defaultMsg,
+	}
+}
+
+// GenerateAck generates a contextual acknowledgment message based on the user's input
+// Returns a fallback message if generation fails
+func (g *AckGenerator) GenerateAck(ctx context.Context, userMessage string) string {
+	log := logger.Get()
+
+	if g == nil || !g.enabled {
+		return g.getDefaultMessage()
+	}
+
+	// Create a context with timeout for fast response
+	ctx, cancel := context.WithTimeout(ctx, AckTimeout)
+	defer cancel()
+
+	// Build prompt with user message
+	prompt := fmt.Sprintf(g.prompt, userMessage)
 
 	message, err := g.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(AckModel),
@@ -75,7 +103,7 @@ User message: %s`, userMessage)
 		log.Debugw("Failed to generate contextual ack, using fallback",
 			"error", err,
 		)
-		return defaultAckMessage()
+		return g.getDefaultMessage()
 	}
 
 	// Extract text from response
@@ -85,10 +113,13 @@ User message: %s`, userMessage)
 		}
 	}
 
-	return defaultAckMessage()
+	return g.getDefaultMessage()
 }
 
-// defaultAckMessage returns the fallback acknowledgment message
-func defaultAckMessage() string {
-	return ":mag: Give me a moment..."
+// getDefaultMessage returns the configured fallback acknowledgment message
+func (g *AckGenerator) getDefaultMessage() string {
+	if g == nil || g.defaultMessage == "" {
+		return DefaultAckMessage
+	}
+	return g.defaultMessage
 }

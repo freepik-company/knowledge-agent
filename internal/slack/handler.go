@@ -45,7 +45,7 @@ func NewHandler(cfg *config.Config, agentURL string) *Handler {
 		client:        client,
 		agentURL:      agentURL,
 		internalToken: cfg.Auth.InternalToken,
-		ackGenerator:  NewAckGenerator(cfg.Anthropic.APIKey),
+		ackGenerator:  NewAckGenerator(cfg.Anthropic.APIKey, cfg.Slack.Ack),
 		httpClient:    &http.Client{}, // Shared, reusable HTTP client (context controls timeout)
 	}
 
