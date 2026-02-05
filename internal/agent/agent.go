@@ -852,12 +852,18 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
 
 	eventCount := 0
-	for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
-		if err != nil {
-			log.Errorw("Runner error during query", "error", err)
-			trace.End(false, fmt.Sprintf("Query failed: %v", err))
-			return nil, fmt.Errorf("query failed: %w", err)
-		}
+
+	// Retry loop for handling corrupted sessions
+	maxRetries := 1 // Retry once if session is corrupted
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		var runnerErr error
+		shouldRetry := false
+
+		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
+			if err != nil {
+				runnerErr = err
+				break
+			}
 
 		eventCount++
 
@@ -979,6 +985,50 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				currentGeneration = nil // Reset for next generation
 				generationOutput = ""   // Reset output tracker
 			}
+		}
+		}
+
+		// Check if we got an error from the runner
+		if runnerErr != nil {
+			// Check if it's an orphaned tool call error (session corruption)
+			if isOrphanedToolCallError(runnerErr) {
+				log.Warnw("Detected orphaned tool call error (session corruption)",
+					"error", runnerErr,
+					"session_id", sessionID,
+					"attempt", attempt,
+				)
+
+				// Delete the corrupted session so next attempt starts fresh
+				if err := deleteCorruptedSession(ctx, a.sessionService, userID, sessionID); err != nil {
+					log.Errorw("Failed to delete corrupted session",
+						"error", err,
+						"session_id", sessionID,
+					)
+					// Continue anyway - we'll still retry
+				}
+
+				// Should we retry?
+				if attempt < maxRetries {
+					log.Infow("Retrying query after session repair",
+						"session_id", sessionID,
+						"attempt", attempt+1,
+					)
+					shouldRetry = true
+					// Reset response for retry
+					responseText = ""
+					eventCount = 0
+				}
+			}
+
+			if !shouldRetry {
+				trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
+				return nil, fmt.Errorf("agent error: %w", runnerErr)
+			}
+		}
+
+		// Break out of retry loop if no error or not retrying
+		if !shouldRetry {
+			break
 		}
 	}
 
