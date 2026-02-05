@@ -187,7 +187,9 @@ func (qt *QueryTrace) EndGeneration(generation *traces.Observation, output any, 
 }
 
 // StartToolCall starts tracking a tool call
-func (qt *QueryTrace) StartToolCall(toolName string, args map[string]any) {
+// toolID is the unique identifier for this specific tool call (from FunctionCall.ID)
+// toolName is the name of the tool being called
+func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any) {
 	if !qt.tracer.enabled || qt.trace == nil {
 		return
 	}
@@ -195,30 +197,55 @@ func (qt *QueryTrace) StartToolCall(toolName string, args map[string]any) {
 	log := logger.Get()
 	qt.eventCount.Add(1)
 
-	// Create tool observation
-	tool := qt.trace.StartObservation(toolName, traces.ObservationTypeTool)
-	tool.Input = args
+	// Use toolID as the key to support multiple calls to the same tool
+	// The observation name includes both for readability in Langfuse UI
+	observationName := toolName
+	if toolID != "" {
+		observationName = fmt.Sprintf("%s", toolName)
+	}
 
-	qt.toolCalls[toolName] = tool
+	// Create tool observation
+	tool := qt.trace.StartObservation(observationName, traces.ObservationTypeTool)
+	tool.Input = map[string]any{
+		"tool_id": toolID,
+		"args":    args,
+	}
+
+	// Use toolID as key if available, otherwise fallback to toolName
+	key := toolID
+	if key == "" {
+		key = toolName
+	}
+	qt.toolCalls[key] = tool
 
 	log.Debugw("Started tool call",
 		"trace_id", qt.TraceID,
+		"tool_id", toolID,
 		"tool_name", toolName,
 	)
 }
 
 // EndToolCall ends the tool call tracking
-func (qt *QueryTrace) EndToolCall(toolName string, output any, err error) {
+// toolID is the unique identifier for this specific tool call (from FunctionResponse.ID)
+// toolName is included for logging purposes
+func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error) {
 	if !qt.tracer.enabled {
 		return
 	}
 
 	log := logger.Get()
 
-	tool, exists := qt.toolCalls[toolName]
+	// Use toolID as key if available, otherwise fallback to toolName
+	key := toolID
+	if key == "" {
+		key = toolName
+	}
+
+	tool, exists := qt.toolCalls[key]
 	if !exists {
 		log.Warnw("Tool call not found in trace",
 			"trace_id", qt.TraceID,
+			"tool_id", toolID,
 			"tool_name", toolName,
 		)
 		return
@@ -234,8 +261,12 @@ func (qt *QueryTrace) EndToolCall(toolName string, output any, err error) {
 
 	tool.End()
 
+	// Remove from map after ending
+	delete(qt.toolCalls, key)
+
 	log.Debugw("Completed tool call",
 		"trace_id", qt.TraceID,
+		"tool_id", toolID,
 		"tool_name", toolName,
 		"error", err,
 	)

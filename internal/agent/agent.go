@@ -908,6 +908,14 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				}
 
 				for i, part := range event.Content.Parts {
+					// Log what we found in this part for debugging
+					log.Debugw("Processing part",
+						"index", i,
+						"has_text", part.Text != "",
+						"has_function_call", part.FunctionCall != nil,
+						"has_function_response", part.FunctionResponse != nil,
+					)
+
 					// Text content
 					if part.Text != "" {
 						log.Debugw("Text part",
@@ -927,26 +935,51 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 					// Tool call
 					if part.FunctionCall != nil {
+						toolID := part.FunctionCall.ID
 						toolName := part.FunctionCall.Name
-						toolStartTimes[toolName] = time.Now()
+						// Use toolID as key for tracking, fallback to toolName if empty
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+						toolStartTimes[trackKey] = time.Now()
 
 						log.Infow("Tool call started",
 							"tool", toolName,
+							"tool_id", toolID,
 							"args_count", len(part.FunctionCall.Args),
 							"trace_id", trace.TraceID,
 						)
 
 						// Track tool call in Langfuse
-						trace.StartToolCall(toolName, part.FunctionCall.Args)
+						trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
 					}
 
 					// Tool response
 					if part.FunctionResponse != nil {
+						toolID := part.FunctionResponse.ID
 						toolName := part.FunctionResponse.Name
+						// Use toolID as key for tracking, fallback to toolName if empty
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+
+						// Check if we have a start time (from FunctionCall event)
+						// If not, the ADK executed the tool internally without sending us FunctionCall event
 						var duration time.Duration
-						if startTime, ok := toolStartTimes[toolName]; ok {
+						hadStartTime := false
+						if startTime, ok := toolStartTimes[trackKey]; ok {
 							duration = time.Since(startTime)
-							delete(toolStartTimes, toolName)
+							delete(toolStartTimes, trackKey)
+							hadStartTime = true
+						}
+
+						// If we didn't have a start time, we need to create the tool call entry in Langfuse
+						// This happens when ADK processes tools internally without yielding FunctionCall events
+						if !hadStartTime {
+							// Start and immediately end the tool call to record it in Langfuse
+							trace.StartToolCall(toolID, toolName, nil)
 						}
 
 						// Determine if tool call was successful
@@ -954,9 +987,11 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 						log.Infow("Tool call completed",
 							"tool", toolName,
+							"tool_id", toolID,
 							"duration_ms", duration.Milliseconds(),
 							"success", success,
 							"has_response", part.FunctionResponse.Response != nil,
+							"had_start_event", hadStartTime,
 						)
 
 						// Record tool metrics
@@ -970,7 +1005,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 						}
 
 						// End tool call in Langfuse
-						trace.EndToolCall(toolName, part.FunctionResponse.Response, nil)
+						trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
 					}
 				}
 
