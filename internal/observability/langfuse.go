@@ -222,11 +222,12 @@ func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any
 	}
 	qt.toolCalls[key] = tool
 
-	log.Debugw("Started tool call in Langfuse",
+	log.Infow("Langfuse: Started tool call span",
 		"trace_id", qt.TraceID,
 		"tool_id", toolID,
 		"tool_name", toolName,
 		"span_name", spanName,
+		"trace_exists", qt.trace != nil,
 	)
 }
 
@@ -270,12 +271,12 @@ func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error
 	qt.toolCallsCount++
 	delete(qt.toolCalls, key)
 
-	log.Debugw("Completed tool call in Langfuse",
+	log.Infow("Langfuse: Completed tool call span",
 		"trace_id", qt.TraceID,
 		"tool_id", toolID,
 		"tool_name", toolName,
 		"total_tool_calls", qt.toolCallsCount,
-		"error", err,
+		"had_error", err != nil,
 	)
 }
 
