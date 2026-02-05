@@ -20,9 +20,10 @@ import (
 const (
 	defaultQueryExtractorModel = "claude-haiku-4-5-20251001"
 
-	// queryExtractorPromptWithDescription is used when the agent-card has a description
+	// DefaultQueryExtractorPrompt is used when the agent-card has a description
 	// This allows for more targeted query extraction based on what the agent does
-	queryExtractorPromptWithDescription = `You are extracting the relevant query for the "%s" agent.
+	// Placeholders: %s = agent_name, %s = agent_description, %s = context
+	DefaultQueryExtractorPrompt = `You are extracting the relevant query for the "%s" agent.
 
 Agent Purpose (from agent-card):
 %s
@@ -38,8 +39,9 @@ Context:
 
 Extracted query:`
 
-	// queryExtractorPromptGeneric is the fallback when no agent description is available
-	queryExtractorPromptGeneric = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
+	// DefaultQueryExtractorPromptGeneric is the fallback when no agent description is available
+	// Placeholder: %s = context
+	DefaultQueryExtractorPromptGeneric = `You are a task summarizer. Your job is to extract and condense the essential task from a conversation context.
 
 Given the following conversation or task description, create a clear, concise summary that:
 1. Identifies the main task or question being asked
@@ -62,6 +64,8 @@ type queryExtractorInterceptor struct {
 	agentDescription string // From agent-card, used for targeted query extraction
 	client           anthropic.Client
 	model            string
+	prompt           string // Prompt with description (3 placeholders: agent_name, description, context)
+	promptGeneric    string // Generic prompt (1 placeholder: context)
 	enabled          bool
 }
 
@@ -75,6 +79,16 @@ func NewQueryExtractorInterceptor(agentName, agentDescription string, cfg config
 	model := cfg.Model
 	if model == "" {
 		model = defaultQueryExtractorModel
+	}
+
+	prompt := cfg.Prompt
+	if prompt == "" {
+		prompt = DefaultQueryExtractorPrompt
+	}
+
+	promptGeneric := cfg.PromptGeneric
+	if promptGeneric == "" {
+		promptGeneric = DefaultQueryExtractorPromptGeneric
 	}
 
 	// Get API key from environment
@@ -103,6 +117,8 @@ func NewQueryExtractorInterceptor(agentName, agentDescription string, cfg config
 		agentDescription: agentDescription,
 		client:           client,
 		model:            model,
+		prompt:           prompt,
+		promptGeneric:    promptGeneric,
 		enabled:          true,
 	}
 }
@@ -226,10 +242,10 @@ func (ci *queryExtractorInterceptor) summarizeContext(ctx context.Context, text 
 	var prompt string
 	if ci.agentDescription != "" {
 		// Use targeted prompt with agent description from agent-card
-		prompt = fmt.Sprintf(queryExtractorPromptWithDescription, ci.agentName, ci.agentDescription, text)
+		prompt = fmt.Sprintf(ci.prompt, ci.agentName, ci.agentDescription, text)
 	} else {
 		// Fallback to generic summarization
-		prompt = fmt.Sprintf(queryExtractorPromptGeneric, text)
+		prompt = fmt.Sprintf(ci.promptGeneric, text)
 	}
 
 	// Add timeout to prevent indefinite blocking (10s is enough for summarization)

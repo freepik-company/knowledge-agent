@@ -55,6 +55,7 @@ type WebFetchConfig struct {
 type ResponseCleanerConfig struct {
 	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                 // Enable response cleaning
 	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for cleaning (default: Haiku for speed/cost)
+	Prompt  string `yaml:"prompt" mapstructure:"prompt"`                                   // Custom prompt for cleaning (uses default if empty)
 }
 
 // ContextSummarizerConfig holds configuration for summarizing long conversation contexts
@@ -62,6 +63,7 @@ type ContextSummarizerConfig struct {
 	Enabled        bool   `yaml:"enabled" mapstructure:"enabled" default:"false"`                 // Enable context summarization
 	Model          string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for summarization (default: Haiku for speed/cost)
 	TokenThreshold int    `yaml:"token_threshold" mapstructure:"token_threshold" default:"8000"`  // Token threshold above which context is summarized
+	Prompt         string `yaml:"prompt" mapstructure:"prompt"`                                   // Custom prompt for summarization (uses default if empty)
 }
 
 // AuthConfig holds authentication configuration
@@ -168,8 +170,10 @@ type KeycloakConfig struct {
 
 // A2AQueryExtractorConfig holds configuration for the A2A context cleaner interceptor
 type A2AQueryExtractorConfig struct {
-	Enabled bool   `yaml:"enabled" mapstructure:"enabled" default:"true"`                  // Enable query extraction before sending to sub-agents
-	Model   string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for summarization
+	Enabled       bool   `yaml:"enabled" mapstructure:"enabled" default:"true"`                  // Enable query extraction before sending to sub-agents
+	Model         string `yaml:"model" mapstructure:"model" default:"claude-haiku-4-5-20251001"` // Model to use for summarization
+	Prompt        string `yaml:"prompt" mapstructure:"prompt"`                                   // Custom prompt when agent has description (uses default if empty). Use %s placeholders for: agent_name, agent_description, context
+	PromptGeneric string `yaml:"prompt_generic" mapstructure:"prompt_generic"`                   // Custom prompt when agent has no description (uses default if empty). Use %s placeholder for: context
 }
 
 // A2ASubAgentConfig holds configuration for a remote ADK agent as sub-agent

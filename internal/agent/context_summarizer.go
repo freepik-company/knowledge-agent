@@ -13,7 +13,8 @@ import (
 	"knowledge-agent/internal/observability"
 )
 
-const summarizerPrompt = `Compress this conversation context while preserving critical information.
+// DefaultSummarizerPrompt is the default prompt for context summarization
+const DefaultSummarizerPrompt = `Compress this conversation context while preserving critical information.
 
 PRESERVE (keep exactly as written):
 - Decisions and conclusions reached
@@ -46,6 +47,7 @@ type ContextSummarizer struct {
 	client         anthropic.Client
 	model          string
 	tokenThreshold int
+	prompt         string
 	enabled        bool
 }
 
@@ -76,10 +78,16 @@ func NewContextSummarizer(cfg *config.Config) *ContextSummarizer {
 		tokenThreshold = 8000
 	}
 
+	prompt := cfg.ContextSummarizer.Prompt
+	if prompt == "" {
+		prompt = DefaultSummarizerPrompt
+	}
+
 	return &ContextSummarizer{
 		client:         client,
 		model:          model,
 		tokenThreshold: tokenThreshold,
+		prompt:         prompt,
 		enabled:        true,
 	}
 }
@@ -130,7 +138,7 @@ func (cs *ContextSummarizer) Summarize(ctx context.Context, contextStr string) (
 
 	startTime := time.Now()
 
-	prompt := fmt.Sprintf(summarizerPrompt, contextStr)
+	prompt := fmt.Sprintf(cs.prompt, contextStr)
 
 	// Add timeout to prevent indefinite blocking
 	summarizeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)

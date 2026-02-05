@@ -13,7 +13,8 @@ import (
 	"knowledge-agent/internal/observability"
 )
 
-const cleanerPrompt = `Your task is to clean this AI agent response by removing unnecessary narration and debugging data.
+// DefaultCleanerPrompt is the default prompt for response cleaning
+const DefaultCleanerPrompt = `Your task is to clean this AI agent response by removing unnecessary narration and debugging data.
 
 REMOVE:
 - Phrases about agent transfers ("I will transfer you", "the metrics agent says", "I will consult")
@@ -45,6 +46,7 @@ Response to clean:
 type ResponseCleaner struct {
 	client  anthropic.Client
 	model   string
+	prompt  string
 	enabled bool
 }
 
@@ -70,9 +72,15 @@ func NewResponseCleaner(cfg *config.Config) *ResponseCleaner {
 		model = "claude-haiku-4-5-20251001"
 	}
 
+	prompt := cfg.ResponseCleaner.Prompt
+	if prompt == "" {
+		prompt = DefaultCleanerPrompt
+	}
+
 	return &ResponseCleaner{
 		client:  client,
 		model:   model,
+		prompt:  prompt,
 		enabled: true,
 	}
 }
@@ -98,7 +106,7 @@ func (rc *ResponseCleaner) Clean(ctx context.Context, response string) (string, 
 
 	startTime := time.Now()
 
-	prompt := fmt.Sprintf(cleanerPrompt, response)
+	prompt := fmt.Sprintf(rc.prompt, response)
 
 	// Add timeout to prevent indefinite blocking
 	cleanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
