@@ -625,6 +625,9 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		trace.End(true, "")
 	}()
 
+	// Add QueryTrace to context early so pre-search and other operations can use it
+	ctx = observability.ContextWithQueryTrace(ctx, trace)
+
 	// Update context holder for permission checks
 	a.contextHolder.SetContext(ctx)
 
@@ -846,9 +849,6 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	} else {
 		log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
 	}
-
-	// Add QueryTrace to context for A2A interceptors to use
-	ctx = observability.ContextWithQueryTrace(ctx, trace)
 
 	// Add user email and session ID to context for identity propagation to sub-agents
 	if req.UserEmail != "" {
