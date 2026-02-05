@@ -1007,7 +1007,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				trace.RecordSessionRepair(sessionID, attempt)
 
 				// Delete the corrupted session so next attempt starts fresh
-				if err := deleteCorruptedSession(ctx, a.sessionService, userID, sessionID); err != nil {
+				if err := deleteCorruptedSession(ctx, a.sessionService, appName, userID, sessionID); err != nil {
 					log.Errorw("Failed to delete corrupted session",
 						"error", err,
 						"session_id", sessionID,

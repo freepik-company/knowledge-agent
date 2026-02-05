@@ -23,15 +23,17 @@ func isOrphanedToolCallError(err error) bool {
 
 // deleteCorruptedSession deletes a session that has orphaned tool calls
 // This allows the next query to start fresh
-func deleteCorruptedSession(ctx context.Context, sessionService *sessionredis.RedisSessionService, userID, sessionID string) error {
+func deleteCorruptedSession(ctx context.Context, sessionService *sessionredis.RedisSessionService, appName, userID, sessionID string) error {
 	log := logger.Get()
 
 	log.Warnw("Deleting corrupted session with orphaned tool calls",
+		"app_name", appName,
 		"user_id", userID,
 		"session_id", sessionID,
 	)
 
 	err := sessionService.Delete(ctx, &session.DeleteRequest{
+		AppName:   appName,
 		UserID:    userID,
 		SessionID: sessionID,
 	})
