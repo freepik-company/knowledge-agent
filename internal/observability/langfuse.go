@@ -62,7 +62,8 @@ type QueryTrace struct {
 
 	// ADK event tracking
 	generations      []*traces.Observation
-	toolCalls        map[string]*traces.Observation // Map tool name to observation
+	toolCalls        map[string]*traces.Observation // Map tool ID to observation (active calls)
+	toolCallsCount   int                            // Accumulated count of completed tool calls
 	eventCount       atomic.Int32                   // Thread-safe event counter
 	promptTokens     int
 	completionTokens int
@@ -197,18 +198,15 @@ func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any
 	log := logger.Get()
 	qt.eventCount.Add(1)
 
-	// Use toolID as the key to support multiple calls to the same tool
-	// The observation name includes both for readability in Langfuse UI
-	observationName := toolName
-	if toolID != "" {
-		observationName = fmt.Sprintf("%s", toolName)
-	}
-
-	// Create tool observation
-	tool := qt.trace.StartObservation(observationName, traces.ObservationTypeTool)
-	tool.Input = map[string]any{
-		"tool_id": toolID,
-		"args":    args,
+	// Create span for the tool call (Langfuse shows spans in the timeline)
+	// Format: "tool:toolName" for clear identification in the UI
+	spanName := fmt.Sprintf("tool:%s", toolName)
+	tool := qt.trace.StartSpan(spanName)
+	tool.Input = args
+	tool.Metadata = map[string]any{
+		"tool_id":   toolID,
+		"tool_name": toolName,
+		"type":      "tool_call",
 	}
 
 	// Use toolID as key if available, otherwise fallback to toolName
@@ -218,10 +216,11 @@ func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any
 	}
 	qt.toolCalls[key] = tool
 
-	log.Debugw("Started tool call",
+	log.Debugw("Started tool call in Langfuse",
 		"trace_id", qt.TraceID,
 		"tool_id", toolID,
 		"tool_name", toolName,
+		"span_name", spanName,
 	)
 }
 
@@ -261,13 +260,15 @@ func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error
 
 	tool.End()
 
-	// Remove from map after ending
+	// Increment counter and remove from active map
+	qt.toolCallsCount++
 	delete(qt.toolCalls, key)
 
-	log.Debugw("Completed tool call",
+	log.Debugw("Completed tool call in Langfuse",
 		"trace_id", qt.TraceID,
 		"tool_id", toolID,
 		"tool_name", toolName,
+		"total_tool_calls", qt.toolCallsCount,
 		"error", err,
 	)
 }
@@ -299,7 +300,7 @@ func (qt *QueryTrace) GetAccumulatedTokens() (promptTokens, completionTokens, to
 func (qt *QueryTrace) GetSummary() map[string]any {
 	return map[string]any{
 		"generations_count": len(qt.generations),
-		"tool_calls_count":  len(qt.toolCalls),
+		"tool_calls_count":  qt.toolCallsCount,
 		"total_events":      qt.eventCount.Load(),
 		"prompt_tokens":     qt.promptTokens,
 		"completion_tokens": qt.completionTokens,
