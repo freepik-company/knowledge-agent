@@ -909,11 +909,36 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 				for i, part := range event.Content.Parts {
 					// Log what we found in this part for debugging
+					hasFunctionCall := part.FunctionCall != nil
+					hasFunctionResponse := part.FunctionResponse != nil
+
+					// Log at INFO level when we detect function events (helps diagnose missing tool traces)
+					if hasFunctionCall || hasFunctionResponse {
+						funcName := ""
+						funcID := ""
+						if hasFunctionCall {
+							funcName = part.FunctionCall.Name
+							funcID = part.FunctionCall.ID
+						}
+						if hasFunctionResponse {
+							funcName = part.FunctionResponse.Name
+							funcID = part.FunctionResponse.ID
+						}
+						log.Infow("ADK function event detected",
+							"index", i,
+							"is_call", hasFunctionCall,
+							"is_response", hasFunctionResponse,
+							"function_name", funcName,
+							"function_id", funcID,
+							"trace_id", trace.TraceID,
+						)
+					}
+
 					log.Debugw("Processing part",
 						"index", i,
 						"has_text", part.Text != "",
-						"has_function_call", part.FunctionCall != nil,
-						"has_function_response", part.FunctionResponse != nil,
+						"has_function_call", hasFunctionCall,
+						"has_function_response", hasFunctionResponse,
 					)
 
 					// Text content
