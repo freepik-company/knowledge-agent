@@ -105,6 +105,7 @@ type LangfuseConfig struct {
 	PublicKey       string  `yaml:"public_key" mapstructure:"public_key" envconfig:"LANGFUSE_PUBLIC_KEY"`                    // Langfuse public key
 	SecretKey       string  `yaml:"secret_key" mapstructure:"secret_key" envconfig:"LANGFUSE_SECRET_KEY"`                    // Langfuse secret key
 	Host            string  `yaml:"host" mapstructure:"host" envconfig:"LANGFUSE_HOST" default:"https://cloud.langfuse.com"` // Langfuse host URL
+	Environment     string  `yaml:"environment" mapstructure:"environment" envconfig:"LANGFUSE_ENVIRONMENT"`                 // Environment tag (e.g., "staging", "production")
 	InputCostPer1M  float64 `yaml:"input_cost_per_1m" mapstructure:"input_cost_per_1m" default:"3.0"`                        // Cost per 1M input tokens in USD (default: Claude Sonnet 4.5)
 	OutputCostPer1M float64 `yaml:"output_cost_per_1m" mapstructure:"output_cost_per_1m" default:"15.0"`                     // Cost per 1M output tokens in USD (default: Claude Sonnet 4.5)
 }

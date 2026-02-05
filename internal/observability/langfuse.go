@@ -91,6 +91,11 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 	trace.Tags = []string{"query", "knowledge-agent"}
 	trace.Metadata = metadata
 
+	// Set environment from config (e.g., "staging", "production")
+	if t.config.Environment != "" {
+		trace.Environment = t.config.Environment
+	}
+
 	// Set session ID for grouping in Langfuse Sessions view
 	if sessionID != "" {
 		trace.SessionID = sessionID
@@ -106,6 +111,7 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 	log.Infow("Langfuse trace created",
 		"trace_id", trace.ID,
 		"session_id", sessionID,
+		"environment", t.config.Environment,
 		"question_length", len(question),
 		"metadata_keys", getKeys(metadata),
 	)
