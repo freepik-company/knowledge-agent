@@ -54,11 +54,12 @@ func (t *LangfuseTracer) IsEnabled() bool {
 
 // QueryTrace tracks a complete query execution with ADK events
 type QueryTrace struct {
-	trace     *traces.Trace
-	tracer    *LangfuseTracer
-	startTime time.Time
-	metadata  map[string]any
-	TraceID   string // Exported for external access
+	trace       *traces.Trace
+	tracer      *LangfuseTracer
+	startTime   time.Time
+	metadata    map[string]any
+	TraceID     string // Exported for external access
+	environment string // Environment for all spans (staging, production, etc.)
 
 	// ADK event tracking
 	generations      []*traces.Observation
@@ -122,6 +123,7 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 		startTime:   time.Now(),
 		metadata:    metadata,
 		TraceID:     trace.ID,
+		environment: t.config.Environment,
 		generations: make([]*traces.Observation, 0),
 		toolCalls:   make(map[string]*traces.Observation),
 	}
@@ -149,6 +151,7 @@ func (qt *QueryTrace) StartGeneration(modelName string, input any) *traces.Obser
 	generation := qt.trace.StartGeneration(fmt.Sprintf("generation-%d", qt.eventCount.Load()))
 	generation.Model = modelName
 	generation.Input = input
+	generation.Environment = qt.environment
 
 	qt.generations = append(qt.generations, generation)
 
@@ -209,6 +212,7 @@ func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any
 	spanName := fmt.Sprintf("tool:%s", toolName)
 	tool := qt.trace.StartSpan(spanName)
 	tool.Input = args
+	tool.Environment = qt.environment
 	tool.Metadata = map[string]any{
 		"tool_id":   toolID,
 		"tool_name": toolName,
@@ -403,6 +407,7 @@ func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery strin
 
 	// Create a span for the A2A call
 	span := qt.trace.StartSpan(fmt.Sprintf("a2a-call-%s", agentName))
+	span.Environment = qt.environment
 	span.Input = map[string]any{
 		"agent":          agentName,
 		"original_query": truncateForLog(originalQuery, 500),
@@ -441,6 +446,7 @@ func (qt *QueryTrace) RecordPreSearch(query string, resultCount int, duration ti
 
 	// Create a span for the pre-search operation
 	span := qt.trace.StartSpan("pre-search-memory")
+	span.Environment = qt.environment
 	span.Input = map[string]any{
 		"query": truncateForLog(query, 200),
 	}
@@ -469,6 +475,7 @@ func (qt *QueryTrace) RecordRESTCall(agentName, query, response string, duration
 
 	// Create a span for the REST call
 	span := qt.trace.StartSpan(fmt.Sprintf("rest-call-%s", agentName))
+	span.Environment = qt.environment
 	span.Input = map[string]any{
 		"agent": agentName,
 		"query": truncateForLog(query, 500),
@@ -507,6 +514,7 @@ func (qt *QueryTrace) RecordSessionRepair(sessionID string, attempt int) {
 
 	// Create a span for the session repair
 	span := qt.trace.StartSpan("session-repair")
+	span.Environment = qt.environment
 	span.Input = map[string]any{
 		"session_id": sessionID,
 		"attempt":    attempt,
@@ -538,6 +546,7 @@ func (qt *QueryTrace) RecordAuxiliaryGeneration(name, model string, input, outpu
 	// Create generation observation
 	generation := qt.trace.StartGeneration(name)
 	generation.Model = model
+	generation.Environment = qt.environment
 	generation.Input = truncateForLog(input, 500)
 	generation.Output = truncateForLog(output, 500)
 	generation.Usage = traces.Usage{
