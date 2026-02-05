@@ -14,16 +14,17 @@ import (
 	"knowledge-agent/internal/auth/keycloak"
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/observability"
 )
 
 // RESTClient is a simple HTTP client for calling sub-agents via /api/query
 // It's simpler and faster than the A2A protocol for internal agents
 type RESTClient struct {
-	name           string          // Agent name for logging
-	endpoint       string          // Full URL to /api/query endpoint
-	httpClient     *http.Client    // HTTP client with configured timeout
-	authHeaderName string          // Auth header name (e.g., "X-API-Key")
-	authHeaderVal  string          // Auth header value
+	name           string           // Agent name for logging
+	endpoint       string           // Full URL to /api/query endpoint
+	httpClient     *http.Client     // HTTP client with configured timeout
+	authHeaderName string           // Auth header name (e.g., "X-API-Key")
+	authHeaderVal  string           // Auth header value
 	keycloakClient *keycloak.Client // Optional Keycloak client for JWT propagation
 }
 
@@ -40,42 +41,148 @@ type RESTClientConfig struct {
 
 // QueryRequest is the request body for REST sub-agent endpoints
 type QueryRequest struct {
-	Query     string `json:"query"`                    // The query to send (fc_logs_agent expects "query")
+	Query     string `json:"query"` // The query to send (fc_logs_agent expects "query")
 	ChannelID string `json:"channel_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }
 
-// QueryResponse is the response body from /api/query
-// Supports multiple formats:
-// - Simple format: {"success": true, "answer": "..."}
-// - ADK format: {"response": "...", "conversation_id": "...", "model": "..."}
+// QueryResponse wraps a sub-agent response and provides format-agnostic access.
+// It handles multiple response formats transparently:
+// - Known formats: {"answer": "..."}, {"response": "..."}, {"text": "..."}, etc.
+// - Unknown formats: The entire JSON is converted to text for LLM interpretation
+// - Plain text: Used directly if response is not valid JSON
 type QueryResponse struct {
-	// Simple format fields
-	Success bool   `json:"success"`
-	Answer  string `json:"answer"`
-	Message string `json:"message,omitempty"`
-
-	// ADK format fields (fc-logs-agent, etc.)
-	Response       string `json:"response,omitempty"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	Model          string `json:"model,omitempty"`
+	// Extracted answer text (from known field or entire response)
+	extractedAnswer string
+	// Whether the response indicates success
+	success bool
+	// Error message if present
+	errorMessage string
+	// Raw response for debugging
+	rawResponse string
 }
 
-// GetAnswer returns the answer from either format
-func (r *QueryResponse) GetAnswer() string {
-	if r.Answer != "" {
-		return r.Answer
+// knownAnswerFields are field names commonly used for response text, in priority order
+var knownAnswerFields = []string{
+	"answer",   // Our format
+	"response", // ADK format
+	"text",     // Common
+	"result",   // Common
+	"output",   // Common
+	"content",  // Common
+	"data",     // Common wrapper
+	"message",  // Sometimes used for response (check context)
+}
+
+// knownErrorFields are field names that indicate an error message
+var knownErrorFields = []string{
+	"error",
+	"error_message",
+	"err",
+}
+
+// knownSuccessFields are field names that indicate success status
+var knownSuccessFields = []string{
+	"success",
+	"ok",
+	"status",
+}
+
+// ParseQueryResponse parses a raw response body into a QueryResponse.
+// It attempts to extract the answer from known fields, falling back to
+// converting the entire response to text if no known fields are found.
+func ParseQueryResponse(body []byte) *QueryResponse {
+	resp := &QueryResponse{
+		rawResponse: string(body),
+		success:     true, // Assume success unless we find evidence otherwise
 	}
-	return r.Response
+
+	// Try to parse as JSON
+	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil {
+		// Not valid JSON - use raw text as the answer
+		resp.extractedAnswer = string(body)
+		return resp
+	}
+
+	// Check for error indicators first
+	for _, field := range knownErrorFields {
+		if errVal, ok := data[field]; ok {
+			if errStr, ok := errVal.(string); ok && errStr != "" {
+				resp.success = false
+				resp.errorMessage = errStr
+				return resp
+			}
+		}
+	}
+
+	// Check for explicit success field
+	for _, field := range knownSuccessFields {
+		if val, ok := data[field]; ok {
+			switch v := val.(type) {
+			case bool:
+				resp.success = v
+			case string:
+				resp.success = strings.EqualFold(v, "true") || strings.EqualFold(v, "ok") || strings.EqualFold(v, "success")
+			}
+			break
+		}
+	}
+
+	// Try to extract answer from known fields
+	for _, field := range knownAnswerFields {
+		if val, ok := data[field]; ok {
+			switch v := val.(type) {
+			case string:
+				if v != "" {
+					resp.extractedAnswer = v
+					return resp
+				}
+			case map[string]any:
+				// Nested object (e.g., {"data": {"text": "..."}}) - recurse one level
+				for _, nestedField := range knownAnswerFields {
+					if nestedVal, ok := v[nestedField]; ok {
+						if nestedStr, ok := nestedVal.(string); ok && nestedStr != "" {
+							resp.extractedAnswer = nestedStr
+							return resp
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// No known fields found - convert entire JSON to formatted text
+	// This allows the LLM to interpret any response format
+	formatted, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		// Fallback to raw response
+		resp.extractedAnswer = string(body)
+	} else {
+		resp.extractedAnswer = string(formatted)
+	}
+
+	return resp
+}
+
+// GetAnswer returns the extracted answer text
+func (r *QueryResponse) GetAnswer() string {
+	return r.extractedAnswer
 }
 
 // IsSuccess returns true if the response indicates success
 func (r *QueryResponse) IsSuccess() bool {
-	// ADK format doesn't have explicit success field - presence of response indicates success
-	if r.Response != "" {
-		return true
-	}
-	return r.Success
+	return r.success
+}
+
+// GetError returns the error message if the response indicates failure
+func (r *QueryResponse) GetError() string {
+	return r.errorMessage
+}
+
+// GetRaw returns the raw response body for debugging
+func (r *QueryResponse) GetRaw() string {
+	return r.rawResponse
 }
 
 // NewRESTClient creates a new REST client for calling sub-agents
@@ -170,14 +277,16 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 			"body", truncateForLog(string(respBody), 500),
 			"duration_ms", duration.Milliseconds(),
 		)
-		return nil, fmt.Errorf("agent %s returned HTTP %d: %s", c.name, resp.StatusCode, truncateForLog(string(respBody), 200))
+		httpErr := fmt.Errorf("agent %s returned HTTP %d: %s", c.name, resp.StatusCode, truncateForLog(string(respBody), 200))
+		// Record error in Langfuse trace
+		if trace := observability.QueryTraceFromContext(ctx); trace != nil {
+			trace.RecordRESTCall(c.name, question, "", duration, httpErr)
+		}
+		return nil, httpErr
 	}
 
-	// Parse response
-	var queryResp QueryResponse
-	if err := json.Unmarshal(respBody, &queryResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
+	// Parse response using format-agnostic parser
+	queryResp := ParseQueryResponse(respBody)
 
 	log.Infow("REST client received response",
 		"agent", c.name,
@@ -186,7 +295,12 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 		"duration_ms", duration.Milliseconds(),
 	)
 
-	return &queryResp, nil
+	// Record in Langfuse trace if available
+	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
+		trace.RecordRESTCall(c.name, question, queryResp.GetAnswer(), duration, nil)
+	}
+
+	return queryResp, nil
 }
 
 // propagateIdentity adds identity headers from context to the request

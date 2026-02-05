@@ -38,9 +38,9 @@ func TestRESTClient_Query_Success(t *testing.T) {
 		}
 
 		// Return success response (simple format)
-		resp := QueryResponse{
-			Success: true,
-			Answer:  "The weather is sunny.",
+		resp := map[string]any{
+			"success": true,
+			"answer":  "The weather is sunny.",
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -106,12 +106,8 @@ func TestRESTClient_Query_ADKFormat(t *testing.T) {
 	if resp.GetAnswer() != "Found 15 errors in the last hour." {
 		t.Errorf("expected GetAnswer() to return response field, got '%s'", resp.GetAnswer())
 	}
-	if resp.ConversationID != "session-123" {
-		t.Errorf("expected conversation_id='session-123', got '%s'", resp.ConversationID)
-	}
-	if resp.Model != "claude-sonnet-4-5" {
-		t.Errorf("expected model='claude-sonnet-4-5', got '%s'", resp.Model)
-	}
+	// Note: ConversationID and Model are not exposed by the agnostic parser
+	// The LLM receives them as part of the response if needed
 }
 
 func TestRESTClient_Query_PropagatesIdentity(t *testing.T) {
@@ -121,7 +117,7 @@ func TestRESTClient_Query_PropagatesIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedHeaders = r.Header.Clone()
 
-		resp := QueryResponse{Success: true, Answer: "OK"}
+		resp := map[string]any{"success": true, "answer": "OK"}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -206,7 +202,7 @@ func TestRESTClient_Query_Timeout(t *testing.T) {
 	// Create mock server that delays response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
-		resp := QueryResponse{Success: true, Answer: "OK"}
+		resp := map[string]any{"success": true, "answer": "OK"}
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
@@ -339,7 +335,7 @@ func TestRESTClient_Query_BodyFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&capturedBody)
 
-		resp := QueryResponse{Success: true, Answer: "OK"}
+		resp := map[string]any{"success": true, "answer": "OK"}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -368,5 +364,130 @@ func TestRESTClient_Query_BodyFormat(t *testing.T) {
 	// session_id should NOT be sent in body (sub-agents create their own sessions)
 	if capturedBody.SessionID != "" {
 		t.Errorf("expected empty session_id, got %s", capturedBody.SessionID)
+	}
+}
+
+// TestParseQueryResponse_KnownFormats tests parsing of known response formats
+func TestParseQueryResponse_KnownFormats(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		expectSuccess  bool
+		expectAnswer   string
+		expectError    string
+	}{
+		{
+			name:          "simple format with answer",
+			body:          `{"success": true, "answer": "Hello world"}`,
+			expectSuccess: true,
+			expectAnswer:  "Hello world",
+		},
+		{
+			name:          "ADK format with response",
+			body:          `{"response": "Found 5 results", "model": "claude-3"}`,
+			expectSuccess: true,
+			expectAnswer:  "Found 5 results",
+		},
+		{
+			name:          "text field format",
+			body:          `{"text": "Some text response"}`,
+			expectSuccess: true,
+			expectAnswer:  "Some text response",
+		},
+		{
+			name:          "result field format",
+			body:          `{"result": "Operation completed"}`,
+			expectSuccess: true,
+			expectAnswer:  "Operation completed",
+		},
+		{
+			name:          "output field format",
+			body:          `{"output": "Command output here"}`,
+			expectSuccess: true,
+			expectAnswer:  "Command output here",
+		},
+		{
+			name:          "content field format",
+			body:          `{"content": "Content data"}`,
+			expectSuccess: true,
+			expectAnswer:  "Content data",
+		},
+		{
+			name:          "nested data.text format",
+			body:          `{"data": {"text": "Nested response"}}`,
+			expectSuccess: true,
+			expectAnswer:  "Nested response",
+		},
+		{
+			name:          "error field indicates failure",
+			body:          `{"error": "Something went wrong"}`,
+			expectSuccess: false,
+			expectError:   "Something went wrong",
+		},
+		{
+			name:          "success false",
+			body:          `{"success": false, "message": "Failed"}`,
+			expectSuccess: false,
+			expectAnswer:  "Failed", // message is a known field
+		},
+		{
+			name:          "plain text (not JSON)",
+			body:          `This is plain text response`,
+			expectSuccess: true,
+			expectAnswer:  "This is plain text response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := ParseQueryResponse([]byte(tt.body))
+
+			if resp.IsSuccess() != tt.expectSuccess {
+				t.Errorf("IsSuccess() = %v, want %v", resp.IsSuccess(), tt.expectSuccess)
+			}
+			if tt.expectAnswer != "" && resp.GetAnswer() != tt.expectAnswer {
+				t.Errorf("GetAnswer() = %q, want %q", resp.GetAnswer(), tt.expectAnswer)
+			}
+			if tt.expectError != "" && resp.GetError() != tt.expectError {
+				t.Errorf("GetError() = %q, want %q", resp.GetError(), tt.expectError)
+			}
+		})
+	}
+}
+
+// TestParseQueryResponse_UnknownFormat tests that unknown formats are serialized as JSON
+func TestParseQueryResponse_UnknownFormat(t *testing.T) {
+	// A response with no known fields should be serialized as formatted JSON
+	body := `{"custom_field": "value", "another": 123, "nested": {"foo": "bar"}}`
+	resp := ParseQueryResponse([]byte(body))
+
+	if !resp.IsSuccess() {
+		t.Error("expected success for unknown format")
+	}
+
+	answer := resp.GetAnswer()
+	// The answer should be formatted JSON
+	if answer == "" {
+		t.Error("expected non-empty answer")
+	}
+
+	// Verify it's valid JSON and contains expected fields
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(answer), &parsed); err != nil {
+		t.Errorf("answer should be valid JSON: %v", err)
+	}
+	if parsed["custom_field"] != "value" {
+		t.Error("expected custom_field to be preserved")
+	}
+}
+
+// TestParseQueryResponse_PriorityOrder tests that answer fields are checked in priority order
+func TestParseQueryResponse_PriorityOrder(t *testing.T) {
+	// If both "answer" and "response" exist, "answer" should take priority
+	body := `{"answer": "From answer", "response": "From response"}`
+	resp := ParseQueryResponse([]byte(body))
+
+	if resp.GetAnswer() != "From answer" {
+		t.Errorf("expected 'From answer' (higher priority), got %q", resp.GetAnswer())
 	}
 }

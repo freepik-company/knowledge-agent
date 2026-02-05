@@ -24,6 +24,7 @@ type Client struct {
 	api         *slack.Client
 	token       string
 	maxFileSize int64
+	httpClient  *http.Client // Shared HTTP client for file downloads (thread-safe)
 
 	// Thread message cache
 	threadCache   map[string]*threadCacheEntry
@@ -83,9 +84,12 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 
 	c := &Client{
-		api:           slack.New(cfg.Token),
-		token:         cfg.Token,
-		maxFileSize:   cfg.MaxFileSize,
+		api:         slack.New(cfg.Token),
+		token:       cfg.Token,
+		maxFileSize: cfg.MaxFileSize,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 		threadCache:   make(map[string]*threadCacheEntry),
 		cacheTTL:      cacheTTL,
 		cacheMaxSize:  cacheMaxSize,
@@ -520,11 +524,8 @@ func (c *Client) DownloadFile(fileURL string) ([]byte, error) {
 	// Add Slack authorization header
 	req.Header.Add("Authorization", "Bearer "+c.token)
 
-	// Use client with timeout to prevent hanging
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	resp, err := client.Do(req)
+	// Use shared HTTP client (timeout configured at client creation)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}

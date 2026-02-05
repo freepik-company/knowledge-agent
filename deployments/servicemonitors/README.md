@@ -94,17 +94,23 @@ spec:
 - `knowledge_agent_query_errors_total` - Total query errors
 - `knowledge_agent_query_latency_seconds` - Query latency histogram
 
-**Memory Operations:**
-- `knowledge_agent_memory_saves_total` - Total memory saves
-- `knowledge_agent_memory_searches_total` - Total memory searches
-- `knowledge_agent_memory_errors_total` - Total memory operation errors
+**Tool Execution:**
+- `knowledge_agent_tool_calls_total{tool_name,status}` - Tool calls by name and status
+- `knowledge_agent_tool_latency_seconds{tool_name}` - Tool execution latency
 
-**URL Fetching:**
-- `knowledge_agent_url_fetches_total` - Total URL fetches
-- `knowledge_agent_url_fetch_errors_total` - Total URL fetch errors
+**A2A Sub-Agents:**
+- `knowledge_agent_a2a_calls_total{sub_agent,status}` - A2A calls by sub-agent
+- `knowledge_agent_a2a_latency_seconds{sub_agent}` - A2A call latency
 
-**Token Usage:**
-- `knowledge_agent_tokens_used_total` - Total LLM tokens used
+**Ingest:**
+- `knowledge_agent_ingest_total` - Total ingest operations
+- `knowledge_agent_ingest_errors_total` - Ingest errors
+- `knowledge_agent_ingest_latency_seconds` - Ingest latency
+
+**Pre-Search:**
+- `knowledge_agent_presearch_total` - Pre-search operations
+- `knowledge_agent_presearch_errors_total` - Pre-search errors
+- `knowledge_agent_presearch_latency_seconds` - Pre-search latency
 
 **Process:**
 - `knowledge_agent_process_start_time_seconds` - Process start time (for uptime)
@@ -234,10 +240,10 @@ sum(rate(knowledge_agent_queries_total[5m])) - sum(rate(knowledge_agent_query_er
 rate(knowledge_agent_query_latency_seconds_sum[5m]) / rate(knowledge_agent_query_latency_seconds_count[5m])
 ```
 
-**Memory Operations:**
+**Tool Operations:**
 ```promql
-sum by (operation) (rate(knowledge_agent_memory_saves_total[5m]))
-sum by (operation) (rate(knowledge_agent_memory_searches_total[5m]))
+sum by (tool_name) (rate(knowledge_agent_tool_calls_total[5m]))
+sum by (sub_agent) (rate(knowledge_agent_a2a_calls_total[5m]))
 ```
 
 **Slack Bridge Health:**

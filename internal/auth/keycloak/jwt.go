@@ -25,9 +25,9 @@ type JWTClaims struct {
 type GroupsClaimPath string
 
 const (
-	GroupsClaimGroups      GroupsClaimPath = "groups"             // Direct groups claim
-	GroupsClaimRealmRoles  GroupsClaimPath = "realm_access.roles" // Realm roles
-	GroupsClaimDefault     GroupsClaimPath = "groups"             // Default path
+	GroupsClaimGroups     GroupsClaimPath = "groups"             // Direct groups claim
+	GroupsClaimRealmRoles GroupsClaimPath = "realm_access.roles" // Realm roles
+	GroupsClaimDefault    GroupsClaimPath = "groups"             // Default path
 )
 
 // ParseJWTClaims extracts claims from a JWT token without validating the signature.

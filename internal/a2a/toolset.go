@@ -78,8 +78,8 @@ func (w *restClientWrapper) Query(ctx context.Context, question string) (string,
 		return "", err
 	}
 	if !resp.IsSuccess() {
-		if resp.Message != "" {
-			return "", fmt.Errorf("agent returned error: %s", resp.Message)
+		if errMsg := resp.GetError(); errMsg != "" {
+			return "", fmt.Errorf("agent returned error: %s", errMsg)
 		}
 		return "", fmt.Errorf("agent returned success=false")
 	}
@@ -105,9 +105,9 @@ func (w *restClientWrapper) Close() error {
 // - "rest": Uses direct HTTP calls to /api/query (simpler, faster, better error messages)
 type A2AToolset struct {
 	tools      []tool.Tool
-	clients    []SubAgentClient            // Unified client interface (A2A or REST)
-	clientsMap map[string]SubAgentClient   // For parallel query tool
-	a2aClients []*a2aclient.Client         // Keep reference for legacy compatibility
+	clients    []SubAgentClient          // Unified client interface (A2A or REST)
+	clientsMap map[string]SubAgentClient // For parallel query tool
+	a2aClients []*a2aclient.Client       // Keep reference for legacy compatibility
 }
 
 // QuerySubAgentArgs are the arguments for sub-agent query tools

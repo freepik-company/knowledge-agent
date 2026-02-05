@@ -579,6 +579,11 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 		"duration_ms", duration.Milliseconds(),
 	)
 
+	// Record pre-search in Langfuse trace
+	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
+		trace.RecordPreSearch(question, resultCount, duration)
+	}
+
 	return resultsText
 }
 
@@ -865,127 +870,127 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				break
 			}
 
-		eventCount++
+			eventCount++
 
-		// Check for usage metadata in the event
-		var usageTokens *genai.GenerateContentResponseUsageMetadata
-		if event.UsageMetadata != nil {
-			usageTokens = event.UsageMetadata
-		}
+			// Check for usage metadata in the event
+			var usageTokens *genai.GenerateContentResponseUsageMetadata
+			if event.UsageMetadata != nil {
+				usageTokens = event.UsageMetadata
+			}
 
-		log.Debugw("Runner event received",
-			"event_number", eventCount,
-			"has_content", event.Content != nil,
-			"error_code", event.ErrorCode,
-			"has_usage", usageTokens != nil,
-		)
-
-		if event.ErrorCode != "" {
-			log.Errorw("Event error during query",
+			log.Debugw("Runner event received",
+				"event_number", eventCount,
+				"has_content", event.Content != nil,
 				"error_code", event.ErrorCode,
-				"error_message", event.ErrorMessage,
-			)
-			trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
-			return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
-		}
-
-		// Process event content
-		if event.Content != nil {
-			log.Debugw("Processing event content",
-				"parts_count", len(event.Content.Parts),
-				"role", event.Content.Role,
+				"has_usage", usageTokens != nil,
 			)
 
-			// Start generation if we have token usage (indicates LLM call)
-			if usageTokens != nil && currentGeneration == nil {
-				currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
-				generationOutput = "" // Reset for new generation
+			if event.ErrorCode != "" {
+				log.Errorw("Event error during query",
+					"error_code", event.ErrorCode,
+					"error_message", event.ErrorMessage,
+				)
+				trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
+				return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
 			}
 
-			for i, part := range event.Content.Parts {
-				// Text content
-				if part.Text != "" {
-					log.Debugw("Text part",
-						"index", i,
-						"length", len(part.Text),
-						"preview", truncateString(part.Text, 100),
-					)
-
-					// Collect response text for final answer
-					responseText += part.Text
-
-					// Track this generation's output separately
-					if currentGeneration != nil {
-						generationOutput += part.Text
-					}
-				}
-
-				// Tool call
-				if part.FunctionCall != nil {
-					toolName := part.FunctionCall.Name
-					toolStartTimes[toolName] = time.Now()
-
-					log.Infow("Tool call started",
-						"tool", toolName,
-						"args_count", len(part.FunctionCall.Args),
-						"trace_id", trace.TraceID,
-					)
-
-					// Track tool call in Langfuse
-					trace.StartToolCall(toolName, part.FunctionCall.Args)
-				}
-
-				// Tool response
-				if part.FunctionResponse != nil {
-					toolName := part.FunctionResponse.Name
-					var duration time.Duration
-					if startTime, ok := toolStartTimes[toolName]; ok {
-						duration = time.Since(startTime)
-						delete(toolStartTimes, toolName)
-					}
-
-					// Determine if tool call was successful
-					success := !containsError(part.FunctionResponse.Response)
-
-					log.Infow("Tool call completed",
-						"tool", toolName,
-						"duration_ms", duration.Milliseconds(),
-						"success", success,
-						"has_response", part.FunctionResponse.Response != nil,
-					)
-
-					// Record tool metrics
-					observability.GetMetrics().RecordToolCall(toolName, duration, success)
-
-					// Log detailed response for A2A debugging
-					if toolName == "transfer_to_agent" {
-						log.Debugw("transfer_to_agent response details",
-							"response", part.FunctionResponse.Response,
-						)
-					}
-
-					// End tool call in Langfuse
-					trace.EndToolCall(toolName, part.FunctionResponse.Response, nil)
-				}
-			}
-
-			// End generation if we have token usage
-			if usageTokens != nil && currentGeneration != nil {
-				promptTokens := int(usageTokens.PromptTokenCount)
-				completionTokens := int(usageTokens.CandidatesTokenCount)
-
-				// Pass only this generation's output, not accumulated text
-				trace.EndGeneration(
-					currentGeneration,
-					generationOutput,
-					promptTokens,
-					completionTokens,
+			// Process event content
+			if event.Content != nil {
+				log.Debugw("Processing event content",
+					"parts_count", len(event.Content.Parts),
+					"role", event.Content.Role,
 				)
 
-				currentGeneration = nil // Reset for next generation
-				generationOutput = ""   // Reset output tracker
+				// Start generation if we have token usage (indicates LLM call)
+				if usageTokens != nil && currentGeneration == nil {
+					currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
+					generationOutput = "" // Reset for new generation
+				}
+
+				for i, part := range event.Content.Parts {
+					// Text content
+					if part.Text != "" {
+						log.Debugw("Text part",
+							"index", i,
+							"length", len(part.Text),
+							"preview", truncateString(part.Text, 100),
+						)
+
+						// Collect response text for final answer
+						responseText += part.Text
+
+						// Track this generation's output separately
+						if currentGeneration != nil {
+							generationOutput += part.Text
+						}
+					}
+
+					// Tool call
+					if part.FunctionCall != nil {
+						toolName := part.FunctionCall.Name
+						toolStartTimes[toolName] = time.Now()
+
+						log.Infow("Tool call started",
+							"tool", toolName,
+							"args_count", len(part.FunctionCall.Args),
+							"trace_id", trace.TraceID,
+						)
+
+						// Track tool call in Langfuse
+						trace.StartToolCall(toolName, part.FunctionCall.Args)
+					}
+
+					// Tool response
+					if part.FunctionResponse != nil {
+						toolName := part.FunctionResponse.Name
+						var duration time.Duration
+						if startTime, ok := toolStartTimes[toolName]; ok {
+							duration = time.Since(startTime)
+							delete(toolStartTimes, toolName)
+						}
+
+						// Determine if tool call was successful
+						success := !containsError(part.FunctionResponse.Response)
+
+						log.Infow("Tool call completed",
+							"tool", toolName,
+							"duration_ms", duration.Milliseconds(),
+							"success", success,
+							"has_response", part.FunctionResponse.Response != nil,
+						)
+
+						// Record tool metrics
+						observability.GetMetrics().RecordToolCall(toolName, duration, success)
+
+						// Log detailed response for A2A debugging
+						if toolName == "transfer_to_agent" {
+							log.Debugw("transfer_to_agent response details",
+								"response", part.FunctionResponse.Response,
+							)
+						}
+
+						// End tool call in Langfuse
+						trace.EndToolCall(toolName, part.FunctionResponse.Response, nil)
+					}
+				}
+
+				// End generation if we have token usage
+				if usageTokens != nil && currentGeneration != nil {
+					promptTokens := int(usageTokens.PromptTokenCount)
+					completionTokens := int(usageTokens.CandidatesTokenCount)
+
+					// Pass only this generation's output, not accumulated text
+					trace.EndGeneration(
+						currentGeneration,
+						generationOutput,
+						promptTokens,
+						completionTokens,
+					)
+
+					currentGeneration = nil // Reset for next generation
+					generationOutput = ""   // Reset output tracker
+				}
 			}
-		}
 		}
 
 		// Check if we got an error from the runner
@@ -997,6 +1002,9 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 					"session_id", sessionID,
 					"attempt", attempt,
 				)
+
+				// Record session repair in Langfuse trace
+				trace.RecordSessionRepair(sessionID, attempt)
 
 				// Delete the corrupted session so next attempt starts fresh
 				if err := deleteCorruptedSession(ctx, a.sessionService, userID, sessionID); err != nil {

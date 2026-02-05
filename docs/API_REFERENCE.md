@@ -131,13 +131,13 @@ knowledge_agent_query_latency_seconds_bucket{le="0.005"} 120
 knowledge_agent_query_latency_seconds_bucket{le="0.01"} 450
 ...
 
-# HELP knowledge_agent_memory_saves_total Total number of memory save operations
-# TYPE knowledge_agent_memory_saves_total counter
-knowledge_agent_memory_saves_total 567
+# HELP knowledge_agent_tool_calls_total Total tool calls by tool name and status
+# TYPE knowledge_agent_tool_calls_total counter
+knowledge_agent_tool_calls_total{tool_name="search_memory",status="success"} 567
 
-# HELP knowledge_agent_tokens_used_total Total number of LLM tokens used
-# TYPE knowledge_agent_tokens_used_total counter
-knowledge_agent_tokens_used_total 1500000
+# HELP knowledge_agent_a2a_calls_total Total A2A calls by sub-agent and status
+# TYPE knowledge_agent_a2a_calls_total counter
+knowledge_agent_a2a_calls_total{sub_agent="logs_agent",status="success"} 89
 ```
 
 **Example**:

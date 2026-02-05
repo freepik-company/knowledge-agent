@@ -100,45 +100,45 @@ func AuthMiddlewareWithKeycloak(cfg *config.Config, keycloakClient *keycloak.Cli
 						}
 
 						// Add user email from request header or JWT
-					var userEmail string
-					if userEmail = r.Header.Get("X-User-Email"); userEmail == "" {
-						if jwtClaims != nil && jwtClaims.Email != "" {
-							userEmail = jwtClaims.Email
+						var userEmail string
+						if userEmail = r.Header.Get("X-User-Email"); userEmail == "" {
+							if jwtClaims != nil && jwtClaims.Email != "" {
+								userEmail = jwtClaims.Email
+							}
 						}
-					}
-					if userEmail != "" {
-						ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
-					}
-
-					// Add groups from JWT if available
-					var userGroups []string
-					if jwtClaims != nil && len(jwtClaims.Groups) > 0 {
-						userGroups = jwtClaims.Groups
-					}
-
-					// If we have email but no groups, lookup groups from Keycloak
-					if userEmail != "" && len(userGroups) == 0 && keycloakClient != nil && keycloakClient.IsEnabled() {
-						groups, err := keycloakClient.GetUserGroups(r.Context(), userEmail)
-						if err != nil {
-							log.Warnw("Failed to lookup user groups from Keycloak",
-								"email", userEmail,
-								"error", err,
-							)
-							// Continue without groups - permission check will use email only
-						} else if len(groups) > 0 {
-							userGroups = groups
-							log.Debugw("Retrieved user groups from Keycloak",
-								"email", userEmail,
-								"groups_count", len(groups),
-							)
+						if userEmail != "" {
+							ctx = context.WithValue(ctx, ctxutil.UserEmailKey, userEmail)
 						}
-					}
 
-					if len(userGroups) > 0 {
-						ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, userGroups)
-					}
+						// Add groups from JWT if available
+						var userGroups []string
+						if jwtClaims != nil && len(jwtClaims.Groups) > 0 {
+							userGroups = jwtClaims.Groups
+						}
 
-					next.ServeHTTP(w, r.WithContext(ctx))
+						// If we have email but no groups, lookup groups from Keycloak
+						if userEmail != "" && len(userGroups) == 0 && keycloakClient != nil && keycloakClient.IsEnabled() {
+							groups, err := keycloakClient.GetUserGroups(r.Context(), userEmail)
+							if err != nil {
+								log.Warnw("Failed to lookup user groups from Keycloak",
+									"email", userEmail,
+									"error", err,
+								)
+								// Continue without groups - permission check will use email only
+							} else if len(groups) > 0 {
+								userGroups = groups
+								log.Debugw("Retrieved user groups from Keycloak",
+									"email", userEmail,
+									"groups_count", len(groups),
+								)
+							}
+						}
+
+						if len(userGroups) > 0 {
+							ctx = context.WithValue(ctx, ctxutil.UserGroupsKey, userGroups)
+						}
+
+						next.ServeHTTP(w, r.WithContext(ctx))
 						return
 					}
 					// Invalid internal token - don't fall through, reject immediately

@@ -26,6 +26,7 @@ type Handler struct {
 	internalToken string        // Internal token for authenticating with the Knowledge Agent
 	botUserID     string        // Bot's own user ID (for filtering self-messages in DMs)
 	ackGenerator  *AckGenerator // Generator for contextual acknowledgment messages
+	httpClient    *http.Client  // Shared HTTP client for agent communication (thread-safe)
 }
 
 // NewHandler creates a new Slack event handler
@@ -45,6 +46,7 @@ func NewHandler(cfg *config.Config, agentURL string) *Handler {
 		agentURL:      agentURL,
 		internalToken: cfg.Auth.InternalToken,
 		ackGenerator:  NewAckGenerator(cfg.Anthropic.APIKey),
+		httpClient:    &http.Client{}, // Shared, reusable HTTP client (context controls timeout)
 	}
 
 	// Initialize bot user ID for DM filtering
@@ -540,9 +542,8 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	}
 
 	// Send request - context controls the timeout (5 min)
-	// No Client.Timeout to avoid conflicts with context cancellation
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// Using shared httpClient to avoid TCP connection leaks
+	resp, err := h.httpClient.Do(req)
 
 	if err != nil {
 		// Log detailed technical error for debugging
@@ -574,7 +575,10 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		body := make([]byte, 1024)
-		n, _ := resp.Body.Read(body)
+		n, readErr := resp.Body.Read(body)
+		if readErr != nil && readErr != io.EOF {
+			log.Warnw("Failed to read error response body", "error", readErr)
+		}
 		log.Errorw("Agent returned error status",
 			"status_code", resp.StatusCode,
 			"body_preview", string(body[:n]),
@@ -600,7 +604,10 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	// 5. Send answer back to Slack
 	success, ok := agentResp["success"].(bool)
 	if !ok {
-		log.Error("Invalid response format: missing or invalid 'success' field")
+		log.Errorw("Invalid response format: missing or invalid 'success' field",
+			"response_keys", getMapKeys(agentResp),
+			"channel_id", event.Channel,
+		)
 		h.client.PostMessage(event.Channel, threadTS,
 			":gear: Recibi una respuesta que no pude procesar. Por favor, intenta de nuevo.")
 		return
@@ -609,7 +616,10 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	if success {
 		answer, ok := agentResp["answer"].(string)
 		if !ok {
-			log.Error("Invalid response format: missing or invalid 'answer' field")
+			log.Errorw("Invalid response format: missing or invalid 'answer' field",
+				"response_keys", getMapKeys(agentResp),
+				"channel_id", event.Channel,
+			)
 			h.client.PostMessage(event.Channel, threadTS,
 				":thinking_face: No recibi una respuesta completa. Por favor, intenta de nuevo.")
 			return
@@ -618,7 +628,10 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		// Format the answer for Slack (convert markdown)
 		formattedAnswer := FormatMessageForSlack(answer)
 
-		log.Info("Agent responded successfully")
+		log.Infow("Agent responded successfully",
+			"channel_id", event.Channel,
+			"answer_length", len(answer),
+		)
 		h.client.PostMessage(event.Channel, threadTS, formattedAnswer)
 	} else {
 		errorMsg, ok := agentResp["message"].(string)
@@ -728,4 +741,13 @@ func (h *Handler) findLastBotMentionIndex(messages []Message) int {
 	// No previous mention found - this might be first interaction in thread
 	// Return 0 to include all messages
 	return 0
+}
+
+// getMapKeys returns the keys of a map for logging purposes
+func getMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

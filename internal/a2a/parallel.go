@@ -31,10 +31,10 @@ type ParallelQueryResult struct {
 
 // QueryMultipleAgentsResult is the aggregated result from parallel sub-agent queries
 type QueryMultipleAgentsResult struct {
-	Results      []ParallelQueryResult `json:"results"`
-	TotalAgents  int                   `json:"total_agents"`
-	Successful   int                   `json:"successful"`
-	Failed       int                   `json:"failed"`
+	Results     []ParallelQueryResult `json:"results"`
+	TotalAgents int                   `json:"total_agents"`
+	Successful  int                   `json:"successful"`
+	Failed      int                   `json:"failed"`
 }
 
 // createParallelQueryTool creates a tool for querying multiple sub-agents in parallel

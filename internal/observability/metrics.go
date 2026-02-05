@@ -14,18 +14,6 @@ type Metrics struct {
 	queryLatencySum   atomic.Int64 // in milliseconds
 	queryLatencyCount atomic.Int64
 
-	// Memory operation metrics
-	memorySaveCount   atomic.Int64
-	memorySearchCount atomic.Int64
-	memoryErrorCount  atomic.Int64
-
-	// URL fetch metrics
-	urlFetchCount      atomic.Int64
-	urlFetchErrorCount atomic.Int64
-
-	// Token usage (if available from LLM responses)
-	tokensUsed atomic.Int64
-
 	// Tool call metrics
 	toolCallCount      atomic.Int64
 	toolCallErrorCount atomic.Int64
@@ -77,47 +65,6 @@ func (m *Metrics) RecordQuery(duration time.Duration, err error) {
 
 	// Record to Prometheus
 	m.recordQueryPrometheus(duration, err)
-}
-
-// RecordMemorySave records a memory save operation
-func (m *Metrics) RecordMemorySave(success bool) {
-	m.memorySaveCount.Add(1)
-	if !success {
-		m.memoryErrorCount.Add(1)
-	}
-
-	// Record to Prometheus
-	m.recordMemorySavePrometheus(success)
-}
-
-// RecordMemorySearch records a memory search operation
-func (m *Metrics) RecordMemorySearch(success bool) {
-	m.memorySearchCount.Add(1)
-	if !success {
-		m.memoryErrorCount.Add(1)
-	}
-
-	// Record to Prometheus
-	m.recordMemorySearchPrometheus(success)
-}
-
-// RecordURLFetch records a URL fetch operation
-func (m *Metrics) RecordURLFetch(success bool) {
-	m.urlFetchCount.Add(1)
-	if !success {
-		m.urlFetchErrorCount.Add(1)
-	}
-
-	// Record to Prometheus
-	m.recordURLFetchPrometheus(success)
-}
-
-// RecordTokensUsed records tokens used by the LLM
-func (m *Metrics) RecordTokensUsed(tokens int64) {
-	m.tokensUsed.Add(tokens)
-
-	// Record to Prometheus
-	m.recordTokensPrometheus(tokens)
 }
 
 // RecordToolCall records a tool call execution
@@ -187,13 +134,6 @@ func (m *Metrics) GetStats() map[string]any {
 		queryErrorRate = float64(m.queryErrorCount.Load()) / float64(count) * 100
 	}
 
-	// Calculate memory error rate
-	var memoryErrorRate float64
-	totalMemoryOps := m.memorySaveCount.Load() + m.memorySearchCount.Load()
-	if totalMemoryOps > 0 {
-		memoryErrorRate = float64(m.memoryErrorCount.Load()) / float64(totalMemoryOps) * 100
-	}
-
 	// Calculate tool error rate
 	var toolErrorRate float64
 	if count := m.toolCallCount.Load(); count > 0 {
@@ -241,16 +181,6 @@ func (m *Metrics) GetStats() map[string]any {
 			"error_rate_percent": queryErrorRate,
 			"avg_latency_ms":     avgLatency,
 		},
-		"memory": map[string]any{
-			"saves":              m.memorySaveCount.Load(),
-			"searches":           m.memorySearchCount.Load(),
-			"errors":             m.memoryErrorCount.Load(),
-			"error_rate_percent": memoryErrorRate,
-		},
-		"url_fetch": map[string]any{
-			"total":  m.urlFetchCount.Load(),
-			"errors": m.urlFetchErrorCount.Load(),
-		},
 		"tools": map[string]any{
 			"total":              m.toolCallCount.Load(),
 			"errors":             m.toolCallErrorCount.Load(),
@@ -273,38 +203,7 @@ func (m *Metrics) GetStats() map[string]any {
 			"error_rate_percent": preSearchErrorRate,
 			"avg_latency_ms":     avgPreSearchLatency,
 		},
-		"tokens_used": m.tokensUsed.Load(),
 	}
-}
-
-// Reset resets all metrics (useful for testing)
-func (m *Metrics) Reset() {
-	m.queryCount.Store(0)
-	m.queryErrorCount.Store(0)
-	m.queryLatencySum.Store(0)
-	m.queryLatencyCount.Store(0)
-	m.memorySaveCount.Store(0)
-	m.memorySearchCount.Store(0)
-	m.memoryErrorCount.Store(0)
-	m.urlFetchCount.Store(0)
-	m.urlFetchErrorCount.Store(0)
-	m.tokensUsed.Store(0)
-	m.toolCallCount.Store(0)
-	m.toolCallErrorCount.Store(0)
-	m.a2aCallCount.Store(0)
-	m.a2aCallErrorCount.Store(0)
-	m.ingestCount.Store(0)
-	m.ingestErrorCount.Store(0)
-	m.ingestLatencySum.Store(0)
-	m.ingestLatencyCount.Store(0)
-	m.preSearchCount.Store(0)
-	m.preSearchErrorCount.Store(0)
-	m.preSearchLatencySum.Store(0)
-	m.preSearchLatencyCount.Store(0)
-
-	m.mu.Lock()
-	m.startTime = time.Now()
-	m.mu.Unlock()
 }
 
 // Slack Bridge metrics (no internal storage, only Prometheus)

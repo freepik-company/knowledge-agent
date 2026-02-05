@@ -168,8 +168,11 @@ func (ci *queryExtractorInterceptor) Before(ctx context.Context, req *a2aclient.
 		"text_preview", truncateString(originalText, 200),
 	)
 
-	// Call Haiku to summarize the context
+	// Call Haiku to summarize the context (measure duration for Langfuse)
+	summarizeStart := time.Now()
 	summarized, err := ci.summarizeContext(ctx, originalText)
+	summarizeDuration := time.Since(summarizeStart)
+
 	if err != nil {
 		// Graceful degradation: log warning and continue with original
 		log.Warnw("Query extractor failed, using original payload",
@@ -206,11 +209,12 @@ func (ci *queryExtractorInterceptor) Before(ctx context.Context, req *a2aclient.
 		"cleaned_parts", 1,
 		"reduction_percent", fmt.Sprintf("%.1f%%", float64(originalLen-len(summarized))/float64(originalLen)*100),
 		"cleaned_text", summarized,
+		"duration_ms", summarizeDuration.Milliseconds(),
 	)
 
 	// Record A2A call in Langfuse trace if available
 	if qt := observability.QueryTraceFromContext(ctx); qt != nil {
-		qt.RecordA2ACall(ci.agentName, originalText, summarized, 0)
+		qt.RecordA2ACall(ci.agentName, originalText, summarized, summarizeDuration.Milliseconds())
 	}
 
 	return ctx, nil

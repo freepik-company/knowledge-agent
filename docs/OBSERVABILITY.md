@@ -485,18 +485,6 @@ curl http://localhost:8081/metrics
     "error_rate_percent": 2.0,
     "avg_latency_ms": 1250.5
   },
-  "memory": {
-    "saves": 45,
-    "searches": 120,
-    "errors": 2,
-    "error_rate_percent": 1.2
-  },
-  "pre_search": {
-    "total": 148,
-    "errors": 2,
-    "error_rate_percent": 1.35,
-    "avg_latency_ms": 85.3
-  },
   "tools": {
     "total": 320,
     "errors": 5,
@@ -507,7 +495,18 @@ curl http://localhost:8081/metrics
     "errors": 1,
     "error_rate_percent": 4.0
   },
-  "tokens_used": 1250000
+  "ingest": {
+    "total": 45,
+    "errors": 2,
+    "error_rate_percent": 4.44,
+    "avg_latency_ms": 2500.0
+  },
+  "pre_search": {
+    "total": 148,
+    "errors": 2,
+    "error_rate_percent": 1.35,
+    "avg_latency_ms": 85.3
+  }
 }
 ```
 
@@ -681,17 +680,17 @@ Use Datadog agent to collect logs.
 
 ### Monitoring
 
-**Prometheus (Future):**
+**Prometheus:**
+
+Prometheus-compatible metrics are exposed at `/metrics`. See [PROMETHEUS_METRICS.md](PROMETHEUS_METRICS.md) for:
+- Complete metrics reference
+- Example PromQL queries
+- Grafana dashboard configurations
+- Alerting rules
+
 ```bash
-# /metrics endpoint will be Prometheus-compatible
 curl http://localhost:8081/metrics
 ```
-
-**Grafana Dashboards:**
-- Query rate, error rate, latency
-- Cost per user/per day
-- Token usage trends
-- Tool usage distribution
 
 ---
 

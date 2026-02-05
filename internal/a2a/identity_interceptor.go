@@ -13,12 +13,12 @@ import (
 
 // Standard headers for identity propagation to sub-agents
 const (
-	HeaderUserID        = "X-User-ID"       // User identity for Langfuse (email preferred)
-	HeaderUserEmail     = "X-User-Email"    // User's email for Keycloak identity
-	HeaderUserGroups    = "X-User-Groups"   // User's groups as JSON array (for permission checking)
-	HeaderSlackUserID   = "X-Slack-User-Id" // Original Slack user ID
-	HeaderCallerID      = "X-Caller-Id"     // Caller identifier (for logging/permissions)
-	HeaderSessionID     = "X-Session-Id"    // Session ID for Langfuse trace correlation
+	HeaderUserID        = "X-User-ID"        // User identity for Langfuse (email preferred)
+	HeaderUserEmail     = "X-User-Email"     // User's email for Keycloak identity
+	HeaderUserGroups    = "X-User-Groups"    // User's groups as JSON array (for permission checking)
+	HeaderSlackUserID   = "X-Slack-User-Id"  // Original Slack user ID
+	HeaderCallerID      = "X-Caller-Id"      // Caller identifier (for logging/permissions)
+	HeaderSessionID     = "X-Session-Id"     // Session ID for Langfuse trace correlation
 	HeaderIdentityToken = "X-Identity-Token" // JWT token for identity propagation (separate from auth)
 )
 

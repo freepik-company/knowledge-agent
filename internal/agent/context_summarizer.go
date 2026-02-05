@@ -10,6 +10,7 @@ import (
 
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/observability"
 )
 
 const summarizerPrompt = `Compress this conversation context while preserving critical information.
@@ -180,6 +181,19 @@ func (cs *ContextSummarizer) Summarize(ctx context.Context, contextStr string) (
 		"input_tokens", message.Usage.InputTokens,
 		"output_tokens", message.Usage.OutputTokens,
 	)
+
+	// Record in Langfuse trace if available
+	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
+		trace.RecordAuxiliaryGeneration(
+			"context-summarization",
+			cs.model,
+			contextStr,
+			summarizedContext,
+			message.Usage.InputTokens,
+			message.Usage.OutputTokens,
+			duration,
+		)
+	}
 
 	return summarizedContext, nil
 }

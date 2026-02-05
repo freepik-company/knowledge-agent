@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"knowledge-agent/internal/config"
@@ -62,7 +63,7 @@ type QueryTrace struct {
 	// ADK event tracking
 	generations      []*traces.Observation
 	toolCalls        map[string]*traces.Observation // Map tool name to observation
-	eventCount       int
+	eventCount       atomic.Int32                   // Thread-safe event counter
 	promptTokens     int
 	completionTokens int
 	totalTokens      int
@@ -135,10 +136,10 @@ func (qt *QueryTrace) StartGeneration(modelName string, input any) *traces.Obser
 	}
 
 	log := logger.Get()
-	qt.eventCount++
+	qt.eventCount.Add(1)
 
 	// Create generation observation
-	generation := qt.trace.StartGeneration(fmt.Sprintf("generation-%d", qt.eventCount))
+	generation := qt.trace.StartGeneration(fmt.Sprintf("generation-%d", qt.eventCount.Load()))
 	generation.Model = modelName
 	generation.Input = input
 
@@ -192,7 +193,7 @@ func (qt *QueryTrace) StartToolCall(toolName string, args map[string]any) {
 	}
 
 	log := logger.Get()
-	qt.eventCount++
+	qt.eventCount.Add(1)
 
 	// Create tool observation
 	tool := qt.trace.StartObservation(toolName, traces.ObservationTypeTool)
@@ -268,7 +269,7 @@ func (qt *QueryTrace) GetSummary() map[string]any {
 	return map[string]any{
 		"generations_count": len(qt.generations),
 		"tool_calls_count":  len(qt.toolCalls),
-		"total_events":      qt.eventCount,
+		"total_events":      qt.eventCount.Load(),
 		"prompt_tokens":     qt.promptTokens,
 		"completion_tokens": qt.completionTokens,
 		"total_tokens":      qt.totalTokens,
@@ -328,114 +329,6 @@ func (qt *QueryTrace) End(success bool, answer string) {
 	)
 }
 
-// IngestTrace tracks a complete ingest operation with memory saves
-type IngestTrace struct {
-	trace       *traces.Trace
-	tracer      *LangfuseTracer
-	startTime   time.Time
-	metadata    map[string]any
-	TraceID     string // Exported for external access
-	memorySaves int
-}
-
-// StartIngestTrace starts tracing an ingest operation
-func (t *LangfuseTracer) StartIngestTrace(ctx context.Context, threadTS, channelID string, msgCount int, metadata map[string]any) *IngestTrace {
-	if !t.enabled {
-		return &IngestTrace{
-			tracer:    t,
-			startTime: time.Now(),
-			metadata:  metadata,
-		}
-	}
-
-	log := logger.Get()
-
-	// Create trace using git-hulk SDK
-	trace := t.client.StartTrace(ctx, "knowledge-agent-ingest")
-
-	// Set trace properties
-	trace.Input = map[string]any{
-		"thread_ts":     threadTS,
-		"channel_id":    channelID,
-		"message_count": msgCount,
-	}
-	trace.Tags = []string{"ingest", "knowledge-agent"}
-	trace.Metadata = metadata
-
-	// Extract user identity for UserID - prefer email over username
-	if userEmail, ok := metadata["user_email"].(string); ok && userEmail != "" {
-		trace.UserID = userEmail
-	} else if userName, ok := metadata["user_name"].(string); ok && userName != "" {
-		trace.UserID = userName
-	}
-
-	log.Infow("Langfuse ingest trace created",
-		"trace_id", trace.ID,
-		"thread_ts", threadTS,
-		"channel_id", channelID,
-		"message_count", msgCount,
-	)
-
-	return &IngestTrace{
-		trace:     trace,
-		tracer:    t,
-		startTime: time.Now(),
-		metadata:  metadata,
-		TraceID:   trace.ID,
-	}
-}
-
-// RecordMemorySave records a memory save operation within the ingest trace
-func (it *IngestTrace) RecordMemorySave(content string) {
-	it.memorySaves++
-
-	if !it.tracer.enabled || it.trace == nil {
-		return
-	}
-
-	log := logger.Get()
-
-	// Create a span for the memory save
-	span := it.trace.StartSpan(fmt.Sprintf("memory-save-%d", it.memorySaves))
-	span.Input = map[string]any{"content_preview": truncateForLog(content, 200)}
-	span.End()
-
-	log.Debugw("Memory save recorded in ingest trace",
-		"trace_id", it.TraceID,
-		"save_number", it.memorySaves,
-	)
-}
-
-// End finishes the ingest trace
-func (it *IngestTrace) End(success bool, summary string) {
-	if !it.tracer.enabled || it.trace == nil {
-		return
-	}
-
-	log := logger.Get()
-
-	// Set trace output
-	it.trace.Output = map[string]any{
-		"success":        success,
-		"summary":        truncateForLog(summary, 500),
-		"duration_ms":    time.Since(it.startTime).Milliseconds(),
-		"memories_saved": it.memorySaves,
-	}
-
-	// Update metadata
-	it.trace.Metadata = it.metadata
-
-	// End trace
-	it.trace.End()
-
-	log.Infow("Ingest trace completed",
-		"trace_id", it.TraceID,
-		"success", success,
-		"duration_ms", time.Since(it.startTime).Milliseconds(),
-		"memories_saved", it.memorySaves,
-	)
-}
-
 // truncateForLog truncates a string for logging purposes
 func truncateForLog(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -467,7 +360,7 @@ func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery strin
 	}
 
 	log := logger.Get()
-	qt.eventCount++
+	qt.eventCount.Add(1)
 
 	// Create a span for the A2A call
 	span := qt.trace.StartSpan(fmt.Sprintf("a2a-call-%s", agentName))
@@ -485,6 +378,7 @@ func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery strin
 	}
 	span.Output = map[string]any{
 		"reduction_percent": fmt.Sprintf("%.1f%%", reductionPercent),
+		"duration_ms":       durationMs,
 	}
 	span.End()
 
@@ -493,6 +387,138 @@ func (qt *QueryTrace) RecordA2ACall(agentName, originalQuery, cleanedQuery strin
 		"agent", agentName,
 		"original_len", len(originalQuery),
 		"cleaned_len", len(cleanedQuery),
+		"duration_ms", durationMs,
+	)
+}
+
+// RecordPreSearch records a pre-search memory operation
+func (qt *QueryTrace) RecordPreSearch(query string, resultCount int, duration time.Duration) {
+	if !qt.tracer.enabled || qt.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+	qt.eventCount.Add(1)
+
+	// Create a span for the pre-search operation
+	span := qt.trace.StartSpan("pre-search-memory")
+	span.Input = map[string]any{
+		"query": truncateForLog(query, 200),
+	}
+	span.Output = map[string]any{
+		"results_count": resultCount,
+		"duration_ms":   duration.Milliseconds(),
+	}
+	span.End()
+
+	log.Debugw("Recorded pre-search in trace",
+		"trace_id", qt.TraceID,
+		"query_len", len(query),
+		"results_count", resultCount,
+		"duration_ms", duration.Milliseconds(),
+	)
+}
+
+// RecordRESTCall records a REST sub-agent call
+func (qt *QueryTrace) RecordRESTCall(agentName, query, response string, duration time.Duration, err error) {
+	if !qt.tracer.enabled || qt.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+	qt.eventCount.Add(1)
+
+	// Create a span for the REST call
+	span := qt.trace.StartSpan(fmt.Sprintf("rest-call-%s", agentName))
+	span.Input = map[string]any{
+		"agent": agentName,
+		"query": truncateForLog(query, 500),
+	}
+
+	output := map[string]any{
+		"response_length": len(response),
+		"duration_ms":     duration.Milliseconds(),
+	}
+	if err != nil {
+		output["error"] = err.Error()
+		span.Level = traces.ObservationLevelError
+		span.StatusMessage = err.Error()
+	}
+	span.Output = output
+	span.End()
+
+	log.Debugw("Recorded REST call in trace",
+		"trace_id", qt.TraceID,
+		"agent", agentName,
+		"query_len", len(query),
+		"response_len", len(response),
+		"duration_ms", duration.Milliseconds(),
+		"error", err,
+	)
+}
+
+// RecordSessionRepair records a session repair operation (corrupted session recovery)
+func (qt *QueryTrace) RecordSessionRepair(sessionID string, attempt int) {
+	if !qt.tracer.enabled || qt.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+	qt.eventCount.Add(1)
+
+	// Create a span for the session repair
+	span := qt.trace.StartSpan("session-repair")
+	span.Input = map[string]any{
+		"session_id": sessionID,
+		"attempt":    attempt,
+	}
+	span.Output = map[string]any{
+		"action": "session_deleted_for_retry",
+	}
+	span.Level = traces.ObservationLevelWarning
+	span.StatusMessage = "Corrupted session detected and repaired"
+	span.End()
+
+	log.Debugw("Recorded session repair in trace",
+		"trace_id", qt.TraceID,
+		"session_id", sessionID,
+		"attempt", attempt,
+	)
+}
+
+// RecordAuxiliaryGeneration records a generation from auxiliary LLM calls (summarizer, cleaner)
+// Returns usage struct with input/output tokens for caller to track
+func (qt *QueryTrace) RecordAuxiliaryGeneration(name, model string, input, output string, inputTokens, outputTokens int64, duration time.Duration) {
+	if !qt.tracer.enabled || qt.trace == nil {
+		return
+	}
+
+	log := logger.Get()
+	qt.eventCount.Add(1)
+
+	// Create generation observation
+	generation := qt.trace.StartGeneration(name)
+	generation.Model = model
+	generation.Input = truncateForLog(input, 500)
+	generation.Output = truncateForLog(output, 500)
+	generation.Usage = traces.Usage{
+		Input:  int(inputTokens),
+		Output: int(outputTokens),
+		Total:  int(inputTokens + outputTokens),
+		Unit:   traces.UnitTokens,
+	}
+	generation.End()
+
+	// Note: We don't accumulate tokens from auxiliary calls to the main trace total
+	// because they use different (cheaper) models and shouldn't inflate the main model's costs
+
+	log.Debugw("Recorded auxiliary generation in trace",
+		"trace_id", qt.TraceID,
+		"name", name,
+		"model", model,
+		"input_tokens", inputTokens,
+		"output_tokens", outputTokens,
+		"duration_ms", duration.Milliseconds(),
 	)
 }
 

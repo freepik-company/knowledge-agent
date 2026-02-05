@@ -10,6 +10,7 @@ import (
 
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
+	"knowledge-agent/internal/observability"
 )
 
 const cleanerPrompt = `Your task is to clean this AI agent response by removing unnecessary narration and debugging data.
@@ -141,6 +142,19 @@ func (rc *ResponseCleaner) Clean(ctx context.Context, response string) (string, 
 		"input_tokens", message.Usage.InputTokens,
 		"output_tokens", message.Usage.OutputTokens,
 	)
+
+	// Record in Langfuse trace if available
+	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
+		trace.RecordAuxiliaryGeneration(
+			"response-cleaning",
+			rc.model,
+			response,
+			cleanedResponse,
+			message.Usage.InputTokens,
+			message.Usage.OutputTokens,
+			duration,
+		)
+	}
 
 	return cleanedResponse, nil
 }

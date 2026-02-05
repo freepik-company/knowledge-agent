@@ -85,78 +85,79 @@ histogram_quantile(0.95, rate(knowledge_agent_query_latency_seconds_bucket[5m]))
 rate(knowledge_agent_query_latency_seconds_sum[5m]) / rate(knowledge_agent_query_latency_seconds_count[5m])
 ```
 
-### Memory Operations
+### Tool Execution Metrics
 
-#### `knowledge_agent_memory_saves_total`
+#### `knowledge_agent_tool_calls_total{tool_name, status}`
 - **Type**: Counter
-- **Description**: Total number of memory save operations
-- **Use case**: Track knowledge base growth
+- **Labels**: `tool_name` (e.g., "search_memory", "save_to_memory", "fetch_url"), `status` (success/error)
+- **Description**: Total tool calls by tool name and status
+- **Use case**: Track tool usage and failures
 
 ```promql
-# Saves per minute
-rate(knowledge_agent_memory_saves_total[1m]) * 60
+# Tool calls per minute by tool
+sum by (tool_name) (rate(knowledge_agent_tool_calls_total[5m]) * 60)
+
+# Tool error rate by tool
+sum by (tool_name) (rate(knowledge_agent_tool_calls_total{status="error"}[5m]))
+  / sum by (tool_name) (rate(knowledge_agent_tool_calls_total[5m]))
 ```
 
-#### `knowledge_agent_memory_searches_total`
+#### `knowledge_agent_tool_latency_seconds{tool_name}`
+- **Type**: Histogram
+- **Buckets**: 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30 seconds
+- **Description**: Tool execution latency by tool name
+- **Use case**: Monitor tool performance
+
+```promql
+# P95 tool latency by tool
+histogram_quantile(0.95, sum by (tool_name, le) (rate(knowledge_agent_tool_latency_seconds_bucket[5m])))
+```
+
+### A2A Sub-Agent Metrics
+
+#### `knowledge_agent_a2a_calls_total{sub_agent, status}`
 - **Type**: Counter
-- **Description**: Total number of memory search operations
-- **Use case**: Track knowledge base usage
+- **Labels**: `sub_agent` (e.g., "logs_agent", "metrics_agent"), `status` (success/error)
+- **Description**: Total A2A calls by sub-agent and status
+- **Use case**: Track sub-agent communication
 
 ```promql
-# Searches per minute
-rate(knowledge_agent_memory_searches_total[1m]) * 60
+# A2A calls per minute by sub-agent
+sum by (sub_agent) (rate(knowledge_agent_a2a_calls_total[5m]) * 60)
 ```
 
-#### `knowledge_agent_memory_errors_total`
+#### `knowledge_agent_a2a_latency_seconds{sub_agent}`
+- **Type**: Histogram
+- **Buckets**: 0.5, 1, 2.5, 5, 10, 30, 60 seconds
+- **Description**: A2A sub-agent call latency
+- **Use case**: Monitor sub-agent performance
+
+```promql
+# P95 A2A latency by sub-agent
+histogram_quantile(0.95, sum by (sub_agent, le) (rate(knowledge_agent_a2a_latency_seconds_bucket[5m])))
+```
+
+### Ingest Metrics
+
+#### `knowledge_agent_ingest_total`
 - **Type**: Counter
-- **Description**: Total number of memory operation errors (saves + searches)
-- **Use case**: Monitor memory system health
+- **Description**: Total number of ingest operations
+- **Use case**: Track knowledge ingestion volume
 
 ```promql
-# Memory error rate
-rate(knowledge_agent_memory_errors_total[5m])
+# Ingest operations per hour
+rate(knowledge_agent_ingest_total[5m]) * 3600
 ```
 
-### URL Fetching
-
-#### `knowledge_agent_url_fetches_total`
+#### `knowledge_agent_ingest_errors_total`
 - **Type**: Counter
-- **Description**: Total number of URL fetch operations
-- **Use case**: Track external content fetching
+- **Description**: Total number of ingest errors
+- **Use case**: Monitor ingestion reliability
 
-```promql
-# URL fetches per hour
-rate(knowledge_agent_url_fetches_total[5m]) * 3600
-```
-
-#### `knowledge_agent_url_fetch_errors_total`
-- **Type**: Counter
-- **Description**: Total number of URL fetch errors
-- **Use case**: Monitor external connectivity
-
-```promql
-# URL fetch error rate
-100 * rate(knowledge_agent_url_fetch_errors_total[5m]) / rate(knowledge_agent_url_fetches_total[5m])
-```
-
-### Token Usage
-
-#### `knowledge_agent_tokens_used_total`
-- **Type**: Counter
-- **Description**: Total number of LLM tokens used (prompt + completion)
-- **Use case**: Track LLM costs and usage
-
-```promql
-# Tokens per day (estimate)
-rate(knowledge_agent_tokens_used_total[24h]) * 86400
-```
-
-**Cost estimation**:
-```promql
-# Daily cost (Claude Sonnet 4.5: $3/M input, $15/M output)
-# Assuming 40% input, 60% output (adjust based on your ratio)
-(rate(knowledge_agent_tokens_used_total[24h]) * 86400) * (0.4 * 3 + 0.6 * 15) / 1000000
-```
+#### `knowledge_agent_ingest_latency_seconds`
+- **Type**: Histogram
+- **Description**: Ingest latency distribution
+- **Use case**: Monitor ingestion performance
 
 ### Pre-Search Memory
 
@@ -365,24 +366,16 @@ sum(rate(knowledge_agent_queries_total[1h]) * 3600)
 max_over_time(rate(knowledge_agent_queries_total[5m])[1h:5m]) * 60
 ```
 
-**Knowledge base activity**:
+**Tool usage by type**:
 ```promql
-# Saves vs Searches ratio
-sum(rate(knowledge_agent_memory_saves_total[1h]))
-  / sum(rate(knowledge_agent_memory_searches_total[1h]))
+# Tool calls by tool name
+sum by (tool_name) (rate(knowledge_agent_tool_calls_total[1h]) * 3600)
 ```
 
-### Cost Tracking
-
-**Token usage per day**:
+**A2A sub-agent activity**:
 ```promql
-sum(increase(knowledge_agent_tokens_used_total[24h]))
-```
-
-**Estimated daily cost** (adjust pricing):
-```promql
-# Assuming Claude Sonnet 4.5 pricing
-(increase(knowledge_agent_tokens_used_total[24h])) * 9 / 1000000
+# Sub-agent calls per hour
+sum by (sub_agent) (rate(knowledge_agent_a2a_calls_total[1h]) * 3600)
 ```
 
 ### Slack Integration
@@ -424,15 +417,14 @@ topk(5, sum by (event_type) (rate(slack_bridge_events_total[1h])))
    histogram_quantile(0.99, rate(knowledge_agent_query_latency_seconds_bucket[5m]))
    ```
 
-4. **Memory Operations** (Graph):
+4. **Tool Calls** (Graph):
    ```promql
-   sum(rate(knowledge_agent_memory_saves_total[5m])) * 60
-   sum(rate(knowledge_agent_memory_searches_total[5m])) * 60
+   sum by (tool_name) (rate(knowledge_agent_tool_calls_total[5m])) * 60
    ```
 
-5. **Token Usage** (Counter):
+5. **A2A Sub-Agent Calls** (Graph):
    ```promql
-   sum(increase(knowledge_agent_tokens_used_total[24h]))
+   sum by (sub_agent) (rate(knowledge_agent_a2a_calls_total[5m])) * 60
    ```
 
 6. **Uptime** (Stat):
@@ -516,16 +508,18 @@ topk(5, sum by (event_type) (rate(slack_bridge_events_total[1h])))
     description: "P95 latency is {{ $value }}s (threshold: 5s)"
 ```
 
-**Memory Operation Errors**:
+**Tool Execution Errors**:
 ```yaml
-- alert: MemoryOperationErrors
-  expr: rate(knowledge_agent_memory_errors_total[5m]) > 0.1
+- alert: ToolExecutionErrors
+  expr: |
+    sum by (tool_name) (rate(knowledge_agent_tool_calls_total{status="error"}[5m]))
+      / sum by (tool_name) (rate(knowledge_agent_tool_calls_total[5m])) > 0.1
   for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "Memory operation errors detected"
-    description: "Memory error rate: {{ $value }} errors/sec"
+    summary: "Tool execution errors for {{ $labels.tool_name }}"
+    description: "Error rate: {{ $value | humanizePercentage }} (threshold: 10%)"
 ```
 
 **Slack API Errors**:
