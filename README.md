@@ -102,7 +102,7 @@ make dev
   (Slack Bridge)                            (Unified Server)
          │                                           │
     Slack Events                            /api/query (auth)
-    Socket/Webhook                         /api/ingest (auth)
+    Socket/Webhook                         /api/query/stream (SSE)
                                            /a2a/invoke (auth)
                                            /.well-known/agent-card.json
                                            /health, /metrics
@@ -230,6 +230,17 @@ API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secr
 
 # Legacy format (assumes role="write"):
 # API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"}'
+```
+
+### JWT Bearer Authentication (API Gateway)
+
+Requests authenticated by an upstream API Gateway can pass a JWT token. Email and groups are extracted for permission checks.
+
+```bash
+curl -X POST http://localhost:8081/api/query \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
+  -d '{"question":"How do we deploy?"}'
 ```
 
 **Authentication Modes**:

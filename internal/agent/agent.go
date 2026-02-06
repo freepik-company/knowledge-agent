@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/memory"
@@ -1154,4 +1155,435 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 		Success: true,
 		Answer:  finalResponse,
 	}, nil
+}
+
+// QueryStream handles streaming query responses via SSE.
+// It uses a callback-based approach: onEvent is called for each SSE event.
+// The setup logic mirrors Query() but emits streaming events instead of accumulating a response.
+func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(StreamEvent)) error {
+	log := logger.Get()
+	startTime := time.Now()
+
+	// Determine if this is an ingest request
+	isIngest := req.Intent == "ingest"
+
+	// Extract caller information from context
+	callerID := ctxutil.CallerID(ctx)
+	slackUserID := ctxutil.SlackUserID(ctx)
+
+	// Resolve session ID
+	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
+	if isIngest && req.SessionID == "" {
+		sessionID = "ingest-" + sessionID
+	}
+
+	// Start Langfuse trace
+	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, sessionID, map[string]any{
+		"caller_id":      callerID,
+		"slack_user_id":  slackUserID,
+		"channel_id":     req.ChannelID,
+		"thread_ts":      req.ThreadTS,
+		"user_name":      req.UserName,
+		"user_real_name": req.UserRealName,
+		"user_email":     req.UserEmail,
+		"session_id":     sessionID,
+		"intent":         req.Intent,
+		"streaming":      true,
+	})
+	defer func() {
+		trace.End(true, "")
+	}()
+
+	ctx = observability.ContextWithQueryTrace(ctx, trace)
+
+	// Update context holder for permission checks
+	a.contextHolder.SetContext(ctx)
+
+	// Check permissions
+	canSave, permissionReason := a.permissionChecker.CanSaveToMemory(ctx)
+	isEmpty := a.permissionChecker.IsEmpty()
+
+	logFields := []any{
+		"caller_id", callerID,
+		"question", req.Question,
+		"channel_id", req.ChannelID,
+		"streaming", true,
+	}
+	if isIngest {
+		logFields = append(logFields, "intent", "ingest", "message_count", len(req.Messages))
+	}
+	if req.UserName != "" {
+		logFields = append(logFields, "user_name", req.UserName)
+	}
+	if slackUserID != "" {
+		logFields = append(logFields, "slack_user_id", slackUserID)
+	}
+	if !isEmpty {
+		logFields = append(logFields, "can_save_to_memory", canSave, "permission_reason", permissionReason)
+	}
+	log.Infow("Processing stream query", logFields...)
+
+	// Record metrics
+	defer func() {
+		if isIngest {
+			observability.GetMetrics().RecordIngest(time.Since(startTime), nil)
+		} else {
+			observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
+		}
+	}()
+
+	// Resolve user ID
+	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
+
+	// Create session
+	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   appName,
+		UserID:    userID,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		log.Warnw("Failed to create session (may already exist)", "error", err)
+	}
+
+	// Build thread context
+	var contextStr string
+	hasImages := false
+	if len(req.Messages) > 0 {
+		contextStr = a.buildThreadContextFromMessages(req.Messages)
+		lastMsg := req.Messages[len(req.Messages)-1]
+		if images, ok := lastMsg["images"].([]any); ok && len(images) > 0 {
+			hasImages = true
+		}
+	}
+
+	// Summarize context if needed (skip for ingest)
+	if !isIngest && a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
+		summarizedContext, err := a.contextSummarizer.Summarize(ctx, contextStr)
+		if err != nil {
+			log.Warnw("Context summarization failed, using original", "error", err)
+		} else {
+			contextStr = summarizedContext
+		}
+	}
+
+	// Pre-search memory (skip for ingest)
+	var preSearchResults string
+	if !isIngest {
+		preSearchResults = a.preSearchMemory(ctx, req.Question, userID)
+	}
+
+	// Build instruction (same logic as Query)
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+
+	permissionContext := ""
+	if !isEmpty {
+		permissionContext = fmt.Sprintf("\n**Current Request Context**:\n- Caller ID: %s\n- Slack User ID: %s\n- Can Save to Memory: %t\n", callerID, slackUserID, canSave)
+	}
+
+	userGreeting := ""
+	if req.UserRealName != "" {
+		userGreeting = fmt.Sprintf("\n**User**: %s (Slack: @%s)\n", req.UserRealName, req.UserName)
+	} else if req.UserName != "" {
+		userGreeting = fmt.Sprintf("\n**User**: @%s\n", req.UserName)
+	}
+
+	var instruction string
+	if isIngest {
+		instruction = fmt.Sprintf(`You are receiving a conversation thread to ingest into the knowledge base.
+
+**Current Date**: %s%s
+
+Thread Information:
+- Thread ID: %s
+- Channel: %s
+- Number of messages: %d
+
+Here is the complete conversation thread:
+
+%s
+
+Your task:
+1. Analyze this conversation carefully
+2. Identify all important information, decisions, solutions, or insights
+3. Use the save_to_memory tool to store each piece of valuable information
+4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
+5. After saving everything, provide a summary of what you saved
+
+Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
+	} else if hasImages {
+		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
+
+**Current Date**: %s%s%s
+
+**Memory Search Results** (already searched for you):
+%s
+
+Current Thread Context:
+%s
+
+User Message: %s
+
+**IMPORTANT**: There is an image attached to this message. Please:
+1. ANALYZE the image focusing on technical/business content:
+   - Architecture diagrams: Identify components, services, databases, connections, data flows
+   - Error screenshots: Extract error messages, stack traces, error codes, affected systems
+   - Infrastructure diagrams: Note servers, networks, IPs, ports, deployment configurations
+   - Code/Config screenshots: Capture code snippets, configurations, command outputs
+   - Workflow diagrams: Document process steps, decision points, actors
+   - Documentation: Extract key technical concepts, APIs, specifications
+
+2. Consider the memory search results above when formulating your response
+
+3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
+   - Clear description of what the image shows
+   - ALL visible text, labels, error messages, component names
+   - Technical relationships and connections
+   - Context provided by the user
+
+4. If you need more specific information, you can search_memory again with different terms
+
+5. Always respond in the same language the user is using
+
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+	} else if contextStr != "" {
+		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
+
+**Current Date**: %s%s%s
+
+**Memory Search Results** (already searched for you):
+%s
+
+Current Thread Context:
+%s
+
+Question: %s
+
+Based on the memory search results above and the thread context, provide your answer.
+If you need more specific information, you can search_memory again with different terms.
+If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
+
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+	} else {
+		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
+
+**Current Date**: %s%s%s
+
+**Memory Search Results** (already searched for you):
+%s
+
+Question: %s
+
+Based on the memory search results above, provide your answer.
+If you need more specific information, you can search_memory again with different terms.
+If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
+
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Question)
+	}
+
+	// Build content with images
+	userMsg := a.buildContentWithImages(instruction, req.Messages)
+
+	// Add identity context
+	if req.UserEmail != "" {
+		ctx = context.WithValue(ctx, ctxutil.UserEmailKey, req.UserEmail)
+	}
+	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
+
+	// Emit start event
+	messageID := uuid.New().String()
+	onEvent(StreamEvent{Type: "start", MessageID: messageID})
+
+	// Run agent with streaming
+	var responseText string
+	var generationOutput string
+	var currentGeneration *traces.Observation
+	toolStartTimes := make(map[string]time.Time)
+	eventCount := 0
+
+	log.Infow("Running agent for stream query", "user_id", userID, "session_id", sessionID)
+
+	// Retry loop for corrupted sessions
+	maxRetries := 1
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		var runnerErr error
+		shouldRetry := false
+
+		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
+			// Check for client disconnect
+			if ctx.Err() != nil {
+				log.Infow("Client disconnected during stream", "session_id", sessionID)
+				return ctx.Err()
+			}
+
+			if err != nil {
+				runnerErr = err
+				break
+			}
+
+			eventCount++
+
+			var usageTokens *genai.GenerateContentResponseUsageMetadata
+			if event.UsageMetadata != nil {
+				usageTokens = event.UsageMetadata
+			}
+
+			if event.ErrorCode != "" {
+				log.Errorw("Event error during stream query",
+					"error_code", event.ErrorCode,
+					"error_message", event.ErrorMessage,
+				)
+				onEvent(StreamEvent{Type: "error", Message: fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage)})
+				trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
+				return fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
+			}
+
+			if event.Content != nil {
+				// Start generation tracking for Langfuse
+				if usageTokens != nil && currentGeneration == nil {
+					currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
+					generationOutput = ""
+				}
+
+				for _, part := range event.Content.Parts {
+					// Text content → emit as SSE chunk
+					if part.Text != "" {
+						responseText += part.Text
+						if currentGeneration != nil {
+							generationOutput += part.Text
+						}
+						onEvent(StreamEvent{Type: "chunk", Content: part.Text})
+					}
+
+					// Tool call tracking (Langfuse only, not SSE)
+					if part.FunctionCall != nil {
+						toolID := part.FunctionCall.ID
+						toolName := part.FunctionCall.Name
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+						toolStartTimes[trackKey] = time.Now()
+
+						log.Infow("Tool call started (stream)",
+							"tool", toolName,
+							"tool_id", toolID,
+						)
+						trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
+					}
+
+					// Tool response tracking (Langfuse only, not SSE)
+					if part.FunctionResponse != nil {
+						toolID := part.FunctionResponse.ID
+						toolName := part.FunctionResponse.Name
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+
+						var duration time.Duration
+						hadStartTime := false
+						if st, ok := toolStartTimes[trackKey]; ok {
+							duration = time.Since(st)
+							delete(toolStartTimes, trackKey)
+							hadStartTime = true
+						}
+
+						if !hadStartTime {
+							trace.StartToolCall(toolID, toolName, nil)
+						}
+
+						success := !containsError(part.FunctionResponse.Response)
+
+						log.Infow("Tool call completed (stream)",
+							"tool", toolName,
+							"tool_id", toolID,
+							"duration_ms", duration.Milliseconds(),
+							"success", success,
+						)
+
+						observability.GetMetrics().RecordToolCall(toolName, duration, success)
+						trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
+					}
+				}
+
+				// End generation tracking
+				if usageTokens != nil && currentGeneration != nil {
+					promptTokens := int(usageTokens.PromptTokenCount)
+					completionTokens := int(usageTokens.CandidatesTokenCount)
+					trace.EndGeneration(currentGeneration, generationOutput, promptTokens, completionTokens)
+					currentGeneration = nil
+					generationOutput = ""
+				}
+			}
+		}
+
+		// Handle runner errors
+		if runnerErr != nil {
+			if isOrphanedToolCallError(runnerErr) {
+				log.Warnw("Detected orphaned tool call error (stream)",
+					"error", runnerErr,
+					"session_id", sessionID,
+					"attempt", attempt,
+				)
+				trace.RecordSessionRepair(sessionID, attempt)
+
+				if err := deleteCorruptedSession(ctx, a.sessionService, appName, userID, sessionID); err != nil {
+					log.Errorw("Failed to delete corrupted session", "error", err, "session_id", sessionID)
+				}
+
+				if attempt < maxRetries {
+					log.Infow("Retrying stream query after session repair", "session_id", sessionID, "attempt", attempt+1)
+					shouldRetry = true
+					responseText = ""
+					eventCount = 0
+					// Emit new start for retry
+					messageID = uuid.New().String()
+					onEvent(StreamEvent{Type: "start", MessageID: messageID})
+				}
+			}
+
+			if !shouldRetry {
+				onEvent(StreamEvent{Type: "error", Message: "Internal server error"})
+				trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
+				return fmt.Errorf("agent error: %w", runnerErr)
+			}
+		}
+
+		if !shouldRetry {
+			break
+		}
+	}
+
+	// Log trace summary
+	promptTokens, completionTokens, totalTokens := trace.GetAccumulatedTokens()
+	totalCost := trace.CalculateTotalCost(
+		a.config.Anthropic.Model,
+		a.config.Langfuse.InputCostPer1M,
+		a.config.Langfuse.OutputCostPer1M,
+	)
+	traceSummary := trace.GetSummary()
+
+	log.Infow("Stream query trace summary",
+		"trace_id", trace.TraceID,
+		"prompt_tokens", promptTokens,
+		"completion_tokens", completionTokens,
+		"total_tokens", totalTokens,
+		"total_cost_usd", fmt.Sprintf("$%.6f", totalCost),
+		"tool_calls_count", traceSummary["tool_calls_count"],
+		"generations_count", traceSummary["generations_count"],
+	)
+
+	log.Infow("Stream query completed successfully",
+		"caller_id", callerID,
+		"total_events", eventCount,
+		"response_length", len(responseText),
+	)
+
+	// End trace
+	trace.End(true, responseText)
+
+	// Emit end event
+	onEvent(StreamEvent{Type: "end", Status: "ok"})
+
+	return nil
 }

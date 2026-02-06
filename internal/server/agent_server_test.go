@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +19,19 @@ type mockAgentService struct {
 	queryResponse *agent.QueryResponse
 	queryError    error
 	lastRequest   *agent.QueryRequest // Stores last request for verification
+}
+
+func (m *mockAgentService) QueryStream(ctx context.Context, req agent.QueryRequest, onEvent func(agent.StreamEvent)) error {
+	m.lastRequest = &req
+	if m.queryError != nil {
+		onEvent(agent.StreamEvent{Type: "error", Message: m.queryError.Error()})
+		return m.queryError
+	}
+	onEvent(agent.StreamEvent{Type: "start", MessageID: "test-msg-1"})
+	onEvent(agent.StreamEvent{Type: "chunk", Content: "Test "})
+	onEvent(agent.StreamEvent{Type: "chunk", Content: "answer"})
+	onEvent(agent.StreamEvent{Type: "end", Status: "ok"})
+	return nil
 }
 
 func (m *mockAgentService) Query(ctx context.Context, req agent.QueryRequest) (*agent.QueryResponse, error) {
@@ -242,5 +257,146 @@ func TestMaxRequestBodySize(t *testing.T) {
 	expectedSize := int64(1 << 20) // 1MB
 	if MaxRequestBodySize != expectedSize {
 		t.Errorf("MaxRequestBodySize = %d, want %d", MaxRequestBodySize, expectedSize)
+	}
+}
+
+// parseSSEEvents parses SSE data lines from response body
+func parseSSEEvents(body string) ([]agent.StreamEvent, error) {
+	var events []agent.StreamEvent
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		var event agent.StreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return nil, fmt.Errorf("failed to parse SSE event %q: %w", data, err)
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+func TestHandleQueryStream_Success(t *testing.T) {
+	mockAgent := &mockAgentService{}
+	server := newTestServer(mockAgent, nil)
+	defer server.Close()
+
+	body := `{"question": "What is the meaning of life?"}`
+	req := httptest.NewRequest("POST", "/api/query/stream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleQueryStream(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	// Verify SSE headers
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want %q", ct, "text/event-stream")
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+	}
+	if xab := rec.Header().Get("X-Accel-Buffering"); xab != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want %q", xab, "no")
+	}
+
+	// Parse SSE events
+	events, err := parseSSEEvents(rec.Body.String())
+	if err != nil {
+		t.Fatalf("failed to parse SSE events: %v", err)
+	}
+
+	if len(events) != 4 {
+		t.Fatalf("got %d events, want 4", len(events))
+	}
+
+	// Verify event sequence: start → chunk → chunk → end
+	if events[0].Type != "start" {
+		t.Errorf("event[0].Type = %q, want %q", events[0].Type, "start")
+	}
+	if events[0].MessageID != "test-msg-1" {
+		t.Errorf("event[0].MessageID = %q, want %q", events[0].MessageID, "test-msg-1")
+	}
+	if events[1].Type != "chunk" || events[1].Content != "Test " {
+		t.Errorf("event[1] = %+v, want chunk with 'Test '", events[1])
+	}
+	if events[2].Type != "chunk" || events[2].Content != "answer" {
+		t.Errorf("event[2] = %+v, want chunk with 'answer'", events[2])
+	}
+	if events[3].Type != "end" || events[3].Status != "ok" {
+		t.Errorf("event[3] = %+v, want end with status ok", events[3])
+	}
+}
+
+func TestHandleQueryStream_MethodNotAllowed(t *testing.T) {
+	server := newTestServer(&mockAgentService{}, nil)
+	defer server.Close()
+
+	req := httptest.NewRequest("GET", "/api/query/stream", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleQueryStream(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("got status %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleQueryStream_MissingQuestion(t *testing.T) {
+	server := newTestServer(&mockAgentService{}, nil)
+	defer server.Close()
+
+	body := `{"channel_id": "C123"}`
+	req := httptest.NewRequest("POST", "/api/query/stream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleQueryStream(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleQueryStream_Error(t *testing.T) {
+	mockAgent := &mockAgentService{
+		queryError: fmt.Errorf("agent failed"),
+	}
+	server := newTestServer(mockAgent, nil)
+	defer server.Close()
+
+	body := `{"question": "test"}`
+	req := httptest.NewRequest("POST", "/api/query/stream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleQueryStream(rec, req)
+
+	// SSE headers should still be set (response started before error)
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want %q", ct, "text/event-stream")
+	}
+
+	events, err := parseSSEEvents(rec.Body.String())
+	if err != nil {
+		t.Fatalf("failed to parse SSE events: %v", err)
+	}
+
+	// Should have an error event
+	hasError := false
+	for _, e := range events {
+		if e.Type == "error" && e.Message == "agent failed" {
+			hasError = true
+			break
+		}
+	}
+	if !hasError {
+		t.Errorf("expected error event with message 'agent failed', got events: %+v", events)
 	}
 }

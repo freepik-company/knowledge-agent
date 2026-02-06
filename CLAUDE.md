@@ -28,7 +28,8 @@ Knowledge Agent is an intelligent AI assistant that helps teams capture and retr
         ┌─────────────────┴─────────────────┐
    Port 8081 (Agent)                   Port 8080 (Slack)
    /api/query (auth)                   /slack/events
-   /a2a/invoke (auth)                  Socket mode listener
+   /api/query/stream (SSE, auth)       Socket mode listener
+   /a2a/invoke (auth)
    /.well-known/agent-card (public)
    /health, /metrics, /ready, /live
                           │
@@ -196,6 +197,7 @@ Quick reference:
 | Method | Header | Use Case |
 |--------|--------|----------|
 | Internal Token | `X-Internal-Token` | Slack Bridge → Agent (trusted) |
+| JWT Bearer | `Authorization: Bearer <token>` | API Gateway / Identity Provider (email+groups) |
 | API Key | `X-API-Key` | External agents (A2A) |
 | Slack Signature | `X-Slack-Signature` | Direct Slack webhooks (legacy) |
 | Open Mode | (none configured) | Development only |
@@ -305,8 +307,14 @@ type QueryRequest struct {
 # Terminal 1
 make docker-up && make dev-agent
 
-# Terminal 2
+# Terminal 2 - Standard query
 curl -X POST http://localhost:8081/api/query \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-key" \
+  -d '{"question": "What is our deployment process?"}'
+
+# Terminal 2 - Streaming query (SSE)
+curl -N -X POST http://localhost:8081/api/query/stream \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
   -d '{"question": "What is our deployment process?"}'

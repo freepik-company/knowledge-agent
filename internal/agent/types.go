@@ -39,3 +39,12 @@ type QueryResponse struct {
 	Answer  string `json:"answer"`
 	Message string `json:"message,omitempty"`
 }
+
+// StreamEvent represents an SSE event for streaming responses
+type StreamEvent struct {
+	Type      string `json:"type"`                // "start", "chunk", "end", "error"
+	MessageID string `json:"messageId,omitempty"` // For "start"
+	Content   string `json:"content,omitempty"`   // For "chunk"
+	Status    string `json:"status,omitempty"`    // For "end" ("ok")
+	Message   string `json:"message,omitempty"`   // For "error"
+}

@@ -36,7 +36,52 @@ INTERNAL_AUTH_TOKEN=$(openssl rand -hex 32)
 - Can be rotated without affecting external A2A clients
 - Not stored in `api_keys` (which might be visible to external services)
 
-### 2. External A2A Authentication (External Services → Agent)
+### 2. JWT Bearer Authentication (API Gateway / Identity Provider)
+
+**Purpose**: Authenticate requests from users or services that have been validated by an upstream API Gateway or identity provider (Keycloak, Auth0, Azure AD, etc.).
+
+**Method**: JWT token via `Authorization: Bearer <token>` header
+
+**How it works**:
+1. Upstream API Gateway validates the JWT cryptographically
+2. Knowledge Agent receives the request with the validated JWT
+3. JWT is parsed (not re-validated) to extract `email` and `groups` claims
+4. Email is used as caller ID and for permission checks (`allowed_emails`)
+5. Groups are used for group-based permission checks (`allowed_groups`)
+6. User gets `role: write` by default (fine-grained control via permissions system)
+
+**Configuration**:
+```yaml
+# config.yaml
+permissions:
+  groups_claim_path: "groups"  # Path in JWT to extract groups
+  # For Keycloak realm roles: "realm_access.roles"
+```
+
+**Example JWT claims used**:
+```json
+{
+  "preferred_username": "john.doe",
+  "email": "john.doe@company.com",
+  "groups": ["/google-workspace/devops@company.com", "/google-workspace/all@company.com"]
+}
+```
+
+**Security characteristics**:
+- JWT is NOT validated cryptographically (assumes upstream API Gateway has already validated it)
+- Only the `email`, `preferred_username`, and groups (at the configured claim path) are extracted
+- Caller ID is set to `preferred_username` (or `email` if username not present)
+- Groups enable the full permissions system (allowed_groups with write/read roles)
+
+**Example request**:
+```bash
+curl -X POST http://localhost:8081/api/query \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -d '{"question": "What is our deployment process?"}'
+```
+
+### 3. External A2A Authentication (External Services → Agent)
 
 **Purpose**: Secure direct API access from external agents or services.
 
@@ -76,7 +121,7 @@ API_KEYS='{"ka_secret_abc123":"root-agent","ka_secret_def456":"external-service"
 - Secrets can be individually rotated by updating the value for that client_id
 - Client ID appears in logs, making audit trails clear without exposing secrets
 
-### 3. A2A Protocol Authentication
+### 4. A2A Protocol Authentication
 
 **Purpose**: Secure the A2A protocol endpoints (`/a2a/invoke`).
 
@@ -107,7 +152,7 @@ api_keys:
 - Case-insensitive header matching (X-API-Key, x-api-key, etc.)
 - Same authentication as `/api/*` endpoints
 
-### 4. Slack Signature Authentication (Legacy)
+### 5. Slack Signature Authentication (Legacy)
 
 **Purpose**: Verify requests come directly from Slack (when not using Slack Bridge).
 
@@ -128,6 +173,7 @@ slack:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Request arrives at Agent (Port 8081)                         │
+│ (JWT from Authorization header is parsed early if present)   │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
@@ -139,39 +185,46 @@ slack:
         │ YES                     │ NO
         ▼                         ▼
 ┌──────────────────┐    ┌─────────────────────┐
-│ Token matches    │    │ Has X-API-Key       │
-│ internal_token?  │    │ header?             │
+│ Token matches    │    │ Has valid JWT       │
+│ internal_token?  │    │ (Bearer token)?     │
 └────┬─────────┬───┘    └──────┬──────────────┘
      │         │               │
    YES        NO          ┌────┴────┐
      │         │          │ YES     │ NO
      │         │          ▼         ▼
      │         │   ┌─────────┐   ┌──────────────────┐
-     │         │   │ Key in  │   │ Has Slack        │
-     │         │   │ APIKeys?│   │ Signature?       │
-     │         │   └────┬────┘   └─────┬────────────┘
-     │         │        │              │
-     │         │    ┌───┴───┐      ┌───┴───┐
-     │         │    │ YES   │ NO   │ YES   │ NO
-     │         │    ▼       ▼      ▼       ▼
-     ▼         ▼    ▼       ▼      ▼       ▼
-┌────────┐ ┌─────────────────────┐ ┌──────────────┐
-│ ALLOW  │ │    401 Unauthorized  │ │ Check if     │
-│ as     │ │                      │ │ auth enabled │
-│ slack- │ │                      │ └──────┬───────┘
-│ bridge │ │                      │        │
-└────────┘ └──────────────────────┘   ┌────┴────┐
-                                       │ Enabled │ Disabled
-                                       ▼         ▼
-                                   ┌──────┐  ┌─────────────┐
-                                   │ 401  │  │ ALLOW as    │
-                                   │      │  │ unauthenticated │
-                                   └──────┘  └─────────────┘
+     │         │   │ ALLOW   │   │ Has X-API-Key    │
+     │         │   │ as JWT  │   │ header?           │
+     │         │   │ user    │   └─────┬────────────┘
+     │         │   │ (email/ │         │
+     │         │   │ groups) │    ┌────┴────┐
+     │         │   └─────────┘    │ YES     │ NO
+     │         │                  ▼         ▼
+     │         │           ┌─────────┐   ┌──────────────────┐
+     │         │           │ Key in  │   │ Has Slack        │
+     │         │           │ APIKeys?│   │ Signature?       │
+     │         │           └────┬────┘   └─────┬────────────┘
+     │         │                │              │
+     │         │            ┌───┴───┐      ┌───┴───┐
+     │         │            │ YES   │ NO   │ YES   │ NO
+     ▼         ▼            ▼       ▼      ▼       ▼
+┌────────┐ ┌───────────────────────────┐ ┌──────────────┐
+│ ALLOW  │ │      401 Unauthorized      │ │ Check if     │
+│ as     │ │                            │ │ auth enabled │
+│ slack- │ │                            │ └──────┬───────┘
+│ bridge │ │                            │        │
+└────────┘ └────────────────────────────┘   ┌────┴────┐
+                                             │ Enabled │ Disabled
+                                             ▼         ▼
+                                         ┌──────┐  ┌─────────────┐
+                                         │ 401  │  │ ALLOW as    │
+                                         │      │  │ unauthenticated │
+                                         └──────┘  └─────────────┘
 ```
 
 ### A2A Endpoint (/a2a/invoke)
 
-The `/a2a/invoke` endpoint follows the same authentication flow as `/api/*` endpoints.
+The `/a2a/invoke` and `/api/query/stream` endpoints follow the same authentication flow as `/api/query`.
 The agent card at `/.well-known/agent-card.json` is always public (no auth) for agent discovery.
 
 ## Security Modes

@@ -70,6 +70,7 @@ Knowledge Agent is a unified binary that can run in three modes:
 │    ├────────────────────────────────────────────────────────────────┤      │
 │    │  PROTECTED ENDPOINTS (Auth + Rate Limit + Loop Prevention)     │      │
 │    │  ├─ /api/query               (question answering & ingestion)  │      │
+│    │  ├─ /api/query/stream        (SSE streaming responses)         │      │
 │    │  └─ /a2a/invoke              (A2A JSON-RPC)                    │      │
 │    └────────────────────────────────────────────────────────────────┘      │
 │                                    │                                        │
@@ -334,7 +335,7 @@ This diagram shows the flow when another agent invokes Knowledge Agent via A2A p
 
 | Aspect | Slack Flow | A2A Flow |
 |--------|------------|----------|
-| **Authentication** | `X-Internal-Token` (trusted) | `X-API-Key` (caller_id + role) |
+| **Authentication** | `X-Internal-Token` (trusted) | `X-API-Key` or `Authorization: Bearer` |
 | **User Identity** | `X-Slack-User-Id` passed | No user identity (service auth) |
 | **Thread Context** | Full thread history | Single message |
 | **Images** | Downloaded from Slack | Not supported |
@@ -379,6 +380,7 @@ sendToAgent()       → Forward to Agent Server with context
 | `/metrics` | Public | Prometheus metrics |
 | `/.well-known/agent-card.json` | Public | A2A agent discovery |
 | `/api/query` | Protected | Query knowledge base or ingest threads (via `intent` field) |
+| `/api/query/stream` | Protected | Streaming version of `/api/query` via SSE |
 | `/a2a/invoke` | Protected | A2A JSON-RPC endpoint |
 
 ### 3. ADK Agent (`internal/agent/agent.go`)
@@ -402,9 +404,10 @@ memoryService   → PostgreSQL memory with embeddings
 
 **Auth Methods (checked in order):**
 1. **Internal Token** (`X-Internal-Token`): Trusted, can pass `X-Slack-User-Id`
-2. **API Key** (`X-API-Key`): Untrusted for user identity, has role (read/write)
-3. **Slack Signature** (`X-Slack-Signature`): Legacy direct webhook auth
-4. **Open Mode**: No auth required (development only)
+2. **JWT Bearer** (`Authorization: Bearer <token>`): Extracts email/groups for permissions
+3. **API Key** (`X-API-Key`): Untrusted for user identity, has role (read/write)
+4. **Slack Signature** (`X-Slack-Signature`): Legacy direct webhook auth
+5. **Open Mode**: No auth required (development only)
 
 ### 5. A2A Handler (`internal/server/a2a_handler.go`)
 

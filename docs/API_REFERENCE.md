@@ -10,6 +10,7 @@ Complete REST API documentation for Knowledge Agent.
   - [Health Check](#get-health)
   - [Metrics](#get-metrics)
   - [Query](#post-apiquery)
+  - [Query Stream (SSE)](#post-apiquerystream)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
 - [Examples](#examples)
@@ -23,7 +24,7 @@ Knowledge Agent exposes APIs on two ports:
 ### Port 8081 - Custom HTTP API
 
 - **Public endpoints** (no authentication): `/health`, `/metrics`, `/.well-known/agent-card.json`
-- **Protected endpoints** (authentication required): `/api/query`, `/a2a/invoke`
+- **Protected endpoints** (authentication required): `/api/query`, `/api/query/stream`, `/a2a/invoke`
 
 **Base URL**: `http://localhost:8081` (default)
 
@@ -48,7 +49,26 @@ INTERNAL_AUTH_TOKEN=your-secure-random-token
 
 **Caller ID**: `slack-bridge`
 
-### 2. API Key (External A2A)
+### 2. JWT Bearer Token (Keycloak / Identity Provider)
+
+For requests authenticated via an upstream API Gateway or identity provider.
+
+**Header**: `Authorization: Bearer <jwt-token>`
+
+The JWT is parsed (not cryptographically validated — assumes upstream validation) to extract:
+- **Email**: Used as caller ID and for permission checks (`allowed_emails`)
+- **Groups**: Used for group-based permission checks (`allowed_groups`)
+
+**Caller ID**: `preferred_username` from JWT, or email if not available
+
+**Configuration**:
+```yaml
+permissions:
+  groups_claim_path: "groups"  # Path in JWT to extract groups
+  # For Keycloak realm roles: "realm_access.roles"
+```
+
+### 3. API Key (External A2A)
 
 For external agents or services.
 
@@ -61,7 +81,7 @@ API_KEYS='{"ka_rootagent":"root-agent","ka_analytics":"analytics-agent"}'
 
 **Caller ID**: Mapped value from `API_KEYS` (e.g., `root-agent`)
 
-### 3. Slack Signature (Legacy)
+### 4. Slack Signature (Legacy)
 
 Direct webhooks from Slack (legacy mode).
 
@@ -71,7 +91,7 @@ Direct webhooks from Slack (legacy mode).
 
 **Caller ID**: `slack-direct`
 
-### 4. Open Mode (Development)
+### 5. Open Mode (Development)
 
 If neither `INTERNAL_AUTH_TOKEN` nor `API_KEYS` is configured, authentication is disabled.
 
@@ -163,6 +183,7 @@ Query the knowledge base with natural language questions or ingest threads for k
 |--------|----------|-------------|
 | `Content-Type` | Yes | Must be `application/json` |
 | `X-Internal-Token` | Conditional | Internal authentication token |
+| `Authorization` | Conditional | JWT Bearer token (`Bearer <token>`) |
 | `X-API-Key` | Conditional | API key for A2A access |
 | `X-Slack-User-Id` | Optional | Slack user ID for permissions |
 
@@ -351,6 +372,122 @@ curl -X POST http://localhost:8081/api/query \
 
 ---
 
+### POST /api/query/stream
+
+Streaming version of `/api/query` using Server-Sent Events (SSE). Returns the agent's response in real-time as text chunks.
+
+**Authentication**: Required (same as `/api/query`)
+
+**Rate Limit**: 10 requests/second per IP, burst of 20
+
+#### Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | Must be `application/json` |
+| `X-Internal-Token` | Conditional | Internal authentication token |
+| `Authorization` | Conditional | JWT Bearer token (`Bearer <token>`) |
+| `X-API-Key` | Conditional | API key for A2A access |
+
+#### Request Body
+
+Same schema as [`POST /api/query`](#post-apiquery). All fields are identical.
+
+#### Response
+
+**Content-Type**: `text/event-stream`
+
+**Headers**:
+| Header | Value | Description |
+|--------|-------|-------------|
+| `Content-Type` | `text/event-stream` | SSE stream |
+| `Cache-Control` | `no-cache` | Disable caching |
+| `Connection` | `keep-alive` | Keep connection open |
+| `X-Accel-Buffering` | `no` | Disable proxy buffering (nginx) |
+
+#### SSE Event Format
+
+Each event is a JSON object on a `data:` line:
+
+**Start event** (first, always):
+```
+data: {"type":"start","messageId":"<uuid>"}
+```
+
+**Chunk events** (one or more):
+```
+data: {"type":"chunk","content":"partial text..."}
+```
+
+**End event** (last, on success):
+```
+data: {"type":"end","status":"ok"}
+```
+
+**Error event** (on failure):
+```
+data: {"type":"error","message":"description of the error"}
+```
+
+#### SSE Event Schema
+
+| Field | Type | Present In | Description |
+|-------|------|------------|-------------|
+| `type` | string | All | Event type: `start`, `chunk`, `end`, `error` |
+| `messageId` | string | `start` | Unique message ID (UUID) |
+| `content` | string | `chunk` | Text delta (partial response) |
+| `status` | string | `end` | Completion status (`ok`) |
+| `message` | string | `error` | Error description |
+
+#### Examples
+
+**Basic streaming query**:
+```bash
+curl -N -X POST http://localhost:8081/api/query/stream \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ka_rootagent" \
+  -d '{
+    "question": "What is our deployment process?"
+  }'
+```
+
+**Streaming with JWT Bearer authentication**:
+```bash
+curl -N -X POST http://localhost:8081/api/query/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
+  -d '{
+    "question": "What is our deployment process?"
+  }'
+```
+
+**Example output**:
+```
+data: {"type":"start","messageId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
+
+data: {"type":"chunk","content":"Our deployment"}
+
+data: {"type":"chunk","content":" process uses"}
+
+data: {"type":"chunk","content":" GitHub Actions..."}
+
+data: {"type":"end","status":"ok"}
+```
+
+**Error responses** (before SSE stream starts):
+
+If the request fails validation before streaming begins, standard JSON error responses are returned (same as `/api/query`):
+
+| Code | Condition |
+|------|-----------|
+| `400` | Missing `question` field or invalid JSON |
+| `401` | Authentication failed |
+| `405` | Wrong HTTP method (not POST) |
+| `413` | Request body too large |
+| `429` | Rate limit exceeded |
+
+---
+
 ## A2A Protocol Endpoints
 
 Standard A2A protocol endpoints (all on port 8081).
@@ -487,7 +624,7 @@ All endpoints return JSON error responses with appropriate HTTP status codes.
 
 ## Rate Limiting
 
-Protected endpoint (`/api/query`) is rate-limited per IP address:
+Protected endpoints (`/api/query`, `/api/query/stream`) are rate-limited per IP address:
 
 - **Rate**: 10 requests per second
 - **Burst**: 20 requests (token bucket)
@@ -562,6 +699,15 @@ curl -s -X POST "$AGENT_URL/api/query" \
   }' | jq .
 
 echo -e "\nDone!"
+
+# 5. Stream a query (SSE)
+echo -e "\nStreaming query..."
+curl -N -s -X POST "$AGENT_URL/api/query/stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{
+    "question": "What is our deployment process?"
+  }'
 ```
 
 ### Python Integration Example
@@ -601,6 +747,22 @@ class KnowledgeAgentClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def query_stream(self, question: str, **kwargs):
+        """Stream a query response via SSE"""
+        import json as json_mod
+        payload = {'question': question, **kwargs}
+        with requests.post(
+            f'{self.base_url}/api/query/stream',
+            headers=self.headers,
+            json=payload,
+            stream=True
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines(decode_unicode=True):
+                if line and line.startswith('data: '):
+                    event = json_mod.loads(line[6:])
+                    yield event
 
     def query_with_image(self, question: str, image_path: str) -> dict:
         """Query with an image attachment"""
@@ -660,6 +822,14 @@ if __name__ == '__main__':
         "error-screenshot.png"
     )
     print("Analysis:", result['answer'])
+
+    # Streaming query
+    print("Streaming:")
+    for event in client.query_stream("What is our deployment process?"):
+        if event['type'] == 'chunk':
+            print(event['content'], end='', flush=True)
+        elif event['type'] == 'end':
+            print()  # newline after stream ends
 ```
 
 ---

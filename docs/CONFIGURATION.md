@@ -63,6 +63,7 @@ Runs only the Knowledge Agent service (port 8081).
 - `GET /health` - Health check
 - `GET /metrics` - Metrics
 - `POST /api/query` - Query endpoint
+- `POST /api/query/stream` - Streaming query endpoint (SSE)
 - `POST /api/ingest-thread` - Ingestion endpoint
 
 #### 3. Slack Bridge Mode
@@ -785,6 +786,7 @@ The agent card (`/.well-known/agent-card.json`) is always public to allow agent 
 ```
 Port 8081 (Unified Server)
 ├── /api/query           (authenticated)
+├── /api/query/stream    (authenticated, SSE)
 ├── /api/ingest-thread   (authenticated)
 ├── /a2a/invoke          (authenticated)
 ├── /.well-known/agent-card.json (public)
@@ -1516,9 +1518,11 @@ The Knowledge Agent exposes HTTP endpoints that can be called by external agents
 - **Development mode**: No authentication (leave `api_keys` empty or omit it)
 - **Production mode**: API key authentication (configure `api_keys`)
 
-**Supported Authentication Methods**:
-1. **API Key Authentication** (Recommended) - via `X-API-Key` header
-2. **Slack Signature Authentication** - via `X-Slack-Signature` and `X-Slack-Request-Timestamp` headers
+**Supported Authentication Methods** (checked in order):
+1. **Internal Token** - via `X-Internal-Token` header (Slack Bridge → Agent)
+2. **JWT Bearer Token** - via `Authorization: Bearer <token>` header (API Gateway / Identity Provider)
+3. **API Key Authentication** (Recommended for A2A) - via `X-API-Key` header
+4. **Slack Signature Authentication** - via `X-Slack-Signature` and `X-Slack-Request-Timestamp` headers (legacy)
 
 ### Configuration
 
@@ -1614,6 +1618,32 @@ curl -X POST http://localhost:8081/api/query \
   "session_id": "query-external-1234567890"
 }
 ```
+
+#### POST /api/query/stream
+
+Streaming version of `/api/query` using Server-Sent Events (SSE). Same request body, returns real-time text chunks.
+
+**Authentication**: Required (same as `/api/query` — supports `X-API-Key`, `Authorization: Bearer`, or `X-Internal-Token`)
+
+**Request Example**:
+```bash
+curl -N -X POST http://localhost:8081/api/query/stream \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ka_rootagent" \
+  -d '{
+    "question": "How do we handle production deployments?"
+  }'
+```
+
+**Response** (SSE stream):
+```
+data: {"type":"start","messageId":"uuid"}
+data: {"type":"chunk","content":"Based on the knowledge base..."}
+data: {"type":"chunk","content":" our deployment process involves..."}
+data: {"type":"end","status":"ok"}
+```
+
+See [API Reference](API_REFERENCE.md#post-apiquerystream) for full SSE event schema.
 
 #### POST /api/ingest-thread
 

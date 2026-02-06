@@ -27,6 +27,7 @@ const MaxRequestBodySize = 1 << 20 // 1 MB
 // AgentInterface defines the interface for the agent
 type AgentInterface interface {
 	Query(ctx context.Context, req agent.QueryRequest) (*agent.QueryResponse, error)
+	QueryStream(ctx context.Context, req agent.QueryRequest, onEvent func(agent.StreamEvent)) error
 	Close() error
 }
 
@@ -139,6 +140,10 @@ func (s *AgentServer) registerRoutes() {
 	// API endpoints (protected with rate limiting, loop prevention, authentication, and membership)
 	s.mux.Handle("/api/query",
 		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(membershipMiddleware(http.HandlerFunc(s.handleQuery))))))
+
+	// SSE streaming endpoint (same middleware chain)
+	s.mux.Handle("/api/query/stream",
+		s.rateLimiter.Middleware()(loopPreventionMiddleware(authMiddleware(membershipMiddleware(http.HandlerFunc(s.handleQueryStream))))))
 }
 
 // Close stops the rate limiter cleanup routine
@@ -222,6 +227,75 @@ func (s *AgentServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Errorw("Failed to encode response", "error", err)
+	}
+}
+
+// handleQueryStream handles streaming query requests via SSE
+func (s *AgentServer) handleQueryStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	callerID := ctxutil.CallerID(r.Context())
+	log := logger.Get()
+
+	// Limit request body size
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+
+	var req agent.QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err.Error() == "http: request body too large" {
+			log.Warnw("Request body too large", "caller", callerID, "max_size", MaxRequestBodySize)
+			jsonError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		log.Warnw("Invalid query request body", "error", err, "caller", callerID)
+		jsonError(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Question == "" {
+		log.Warnw("Missing question field", "caller", callerID)
+		jsonError(w, "question is required", http.StatusBadRequest)
+		return
+	}
+
+	log.Infow("Stream query request received",
+		"caller", callerID,
+		"question", req.Question,
+		"channel_id", req.ChannelID,
+	)
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// SSE write callback
+	writeSSE := func(event agent.StreamEvent) {
+		data, err := json.Marshal(event)
+		if err != nil {
+			log.Errorw("Failed to marshal SSE event", "error", err)
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	ctx := r.Context()
+	if err := s.agent.QueryStream(ctx, req, writeSSE); err != nil {
+		log.Errorw("Stream query error", "error", err, "caller", callerID)
+		// Error event already emitted by QueryStream, but log it
 	}
 }
 
