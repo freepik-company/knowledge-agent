@@ -1408,7 +1408,9 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 		var runnerErr error
 		shouldRetry := false
 
-		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
+		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{
+			StreamingMode: agent.StreamingModeSSE,
+		}) {
 			// Check for client disconnect
 			if ctx.Err() != nil {
 				log.Infow("Client disconnected during stream", "session_id", sessionID)
