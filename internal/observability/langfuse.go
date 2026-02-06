@@ -102,11 +102,13 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, query string, sess
 		trace.SessionID = sessionID
 	}
 
-	// Extract user identity for UserID - prefer email over username
+	// Extract user identity for UserID - prefer email over username, fallback to caller_id (JWT email)
 	if userEmail, ok := metadata["user_email"].(string); ok && userEmail != "" {
 		trace.UserID = userEmail
 	} else if userName, ok := metadata["user_name"].(string); ok && userName != "" {
 		trace.UserID = userName
+	} else if callerID, ok := metadata["caller_id"].(string); ok && callerID != "" {
+		trace.UserID = callerID
 	}
 
 	log.Infow("Langfuse trace created",
