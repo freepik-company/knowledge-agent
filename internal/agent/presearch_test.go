@@ -30,15 +30,15 @@ type memorySearcher interface {
 
 // preSearchMemoryWithSearcher is a testable version of preSearchMemory
 // that accepts a memorySearcher interface instead of the concrete PostgresMemoryService
-func preSearchMemoryWithSearcher(ctx context.Context, searcher memorySearcher, question, userID string) string {
-	// Skip empty or whitespace-only questions
-	if question == "" || len(question) == 0 {
+func preSearchMemoryWithSearcher(ctx context.Context, searcher memorySearcher, query, userID string) string {
+	// Skip empty or whitespace-only queries
+	if query == "" || len(query) == 0 {
 		return ""
 	}
 
 	// Check for whitespace-only
 	hasNonWhitespace := false
-	for _, c := range question {
+	for _, c := range query {
 		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
 			hasNonWhitespace = true
 			break
@@ -55,7 +55,7 @@ func preSearchMemoryWithSearcher(ctx context.Context, searcher memorySearcher, q
 
 	// Execute search on memory service directly
 	searchResp, err := searcher.Search(searchCtx, &memory.SearchRequest{
-		Query:   question,
+		Query:   query,
 		UserID:  userID,
 		AppName: appName,
 	})
@@ -93,26 +93,26 @@ func preSearchMemoryWithSearcher(ctx context.Context, searcher memorySearcher, q
 	return result
 }
 
-func TestPreSearchMemory_EmptyQuestion(t *testing.T) {
+func TestPreSearchMemory_EmptyQuery(t *testing.T) {
 	tests := []struct {
-		name     string
-		question string
-		want     string
+		name  string
+		query string
+		want  string
 	}{
 		{
-			name:     "empty string returns empty",
-			question: "",
-			want:     "",
+			name:  "empty string returns empty",
+			query: "",
+			want:  "",
 		},
 		{
-			name:     "whitespace only returns empty",
-			question: "   ",
-			want:     "",
+			name:  "whitespace only returns empty",
+			query: "   ",
+			want:  "",
 		},
 		{
-			name:     "tabs and newlines return empty",
-			question: "\t\n\r",
-			want:     "",
+			name:  "tabs and newlines return empty",
+			query: "\t\n\r",
+			want:  "",
 		},
 	}
 
@@ -121,9 +121,9 @@ func TestPreSearchMemory_EmptyQuestion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := preSearchMemoryWithSearcher(ctx, mock, tt.question, "user-123")
+			got := preSearchMemoryWithSearcher(ctx, mock, tt.query, "user-123")
 			if got != tt.want {
-				t.Errorf("preSearchMemory(%q) = %q, want %q", tt.question, got, tt.want)
+				t.Errorf("preSearchMemory(%q) = %q, want %q", tt.query, got, tt.want)
 			}
 		})
 	}

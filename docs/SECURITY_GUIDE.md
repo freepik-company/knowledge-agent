@@ -78,7 +78,7 @@ permissions:
 curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -d '{"question": "What is our deployment process?"}'
+  -d '{"query": "What is our deployment process?"}'
 ```
 
 ### 3. External A2A Authentication (External Services → Agent)

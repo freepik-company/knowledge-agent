@@ -20,11 +20,11 @@ var (
 	RoleUser           = genai.RoleUser
 )
 
-// QueryRequest represents a question/query request
+// QueryRequest represents a query request
 type QueryRequest struct {
-	SessionID    string           `json:"session_id,omitempty"` // Optional: client-provided session ID (takes precedence over auto-generated)
-	Question     string           `json:"question"`
-	Intent       string           `json:"intent,omitempty"` // "query" (default) or "ingest" - determines behavior
+	ConversationID string           `json:"conversation_id,omitempty"` // Optional: client-provided conversation ID (takes precedence over auto-generated)
+	Query          string           `json:"query"`
+	Intent         string           `json:"intent,omitempty"` // "query" (default) or "ingest" - determines behavior
 	ThreadTS     string           `json:"thread_ts,omitempty"`
 	ChannelID    string           `json:"channel_id,omitempty"`
 	Messages     []map[string]any `json:"messages,omitempty"`       // Current thread context

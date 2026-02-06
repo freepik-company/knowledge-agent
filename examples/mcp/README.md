@@ -27,12 +27,12 @@ make dev
 curl -X POST http://localhost:8081/api/query \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"question": "What files are in the workspace?"}'
+  -d '{"query": "What files are in the workspace?"}'
 
 curl -X POST http://localhost:8081/api/query \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"question": "Read hello.txt and tell me what it says"}'
+  -d '{"query": "Read hello.txt and tell me what it says"}'
 ```
 
 ### 2. GitHub Integration
@@ -57,7 +57,7 @@ make dev
 # Test queries
 curl -X POST http://localhost:8081/api/query \
   -H "X-API-Key: your-api-key" \
-  -d '{"question": "List my GitHub repositories"}'
+  -d '{"query": "List my GitHub repositories"}'
 ```
 
 ### 3. Multiple MCP Servers

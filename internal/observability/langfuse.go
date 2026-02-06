@@ -73,7 +73,7 @@ type QueryTrace struct {
 
 // StartQueryTrace starts tracing a query
 // sessionID groups related traces in Langfuse's Sessions view (e.g., "thread-C123-1234567890.123456")
-func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, sessionID string, metadata map[string]any) *QueryTrace {
+func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, query string, sessionID string, metadata map[string]any) *QueryTrace {
 	if !t.enabled {
 		return &QueryTrace{
 			tracer:    t,
@@ -88,7 +88,7 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 	trace := t.client.StartTrace(ctx, "knowledge-agent-query")
 
 	// Set trace properties
-	trace.Input = map[string]any{"question": question}
+	trace.Input = map[string]any{"query": query}
 	trace.Tags = []string{"query", "knowledge-agent"}
 	trace.Metadata = metadata
 
@@ -113,7 +113,7 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, question string, s
 		"trace_id", trace.ID,
 		"session_id", sessionID,
 		"environment", t.config.Environment,
-		"question_length", len(question),
+		"query_length", len(query),
 		"metadata_keys", getKeys(metadata),
 	)
 

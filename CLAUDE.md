@@ -291,7 +291,7 @@ Slack Event → /slack/events (8080) → Verify signature → Fetch thread conte
 ### Message Context Structure
 ```go
 type QueryRequest struct {
-    Question    string           `json:"question"`
+    Query       string           `json:"query"`
     ThreadTS    string           `json:"thread_ts"`
     ChannelID   string           `json:"channel_id"`
     Messages    []map[string]any `json:"messages"`
@@ -311,13 +311,13 @@ make docker-up && make dev-agent
 curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{"question": "What is our deployment process?"}'
+  -d '{"query": "What is our deployment process?"}'
 
 # Terminal 2 - Streaming query (SSE)
 curl -N -X POST http://localhost:8081/api/query/stream \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{"question": "What is our deployment process?"}'
+  -d '{"query": "What is our deployment process?"}'
 ```
 
 ## Common Patterns

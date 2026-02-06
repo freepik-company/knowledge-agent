@@ -307,7 +307,7 @@ curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-Call-Chain: knowledge-agent" \
   -H "X-Call-Depth: 1" \
-  -d '{"question": "test"}'
+  -d '{"query": "test"}'
 ```
 
 ## Security

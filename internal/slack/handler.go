@@ -481,7 +481,7 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	)
 
 	queryRequest := map[string]any{
-		"question":       message,
+		"query":          message,
 		"thread_ts":      threadTS,
 		"channel_id":     event.Channel,
 		"messages":       messageData,

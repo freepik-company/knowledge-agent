@@ -639,7 +639,7 @@ make dev
 ```bash
 curl -X POST http://localhost:8081/api/query \
   -H "X-API-Key: your-key" \
-  -d '{"question": "List files in the workspace"}'
+  -d '{"query": "List files in the workspace"}'
 ```
 
 ### Verification

@@ -240,7 +240,7 @@ Requests authenticated by an upstream API Gateway can pass a JWT token. Email an
 curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
-  -d '{"question":"How do we deploy?"}'
+  -d '{"query":"How do we deploy?"}'
 ```
 
 **Authentication Modes**:
@@ -257,7 +257,7 @@ curl -X POST http://localhost:8081/api/query \
 curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_secret_abc123" \
-  -d '{"question":"How do we deploy?"}'
+  -d '{"query":"How do we deploy?"}'
 ```
 
 See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY_GUIDE.md` for detailed security configuration.

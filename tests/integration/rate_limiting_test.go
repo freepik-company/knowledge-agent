@@ -39,7 +39,7 @@ func TestRateLimitingBasic(t *testing.T) {
 	rateLimitedCount := 0
 
 	queryReq := agent.QueryRequest{
-		Question:  "Test",
+		Query:  "Test",
 		ChannelID: "C123",
 	}
 	reqBody, _ := json.Marshal(queryReq)
@@ -91,7 +91,7 @@ func TestRateLimitingPerIP(t *testing.T) {
 	srv := server.NewAgentServer(agnt, cfg)
 
 	queryReq := agent.QueryRequest{
-		Question:  "Test",
+		Query:  "Test",
 		ChannelID: "C123",
 	}
 	reqBody, _ := json.Marshal(queryReq)
@@ -164,7 +164,7 @@ func TestRateLimitingBurst(t *testing.T) {
 	srv := server.NewAgentServer(agnt, cfg)
 
 	queryReq := agent.QueryRequest{
-		Question:  "Test",
+		Query:  "Test",
 		ChannelID: "C123",
 	}
 	reqBody, _ := json.Marshal(queryReq)
@@ -244,7 +244,7 @@ func TestRateLimitingRecovery(t *testing.T) {
 	srv := server.NewAgentServer(agnt, cfg)
 
 	queryReq := agent.QueryRequest{
-		Question:  "Test",
+		Query:  "Test",
 		ChannelID: "C123",
 	}
 	reqBody, _ := json.Marshal(queryReq)
@@ -310,7 +310,7 @@ func TestRateLimitingCleanup(t *testing.T) {
 	srv := server.NewAgentServer(agnt, cfg)
 
 	queryReq := agent.QueryRequest{
-		Question:  "Test",
+		Query:  "Test",
 		ChannelID: "C123",
 	}
 	reqBody, _ := json.Marshal(queryReq)

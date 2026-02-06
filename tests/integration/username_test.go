@@ -38,7 +38,7 @@ func TestUserNameIntegration(t *testing.T) {
 	// Test query with user name and real name
 	t.Run("QueryWithUserNames", func(t *testing.T) {
 		queryReq := agent.QueryRequest{
-			Question:     "Hello, who am I?",
+			Query:        "Hello, who am I?",
 			UserName:     "johndoe",
 			UserRealName: "John Doe",
 			ChannelID:    "C123TEST",
@@ -77,7 +77,7 @@ func TestUserNameIntegration(t *testing.T) {
 	// Test query without user names (should still work)
 	t.Run("QueryWithoutUserNames", func(t *testing.T) {
 		queryReq := agent.QueryRequest{
-			Question:  "What is the weather?",
+			Query:     "What is the weather?",
 			ChannelID: "C123TEST",
 		}
 
@@ -122,7 +122,7 @@ func TestUserNameInstructions(t *testing.T) {
 
 	// Test that query with user name includes it in the instruction
 	queryReq := agent.QueryRequest{
-		Question:     "Test question",
+		Query:        "Test question",
 		UserName:     "testuser",
 		UserRealName: "Test User",
 		ChannelID:    "C123",

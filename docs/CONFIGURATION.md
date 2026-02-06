@@ -1591,7 +1591,7 @@ curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "question": "How do we handle production deployments?",
+    "query": "How do we handle production deployments?",
     "channel_id": "external",
     "thread_ts": "optional-thread-id",
     "messages": [
@@ -1605,7 +1605,7 @@ curl -X POST http://localhost:8081/api/query \
 ```
 
 **Request Fields**:
-- `question` (required): The user's question or message
+- `query` (required): The user's question or message
 - `channel_id` (optional): Channel identifier (use "external" for non-Slack sources)
 - `thread_ts` (optional): Thread identifier for grouping related queries
 - `messages` (optional): Previous conversation context
@@ -1615,7 +1615,7 @@ curl -X POST http://localhost:8081/api/query \
 {
   "success": true,
   "answer": "Based on the knowledge base, our deployment process involves...",
-  "session_id": "query-external-1234567890"
+  "conversation_id": "query-external-1234567890"
 }
 ```
 
@@ -1631,7 +1631,7 @@ curl -N -X POST http://localhost:8081/api/query/stream \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "question": "How do we handle production deployments?"
+    "query": "How do we handle production deployments?"
   }'
 ```
 
@@ -1675,7 +1675,7 @@ curl -X POST http://localhost:8081/api/ingest-thread \
 {
   "success": true,
   "message": "Thread ingested successfully",
-  "session_id": "ingest-external-1234567890"
+  "conversation_id": "ingest-external-1234567890"
 }
 ```
 
@@ -1720,7 +1720,7 @@ class KnowledgeAgentClient:
             "X-API-Key": self.api_key
         }
         payload = {
-            "question": question,
+            "query": question,
             "channel_id": channel_id
         }
         if context:
@@ -1768,7 +1768,7 @@ func NewClient(baseURL, apiKey string) *KnowledgeAgentClient {
 
 func (c *KnowledgeAgentClient) Query(question, channelID string) (map[string]interface{}, error) {
     payload := map[string]interface{}{
-        "question":   question,
+        "query":      question,
         "channel_id": channelID,
     }
 

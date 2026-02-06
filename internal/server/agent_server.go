@@ -189,15 +189,15 @@ func (s *AgentServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.Question == "" {
-		log.Warnw("Missing question field", "caller", callerID)
-		jsonError(w, "question is required", http.StatusBadRequest)
+	if req.Query == "" {
+		log.Warnw("Missing query field", "caller", callerID)
+		jsonError(w, "query is required", http.StatusBadRequest)
 		return
 	}
 
 	logFields := []any{
 		"caller", callerID,
-		"question", req.Question,
+		"query", req.Query,
 		"channel_id", req.ChannelID,
 	}
 	if req.UserName != "" {
@@ -261,15 +261,15 @@ func (s *AgentServer) handleQueryStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if req.Question == "" {
-		log.Warnw("Missing question field", "caller", callerID)
-		jsonError(w, "question is required", http.StatusBadRequest)
+	if req.Query == "" {
+		log.Warnw("Missing query field", "caller", callerID)
+		jsonError(w, "query is required", http.StatusBadRequest)
 		return
 	}
 
 	log.Infow("Stream query request received",
 		"caller", callerID,
-		"question", req.Question,
+		"query", req.Query,
 		"channel_id", req.ChannelID,
 	)
 

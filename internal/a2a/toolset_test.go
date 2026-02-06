@@ -449,7 +449,7 @@ func TestNewA2AToolset_RESTProtocol(t *testing.T) {
 		// Handle REST /query endpoint
 		if r.URL.Path == "/query" && r.Method == http.MethodPost {
 			var req struct {
-				Question  string `json:"question"`
+				Query     string `json:"query"`
 				ChannelID string `json:"channel_id"`
 				SessionID string `json:"session_id"`
 			}
@@ -461,7 +461,7 @@ func TestNewA2AToolset_RESTProtocol(t *testing.T) {
 			// Return success response
 			resp := map[string]any{
 				"success": true,
-				"answer":  "REST response for: " + req.Question,
+				"answer":  "REST response for: " + req.Query,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)

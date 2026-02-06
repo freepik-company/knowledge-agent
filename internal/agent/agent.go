@@ -76,14 +76,14 @@ func containsError(response map[string]any) bool {
 
 // resolveSessionID determines the session_id based on available context
 // Priority:
-// 1. Client-provided session_id -> use it directly
+// 1. Client-provided conversation_id -> use it directly
 // 2. channel_id + thread_ts -> "thread-{channel}-{thread_ts}" (maintains context per thread)
 // 3. channel_id only -> "channel-{channel}-{timestamp}"
 // 4. No Slack context -> "api-{timestamp}"
-func resolveSessionID(clientSessionID, channelID, threadTS string) string {
-	// 1. Client-provided session_id takes precedence
-	if clientSessionID != "" {
-		return clientSessionID
+func resolveSessionID(conversationID, channelID, threadTS string) string {
+	// 1. Client-provided conversation_id takes precedence
+	if conversationID != "" {
+		return conversationID
 	}
 
 	// 2. Thread context (channel + thread_ts)
@@ -506,11 +506,11 @@ func (a *Agent) GetKeycloakClient() *keycloak.Client {
 // This ensures the agent always has relevant memory context before deciding what to do.
 // NOTE: Uses memoryService directly (not permission-wrapped) because reads
 // don't require permission checks. See PermissionMemoryService.Search().
-func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) string {
+func (a *Agent) preSearchMemory(ctx context.Context, query, userID string) string {
 	log := logger.Get()
 
-	// Skip empty or whitespace-only questions
-	if strings.TrimSpace(question) == "" {
+	// Skip empty or whitespace-only queries
+	if strings.TrimSpace(query) == "" {
 		return ""
 	}
 
@@ -523,7 +523,7 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 
 	// Execute search on memory service directly
 	searchResp, err := a.memoryService.Search(searchCtx, &memory.SearchRequest{
-		Query:   question,
+		Query:   query,
 		UserID:  userID,
 		AppName: appName,
 	})
@@ -536,7 +536,7 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 	if err != nil {
 		log.Warnw("Pre-search memory failed",
 			"error", err,
-			"question", truncateString(question, 100),
+			"query", truncateString(query, 100),
 			"duration_ms", duration.Milliseconds(),
 		)
 		return ""
@@ -544,7 +544,7 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 
 	if searchResp == nil || len(searchResp.Memories) == 0 {
 		log.Debugw("Pre-search memory: no results found",
-			"question", truncateString(question, 100),
+			"query", truncateString(query, 100),
 			"duration_ms", duration.Milliseconds(),
 		)
 		return "No relevant information found in memory."
@@ -574,7 +574,7 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 	}
 
 	log.Infow("Pre-search memory completed",
-		"question", truncateString(question, 100),
+		"query", truncateString(query, 100),
 		"results_count", resultCount,
 		"total_found", len(searchResp.Memories),
 		"duration_ms", duration.Milliseconds(),
@@ -582,7 +582,7 @@ func (a *Agent) preSearchMemory(ctx context.Context, question, userID string) st
 
 	// Record pre-search in Langfuse trace
 	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
-		trace.RecordPreSearch(question, resultCount, duration)
+		trace.RecordPreSearch(query, resultCount, duration)
 	}
 
 	return resultsText
@@ -603,14 +603,14 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	slackUserID := ctxutil.SlackUserID(ctx)
 
 	// Resolve session ID for Langfuse grouping (client-provided or auto-generated from thread context)
-	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
+	sessionID := resolveSessionID(req.ConversationID, req.ChannelID, req.ThreadTS)
 	// For ingestion, add prefix to distinguish from query sessions
-	if isIngest && req.SessionID == "" {
+	if isIngest && req.ConversationID == "" {
 		sessionID = "ingest-" + sessionID
 	}
 
 	// Start Langfuse trace with session ID for grouping in Sessions view
-	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, sessionID, map[string]any{
+	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Query, sessionID, map[string]any{
 		"caller_id":      callerID,
 		"slack_user_id":  slackUserID,
 		"channel_id":     req.ChannelID,
@@ -638,7 +638,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 	logFields := []any{
 		"caller_id", callerID,
-		"question", req.Question,
+		"query", req.Query,
 		"channel_id", req.ChannelID,
 	}
 	if isIngest {
@@ -708,7 +708,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	// Skip pre-search for ingest requests as they focus on saving, not retrieving
 	var preSearchResults string
 	if !isIngest {
-		preSearchResults = a.preSearchMemory(ctx, req.Question, userID)
+		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
 	}
 
 	// Get current date for temporal context
@@ -788,7 +788,7 @@ User Message: %s
 
 5. Always respond in the same language the user is using
 
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
 	} else if contextStr != "" {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
@@ -806,7 +806,7 @@ Based on the memory search results above and the thread context, provide your an
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
 	} else {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
@@ -821,7 +821,7 @@ Based on the memory search results above, provide your answer.
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	}
 
 	// Create user message with images if available
@@ -1172,13 +1172,13 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 	slackUserID := ctxutil.SlackUserID(ctx)
 
 	// Resolve session ID
-	sessionID := resolveSessionID(req.SessionID, req.ChannelID, req.ThreadTS)
-	if isIngest && req.SessionID == "" {
+	sessionID := resolveSessionID(req.ConversationID, req.ChannelID, req.ThreadTS)
+	if isIngest && req.ConversationID == "" {
 		sessionID = "ingest-" + sessionID
 	}
 
 	// Start Langfuse trace
-	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Question, sessionID, map[string]any{
+	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Query, sessionID, map[string]any{
 		"caller_id":      callerID,
 		"slack_user_id":  slackUserID,
 		"channel_id":     req.ChannelID,
@@ -1205,7 +1205,7 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 
 	logFields := []any{
 		"caller_id", callerID,
-		"question", req.Question,
+		"query", req.Query,
 		"channel_id", req.ChannelID,
 		"streaming", true,
 	}
@@ -1269,7 +1269,7 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 	// Pre-search memory (skip for ingest)
 	var preSearchResults string
 	if !isIngest {
-		preSearchResults = a.preSearchMemory(ctx, req.Question, userID)
+		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
 	}
 
 	// Build instruction (same logic as Query)
@@ -1344,7 +1344,7 @@ User Message: %s
 
 5. Always respond in the same language the user is using
 
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
 	} else if contextStr != "" {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
@@ -1362,7 +1362,7 @@ Based on the memory search results above and the thread context, provide your an
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
 	} else {
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
@@ -1377,7 +1377,7 @@ Based on the memory search results above, provide your answer.
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Question)
+Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	}
 
 	// Build content with images

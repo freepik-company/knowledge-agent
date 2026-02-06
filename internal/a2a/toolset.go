@@ -36,10 +36,10 @@ const (
 // SubAgentClient is the interface for clients that can query sub-agents
 // Both A2A clients and REST clients implement this interface
 type SubAgentClient interface {
-	// Query sends a question to the sub-agent and returns the response text
+	// Query sends a query to the sub-agent and returns the response text
 	// For A2A clients, this wraps SendMessage
 	// For REST clients, this calls /api/query directly
-	Query(ctx context.Context, question string) (string, error)
+	Query(ctx context.Context, query string) (string, error)
 	// Close releases any resources held by the client
 	Close() error
 }
@@ -50,8 +50,8 @@ type a2aClientWrapper struct {
 	name   string
 }
 
-func (w *a2aClientWrapper) Query(ctx context.Context, question string) (string, error) {
-	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.TextPart{Text: question})
+func (w *a2aClientWrapper) Query(ctx context.Context, query string) (string, error) {
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.TextPart{Text: query})
 	result, err := w.client.SendMessage(ctx, &a2a.MessageSendParams{Message: msg})
 	if err != nil {
 		return "", err
@@ -72,8 +72,8 @@ type restClientWrapper struct {
 	name   string
 }
 
-func (w *restClientWrapper) Query(ctx context.Context, question string) (string, error) {
-	resp, err := w.client.Query(ctx, question)
+func (w *restClientWrapper) Query(ctx context.Context, query string) (string, error) {
+	resp, err := w.client.Query(ctx, query)
 	if err != nil {
 		return "", err
 	}

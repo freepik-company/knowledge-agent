@@ -78,7 +78,7 @@ func TestAgentServer_HandleQuery_Success(t *testing.T) {
 	server := newTestServer(mockAgent, nil)
 	defer server.Close()
 
-	body := `{"question": "What is the meaning of life?"}`
+	body := `{"query": "What is the meaning of life?"}`
 	req := httptest.NewRequest("POST", "/api/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -153,7 +153,7 @@ func TestAgentServer_HandleQuery_RequestBodyTooLarge(t *testing.T) {
 
 	// Create a body larger than MaxRequestBodySize (1MB)
 	largeBody := strings.Repeat("x", MaxRequestBodySize+1)
-	body := `{"question": "` + largeBody + `"}`
+	body := `{"query": "` + largeBody + `"}`
 
 	req := httptest.NewRequest("POST", "/api/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -177,7 +177,7 @@ func TestAgentServer_HandleQuery_WithIngestIntent(t *testing.T) {
 	defer server.Close()
 
 	body := `{
-		"question": "Ingest this thread",
+		"query": "Ingest this thread",
 		"intent": "ingest",
 		"thread_ts": "1234567890.123456",
 		"channel_id": "C123",
@@ -284,7 +284,7 @@ func TestHandleQueryStream_Success(t *testing.T) {
 	server := newTestServer(mockAgent, nil)
 	defer server.Close()
 
-	body := `{"question": "What is the meaning of life?"}`
+	body := `{"query": "What is the meaning of life?"}`
 	req := httptest.NewRequest("POST", "/api/query/stream", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -371,7 +371,7 @@ func TestHandleQueryStream_Error(t *testing.T) {
 	server := newTestServer(mockAgent, nil)
 	defer server.Close()
 
-	body := `{"question": "test"}`
+	body := `{"query": "test"}`
 	req := httptest.NewRequest("POST", "/api/query/stream", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

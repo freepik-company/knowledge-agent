@@ -191,7 +191,7 @@ Query the knowledge base with natural language questions or ingest threads for k
 
 ```json
 {
-  "question": "What is our deployment process?",
+  "query": "What is our deployment process?",
   "intent": "query",
   "channel_id": "C01ABC123",
   "thread_ts": "1234567890.123456",
@@ -220,9 +220,9 @@ Query the knowledge base with natural language questions or ingest threads for k
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `question` | string | **Yes** | User's question or instruction |
+| `query` | string | **Yes** | User's question or instruction |
 | `intent` | string | No | `"query"` (default) or `"ingest"` - determines behavior |
-| `session_id` | string | No | Custom session ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
+| `conversation_id` | string | No | Custom conversation ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
 | `channel_id` | string | No | Slack channel ID (for context) |
 | `thread_ts` | string | No | Thread timestamp (for threading) |
 | `messages` | array | No | Thread context messages |
@@ -280,7 +280,7 @@ Query the knowledge base with natural language questions or ingest threads for k
 **Error** (`400 Bad Request`):
 ```json
 {
-  "error": "question is required"
+  "error": "query is required"
 }
 ```
 
@@ -323,7 +323,7 @@ curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "question": "What is our deployment process?"
+    "query": "What is our deployment process?"
   }'
 ```
 
@@ -334,7 +334,7 @@ curl -X POST http://localhost:8081/api/query \
   -H "X-Internal-Token: your-token" \
   -H "X-Slack-User-Id: U01USER123" \
   -d '{
-    "question": "How do we deploy to staging?",
+    "query": "How do we deploy to staging?",
     "channel_id": "C01ABC123",
     "thread_ts": "1234567890.123456",
     "user_name": "john",
@@ -359,7 +359,7 @@ curl -X POST http://localhost:8081/api/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d "{
-    \"question\": \"What error is shown in this screenshot?\",
+    \"query\": \"What error is shown in this screenshot?\",
     \"images\": [
       {
         \"name\": \"screenshot.png\",
@@ -447,7 +447,7 @@ curl -N -X POST http://localhost:8081/api/query/stream \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "question": "What is our deployment process?"
+    "query": "What is our deployment process?"
   }'
 ```
 
@@ -457,7 +457,7 @@ curl -N -X POST http://localhost:8081/api/query/stream \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
   -d '{
-    "question": "What is our deployment process?"
+    "query": "What is our deployment process?"
   }'
 ```
 
@@ -480,7 +480,7 @@ If the request fails validation before streaming begins, standard JSON error res
 
 | Code | Condition |
 |------|-----------|
-| `400` | Missing `question` field or invalid JSON |
+| `400` | Missing `query` field or invalid JSON |
 | `401` | Authentication failed |
 | `405` | Wrong HTTP method (not POST) |
 | `413` | Request body too large |
@@ -595,7 +595,7 @@ All endpoints return JSON error responses with appropriate HTTP status codes.
 **Missing required field**:
 ```json
 {
-  "error": "question is required"
+  "error": "query is required"
 }
 ```
 
@@ -675,7 +675,7 @@ curl -s -X POST "$AGENT_URL/api/query" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "question": "What is our deployment process?"
+    "query": "What is our deployment process?"
   }' | jq .
 
 # 4. Ingest thread (using intent: "ingest")
@@ -684,7 +684,7 @@ curl -s -X POST "$AGENT_URL/api/query" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "question": "Ingest this thread",
+    "query": "Ingest this thread",
     "intent": "ingest",
     "thread_ts": "1234567890.123456",
     "channel_id": "C01ABC123",
@@ -706,7 +706,7 @@ curl -N -s -X POST "$AGENT_URL/api/query/stream" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "question": "What is our deployment process?"
+    "query": "What is our deployment process?"
   }'
 ```
 
@@ -739,7 +739,7 @@ class KnowledgeAgentClient:
 
     def query(self, question: str, **kwargs) -> dict:
         """Query the knowledge base"""
-        payload = {'question': question, **kwargs}
+        payload = {'query': question, **kwargs}
         resp = requests.post(
             f'{self.base_url}/api/query',
             headers=self.headers,
@@ -751,7 +751,7 @@ class KnowledgeAgentClient:
     def query_stream(self, question: str, **kwargs):
         """Stream a query response via SSE"""
         import json as json_mod
-        payload = {'question': question, **kwargs}
+        payload = {'query': question, **kwargs}
         with requests.post(
             f'{self.base_url}/api/query/stream',
             headers=self.headers,
@@ -770,7 +770,7 @@ class KnowledgeAgentClient:
             image_data = base64.b64encode(f.read()).decode('utf-8')
 
         payload = {
-            'question': question,
+            'query': question,
             'images': [{
                 'name': image_path,
                 'mime_type': 'image/png',
@@ -788,7 +788,7 @@ class KnowledgeAgentClient:
     def ingest_thread(self, thread_ts: str, channel_id: str, messages: list) -> dict:
         """Ingest a thread into knowledge base using intent: ingest"""
         payload = {
-            'question': 'Ingest this thread',
+            'query': 'Ingest this thread',
             'intent': 'ingest',
             'thread_ts': thread_ts,
             'channel_id': channel_id,

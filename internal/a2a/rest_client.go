@@ -211,15 +211,15 @@ func NewRESTClient(cfg RESTClientConfig) *RESTClient {
 	}
 }
 
-// Query sends a question to the sub-agent and returns the response
-func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse, error) {
+// Query sends a query to the sub-agent and returns the response
+func (c *RESTClient) Query(ctx context.Context, query string) (*QueryResponse, error) {
 	log := logger.Get()
 
 	// Build request body
 	// Note: session_id is propagated via X-Session-Id header, not in body
 	// (fc_logs_agent validates session_id format strictly)
 	reqBody := QueryRequest{
-		Query:     question,
+		Query:     query,
 		ChannelID: "a2a-rest", // Marker for A2A REST calls in logs
 	}
 
@@ -247,7 +247,7 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 	log.Debugw("REST client sending request",
 		"agent", c.name,
 		"endpoint", c.endpoint,
-		"question_length", len(question),
+		"query_length", len(query),
 		"has_auth", c.authHeaderName != "",
 	)
 
@@ -280,7 +280,7 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 		httpErr := fmt.Errorf("agent %s returned HTTP %d: %s", c.name, resp.StatusCode, truncateForLog(string(respBody), 200))
 		// Record error in Langfuse trace
 		if trace := observability.QueryTraceFromContext(ctx); trace != nil {
-			trace.RecordRESTCall(c.name, question, "", duration, httpErr)
+			trace.RecordRESTCall(c.name, query, "", duration, httpErr)
 		}
 		return nil, httpErr
 	}
@@ -297,7 +297,7 @@ func (c *RESTClient) Query(ctx context.Context, question string) (*QueryResponse
 
 	// Record in Langfuse trace if available
 	if trace := observability.QueryTraceFromContext(ctx); trace != nil {
-		trace.RecordRESTCall(c.name, question, queryResp.GetAnswer(), duration, nil)
+		trace.RecordRESTCall(c.name, query, queryResp.GetAnswer(), duration, nil)
 	}
 
 	return queryResp, nil
