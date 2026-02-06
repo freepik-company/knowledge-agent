@@ -1447,13 +1447,19 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 				}
 
 				for _, part := range event.Content.Parts {
-					// Text content → emit as SSE chunk
+					// Text content → emit as SSE chunk (only for partial/streaming events)
+					// The ADK runner emits both partial deltas and a final aggregated event
+					// with the complete text. We only stream the deltas to avoid duplication.
 					if part.Text != "" {
-						responseText += part.Text
-						if currentGeneration != nil {
-							generationOutput += part.Text
+						if event.Partial {
+							// Streaming delta: emit to client and accumulate
+							responseText += part.Text
+							if currentGeneration != nil {
+								generationOutput += part.Text
+							}
+							onEvent(StreamEvent{Type: "chunk", Content: part.Text})
 						}
-						onEvent(StreamEvent{Type: "chunk", Content: part.Text})
+						// Skip aggregated (non-partial) text events - already accumulated via deltas
 					}
 
 					// Tool call tracking (Langfuse only, not SSE)
