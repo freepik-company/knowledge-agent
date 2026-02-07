@@ -236,7 +236,14 @@ func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, err
 				}
 			}
 
-			text := strings.Join(textParts, "\n")
+			// Extract text from Block Kit blocks (workflow forms, rich messages)
+		if len(msg.Blocks.BlockSet) > 0 {
+			if blockText := extractBlockText(msg.Blocks); blockText != "" {
+				textParts = append(textParts, blockText)
+			}
+		}
+
+		text := strings.Join(textParts, "\n")
 
 			// Determine user identifier (handle bot messages)
 			user := msg.User
@@ -561,6 +568,85 @@ func (c *Client) DownloadFile(fileURL string) ([]byte, error) {
 // IsImage checks if a file is an image based on MIME type
 func (f *File) IsImage() bool {
 	return strings.HasPrefix(f.MIMEType, "image/")
+}
+
+// extractBlockText extracts readable text from Block Kit blocks.
+// Workflow Forms and rich messages use Block Kit instead of plain text.
+func extractBlockText(blocks slack.Blocks) string {
+	var parts []string
+
+	for _, block := range blocks.BlockSet {
+		switch b := block.(type) {
+		case *slack.HeaderBlock:
+			if b.Text != nil && b.Text.Text != "" {
+				parts = append(parts, b.Text.Text)
+			}
+
+		case *slack.SectionBlock:
+			if b.Text != nil && b.Text.Text != "" {
+				parts = append(parts, b.Text.Text)
+			}
+			for _, field := range b.Fields {
+				if field != nil && field.Text != "" {
+					parts = append(parts, field.Text)
+				}
+			}
+
+		case *slack.RichTextBlock:
+			if text := extractRichTextElements(b.Elements); text != "" {
+				parts = append(parts, text)
+			}
+
+		case *slack.ContextBlock:
+			for _, elem := range b.ContextElements.Elements {
+				if textObj, ok := elem.(*slack.TextBlockObject); ok {
+					if textObj.Text != "" {
+						parts = append(parts, textObj.Text)
+					}
+				}
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// extractRichTextElements recursively extracts text from RichTextElement slices.
+func extractRichTextElements(elements []slack.RichTextElement) string {
+	var parts []string
+
+	for _, elem := range elements {
+		switch e := elem.(type) {
+		case *slack.RichTextSection:
+			var sectionParts []string
+			for _, se := range e.Elements {
+				switch el := se.(type) {
+				case *slack.RichTextSectionTextElement:
+					if el.Text != "" {
+						sectionParts = append(sectionParts, el.Text)
+					}
+				case *slack.RichTextSectionLinkElement:
+					if el.Text != "" {
+						sectionParts = append(sectionParts, el.Text)
+					} else if el.URL != "" {
+						sectionParts = append(sectionParts, el.URL)
+					}
+				}
+			}
+			if len(sectionParts) > 0 {
+				parts = append(parts, strings.Join(sectionParts, ""))
+			}
+
+		case *slack.RichTextList:
+			for _, child := range e.Elements {
+				if childText := extractRichTextElements([]slack.RichTextElement{child}); childText != "" {
+					parts = append(parts, "- "+childText)
+				}
+			}
+		}
+	}
+
+	return strings.Join(parts, "\n")
 }
 
 // parseSlackTimestamp parses Slack timestamp (format: "1234567890.123456")

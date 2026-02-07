@@ -3,6 +3,8 @@ package slack
 import (
 	"strings"
 	"testing"
+
+	"github.com/slack-go/slack"
 )
 
 func TestSplitMessage(t *testing.T) {
@@ -102,6 +104,216 @@ func TestSplitMessage(t *testing.T) {
 			// Run custom verification if provided
 			if tt.verify != nil {
 				tt.verify(t, chunks)
+			}
+		})
+	}
+}
+
+func TestExtractBlockText(t *testing.T) {
+	tests := []struct {
+		name     string
+		blocks   slack.Blocks
+		contains []string
+		empty    bool
+	}{
+		{
+			name: "HeaderBlock with title",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.HeaderBlock{
+						Type: slack.MBTHeader,
+						Text: &slack.TextBlockObject{Type: "plain_text", Text: "Ticket: Server down"},
+					},
+				},
+			},
+			contains: []string{"Ticket: Server down"},
+		},
+		{
+			name: "SectionBlock with text and fields",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.SectionBlock{
+						Type: slack.MBTSection,
+						Text: &slack.TextBlockObject{Type: "mrkdwn", Text: "New request submitted"},
+						Fields: []*slack.TextBlockObject{
+							{Type: "mrkdwn", Text: "*Priority:*\nHigh"},
+							{Type: "mrkdwn", Text: "*Assignee:*\nTeam A"},
+						},
+					},
+				},
+			},
+			contains: []string{"New request submitted", "*Priority:*\nHigh", "*Assignee:*\nTeam A"},
+		},
+		{
+			name: "RichTextBlock with text elements",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.RichTextBlock{
+						Type: slack.MBTRichText,
+						Elements: []slack.RichTextElement{
+							&slack.RichTextSection{
+								Type: slack.RTESection,
+								Elements: []slack.RichTextSectionElement{
+									&slack.RichTextSectionTextElement{Type: slack.RTSEText, Text: "Hello "},
+									&slack.RichTextSectionTextElement{Type: slack.RTSEText, Text: "world"},
+								},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"Hello world"},
+		},
+		{
+			name: "RichTextBlock with link element",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.RichTextBlock{
+						Type: slack.MBTRichText,
+						Elements: []slack.RichTextElement{
+							&slack.RichTextSection{
+								Type: slack.RTESection,
+								Elements: []slack.RichTextSectionElement{
+									&slack.RichTextSectionTextElement{Type: slack.RTSEText, Text: "See "},
+									&slack.RichTextSectionLinkElement{Type: slack.RTSELink, URL: "https://example.com", Text: "docs"},
+								},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"See docs"},
+		},
+		{
+			name: "RichTextBlock link without text falls back to URL",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.RichTextBlock{
+						Type: slack.MBTRichText,
+						Elements: []slack.RichTextElement{
+							&slack.RichTextSection{
+								Type: slack.RTESection,
+								Elements: []slack.RichTextSectionElement{
+									&slack.RichTextSectionLinkElement{Type: slack.RTSELink, URL: "https://example.com"},
+								},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"https://example.com"},
+		},
+		{
+			name: "RichTextList with items",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.RichTextBlock{
+						Type: slack.MBTRichText,
+						Elements: []slack.RichTextElement{
+							&slack.RichTextList{
+								Type:  slack.RTEList,
+								Style: "bullet",
+								Elements: []slack.RichTextElement{
+									&slack.RichTextSection{
+										Type: slack.RTESection,
+										Elements: []slack.RichTextSectionElement{
+											&slack.RichTextSectionTextElement{Type: slack.RTSEText, Text: "Item one"},
+										},
+									},
+									&slack.RichTextSection{
+										Type: slack.RTESection,
+										Elements: []slack.RichTextSectionElement{
+											&slack.RichTextSectionTextElement{Type: slack.RTSEText, Text: "Item two"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"- Item one", "- Item two"},
+		},
+		{
+			name: "ContextBlock with text elements",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.ContextBlock{
+						Type: slack.MBTContext,
+						ContextElements: slack.ContextElements{
+							Elements: []slack.MixedElement{
+								&slack.TextBlockObject{Type: "mrkdwn", Text: "Submitted by John"},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"Submitted by John"},
+		},
+		{
+			name:  "Empty blocks",
+			blocks: slack.Blocks{BlockSet: []slack.Block{}},
+			empty: true,
+		},
+		{
+			name: "Mixed block types (workflow form pattern)",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.HeaderBlock{
+						Type: slack.MBTHeader,
+						Text: &slack.TextBlockObject{Type: "plain_text", Text: "Bug Report"},
+					},
+					&slack.SectionBlock{
+						Type: slack.MBTSection,
+						Fields: []*slack.TextBlockObject{
+							{Type: "mrkdwn", Text: "*Severity:*\nCritical"},
+							{Type: "mrkdwn", Text: "*Component:*\nAuth"},
+						},
+					},
+					&slack.ContextBlock{
+						Type: slack.MBTContext,
+						ContextElements: slack.ContextElements{
+							Elements: []slack.MixedElement{
+								&slack.TextBlockObject{Type: "mrkdwn", Text: "Created: 2024-01-15"},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{"Bug Report", "*Severity:*\nCritical", "*Component:*\nAuth", "Created: 2024-01-15"},
+		},
+		{
+			name: "SectionBlock with nil text and fields only",
+			blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					&slack.SectionBlock{
+						Type: slack.MBTSection,
+						Text: nil,
+						Fields: []*slack.TextBlockObject{
+							{Type: "mrkdwn", Text: "Field only"},
+						},
+					},
+				},
+			},
+			contains: []string{"Field only"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractBlockText(tt.blocks)
+
+			if tt.empty {
+				if result != "" {
+					t.Errorf("expected empty result, got %q", result)
+				}
+				return
+			}
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("result %q does not contain %q", result, want)
+				}
 			}
 		})
 	}
