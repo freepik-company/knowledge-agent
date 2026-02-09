@@ -24,13 +24,13 @@ type mockAgentService struct {
 func (m *mockAgentService) QueryStream(ctx context.Context, req agent.QueryRequest, onEvent func(agent.StreamEvent)) error {
 	m.lastRequest = &req
 	if m.queryError != nil {
-		onEvent(agent.StreamEvent{Type: "error", Message: m.queryError.Error()})
+		onEvent(agent.StreamEvent{EventType: "error", Data: map[string]any{"message": m.queryError.Error()}})
 		return m.queryError
 	}
-	onEvent(agent.StreamEvent{Type: "start", MessageID: "test-msg-1"})
-	onEvent(agent.StreamEvent{Type: "chunk", Content: "Test "})
-	onEvent(agent.StreamEvent{Type: "chunk", Content: "answer"})
-	onEvent(agent.StreamEvent{Type: "end", Status: "ok"})
+	onEvent(agent.StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": "test-session-1"}})
+	onEvent(agent.StreamEvent{EventType: "content_delta", Data: map[string]any{"text": "Test "}})
+	onEvent(agent.StreamEvent{EventType: "content_delta", Data: map[string]any{"text": "answer"}})
+	onEvent(agent.StreamEvent{EventType: "end", Data: map[string]any{"session_id": "test-session-1"}})
 	return nil
 }
 
@@ -260,21 +260,30 @@ func TestMaxRequestBodySize(t *testing.T) {
 	}
 }
 
-// parseSSEEvents parses SSE data lines from response body
-func parseSSEEvents(body string) ([]agent.StreamEvent, error) {
-	var events []agent.StreamEvent
+// sseEvent represents a parsed named SSE event for testing
+type sseEvent struct {
+	EventType string
+	Data      map[string]any
+}
+
+// parseSSEEvents parses named SSE events (event: + data:) from response body
+func parseSSEEvents(body string) ([]sseEvent, error) {
+	var events []sseEvent
 	scanner := bufio.NewScanner(strings.NewReader(body))
+	var currentType string
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+		if strings.HasPrefix(line, "event: ") {
+			currentType = strings.TrimPrefix(line, "event: ")
+		} else if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+				return nil, fmt.Errorf("failed to parse SSE event data %q: %w", data, err)
+			}
+			events = append(events, sseEvent{EventType: currentType, Data: parsed})
+			currentType = ""
 		}
-		data := strings.TrimPrefix(line, "data: ")
-		var event agent.StreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return nil, fmt.Errorf("failed to parse SSE event %q: %w", data, err)
-		}
-		events = append(events, event)
 	}
 	return events, nil
 }
@@ -316,21 +325,24 @@ func TestHandleQueryStream_Success(t *testing.T) {
 		t.Fatalf("got %d events, want 4", len(events))
 	}
 
-	// Verify event sequence: start → chunk → chunk → end
-	if events[0].Type != "start" {
-		t.Errorf("event[0].Type = %q, want %q", events[0].Type, "start")
+	// Verify event sequence: session_id → content_delta → content_delta → end
+	if events[0].EventType != "session_id" {
+		t.Errorf("event[0].EventType = %q, want %q", events[0].EventType, "session_id")
 	}
-	if events[0].MessageID != "test-msg-1" {
-		t.Errorf("event[0].MessageID = %q, want %q", events[0].MessageID, "test-msg-1")
+	if events[0].Data["session_id"] != "test-session-1" {
+		t.Errorf("event[0].Data[session_id] = %v, want %q", events[0].Data["session_id"], "test-session-1")
 	}
-	if events[1].Type != "chunk" || events[1].Content != "Test " {
-		t.Errorf("event[1] = %+v, want chunk with 'Test '", events[1])
+	if events[1].EventType != "content_delta" || events[1].Data["text"] != "Test " {
+		t.Errorf("event[1] = %+v, want content_delta with 'Test '", events[1])
 	}
-	if events[2].Type != "chunk" || events[2].Content != "answer" {
-		t.Errorf("event[2] = %+v, want chunk with 'answer'", events[2])
+	if events[2].EventType != "content_delta" || events[2].Data["text"] != "answer" {
+		t.Errorf("event[2] = %+v, want content_delta with 'answer'", events[2])
 	}
-	if events[3].Type != "end" || events[3].Status != "ok" {
-		t.Errorf("event[3] = %+v, want end with status ok", events[3])
+	if events[3].EventType != "end" {
+		t.Errorf("event[3].EventType = %q, want %q", events[3].EventType, "end")
+	}
+	if events[3].Data["session_id"] != "test-session-1" {
+		t.Errorf("event[3].Data[session_id] = %v, want %q", events[3].Data["session_id"], "test-session-1")
 	}
 }
 
@@ -391,7 +403,7 @@ func TestHandleQueryStream_Error(t *testing.T) {
 	// Should have an error event
 	hasError := false
 	for _, e := range events {
-		if e.Type == "error" && e.Message == "agent failed" {
+		if e.EventType == "error" && e.Data["message"] == "agent failed" {
 			hasError = true
 			break
 		}

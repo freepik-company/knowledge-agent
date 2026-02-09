@@ -40,11 +40,9 @@ type QueryResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// StreamEvent represents an SSE event for streaming responses
+// StreamEvent represents an SSE event following the AGENT_REST_CONTRACT.
+// EventType maps to the SSE "event:" field, Data is serialized as JSON in "data:".
 type StreamEvent struct {
-	Type      string `json:"type"`                // "start", "chunk", "end", "error"
-	MessageID string `json:"messageId,omitempty"` // For "start"
-	Content   string `json:"content,omitempty"`   // For "chunk"
-	Status    string `json:"status,omitempty"`    // For "end" ("ok")
-	Message   string `json:"message,omitempty"`   // For "error"
+	EventType string // Named SSE event: session_id, content_delta, tool_start, tool_input, tool_result, end, error
+	Data      any    // JSON-serializable payload
 }

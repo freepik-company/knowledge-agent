@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/memory"
@@ -1389,9 +1388,8 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	}
 	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
 
-	// Emit start event
-	messageID := uuid.New().String()
-	onEvent(StreamEvent{Type: "start", MessageID: messageID})
+	// Emit session_id event
+	onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
 
 	// Run agent with streaming
 	var responseText string
@@ -1434,7 +1432,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 					"error_code", event.ErrorCode,
 					"error_message", event.ErrorMessage,
 				)
-				onEvent(StreamEvent{Type: "error", Message: fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage)})
+				onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage)}})
 				trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
 				return fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
 			}
@@ -1457,12 +1455,12 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 							if currentGeneration != nil {
 								generationOutput += part.Text
 							}
-							onEvent(StreamEvent{Type: "chunk", Content: part.Text})
+							onEvent(StreamEvent{EventType: "content_delta", Data: map[string]any{"text": part.Text}})
 						}
 						// Skip aggregated (non-partial) text events - already accumulated via deltas
 					}
 
-					// Tool call tracking (Langfuse only, not SSE)
+					// Tool call tracking (Langfuse + SSE)
 					if part.FunctionCall != nil {
 						toolID := part.FunctionCall.ID
 						toolName := part.FunctionCall.Name
@@ -1477,9 +1475,13 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 							"tool_id", toolID,
 						)
 						trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
+
+						// Emit tool_start and tool_input SSE events
+						onEvent(StreamEvent{EventType: "tool_start", Data: map[string]any{"tool_id": toolID, "tool_name": toolName}})
+						onEvent(StreamEvent{EventType: "tool_input", Data: map[string]any{"tool_id": toolID, "tool_name": toolName, "args": part.FunctionCall.Args}})
 					}
 
-					// Tool response tracking (Langfuse only, not SSE)
+					// Tool response tracking (Langfuse + SSE)
 					if part.FunctionResponse != nil {
 						toolID := part.FunctionResponse.ID
 						toolName := part.FunctionResponse.Name
@@ -1500,17 +1502,26 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 							trace.StartToolCall(toolID, toolName, nil)
 						}
 
-						success := !containsError(part.FunctionResponse.Response)
+						isError := containsError(part.FunctionResponse.Response)
 
 						log.Infow("Tool call completed (stream)",
 							"tool", toolName,
 							"tool_id", toolID,
 							"duration_ms", duration.Milliseconds(),
-							"success", success,
+							"success", !isError,
 						)
 
-						observability.GetMetrics().RecordToolCall(toolName, duration, success)
+						observability.GetMetrics().RecordToolCall(toolName, duration, !isError)
 						trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
+
+						// Emit tool_result SSE event
+						onEvent(StreamEvent{EventType: "tool_result", Data: map[string]any{
+							"tool_id":   toolID,
+							"tool_name": toolName,
+							"result":    part.FunctionResponse.Response,
+							"is_error":  isError,
+							"duration":  duration.Seconds(),
+						}})
 					}
 				}
 
@@ -1544,14 +1555,13 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 					shouldRetry = true
 					responseText = ""
 					eventCount = 0
-					// Emit new start for retry
-					messageID = uuid.New().String()
-					onEvent(StreamEvent{Type: "start", MessageID: messageID})
+					// Emit new session_id for retry
+					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
 				}
 			}
 
 			if !shouldRetry {
-				onEvent(StreamEvent{Type: "error", Message: "Internal server error"})
+				onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": "Internal server error"}})
 				trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
 				return fmt.Errorf("agent error: %w", runnerErr)
 			}
@@ -1591,7 +1601,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	trace.End(true, responseText)
 
 	// Emit end event
-	onEvent(StreamEvent{Type: "end", Status: "ok"})
+	onEvent(StreamEvent{EventType: "end", Data: map[string]any{"session_id": sessionID}})
 
 	return nil
 }

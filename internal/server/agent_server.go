@@ -281,14 +281,14 @@ func (s *AgentServer) handleQueryStream(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// SSE write callback
+	// SSE write callback (named events per AGENT_REST_CONTRACT)
 	writeSSE := func(event agent.StreamEvent) {
-		data, err := json.Marshal(event)
+		data, err := json.Marshal(event.Data)
 		if err != nil {
 			log.Errorw("Failed to marshal SSE event", "error", err)
 			return
 		}
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.EventType, data)
 		flusher.Flush()
 	}
 
