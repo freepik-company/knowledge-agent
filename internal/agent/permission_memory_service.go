@@ -7,23 +7,27 @@ import (
 	"knowledge-agent/internal/ctxutil"
 	"knowledge-agent/internal/logger"
 
+	"github.com/achetronic/adk-utils-go/memory/memorytypes"
 	"google.golang.org/adk/memory"
 	"google.golang.org/adk/session"
 )
 
-// PermissionMemoryService wraps a memory service to enforce save permissions
+// PermissionMemoryService wraps a memory service to enforce save permissions.
+// It implements memorytypes.ExtendedMemoryService so the toolset can detect
+// update_memory and delete_memory capabilities via type assertion.
 type PermissionMemoryService struct {
-	baseService       memory.Service
+	baseService       memorytypes.ExtendedMemoryService
 	permissionChecker *MemoryPermissionChecker
 	contextHolder     *contextHolder
 }
 
-// NewPermissionMemoryService creates a memory service wrapper with permission checking
+// NewPermissionMemoryService creates a memory service wrapper with permission checking.
+// The returned service implements memorytypes.ExtendedMemoryService.
 func NewPermissionMemoryService(
-	baseService memory.Service,
+	baseService memorytypes.ExtendedMemoryService,
 	permissionChecker *MemoryPermissionChecker,
 	contextHolder *contextHolder,
-) memory.Service {
+) memorytypes.ExtendedMemoryService {
 	return &PermissionMemoryService{
 		baseService:       baseService,
 		permissionChecker: permissionChecker,
@@ -120,4 +124,99 @@ func hasPermissionValues(ctx context.Context) bool {
 // Search passes through to base service (no permission check needed for reads)
 func (s *PermissionMemoryService) Search(ctx context.Context, req *memory.SearchRequest) (*memory.SearchResponse, error) {
 	return s.baseService.Search(ctx, req)
+}
+
+// SearchWithID passes through to base service (no permission check needed for reads)
+func (s *PermissionMemoryService) SearchWithID(ctx context.Context, req *memory.SearchRequest) ([]memorytypes.EntryWithID, error) {
+	return s.baseService.SearchWithID(ctx, req)
+}
+
+// UpdateMemory wraps UpdateMemory with permission checking (write operation)
+func (s *PermissionMemoryService) UpdateMemory(ctx context.Context, appName, userID string, entryID int, newContent string) error {
+	log := logger.Get()
+
+	requestCtx := s.resolvePermissionContext(ctx)
+	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(requestCtx)
+
+	callerID := ctxutil.CallerID(requestCtx)
+	userEmail := ctxutil.UserEmail(requestCtx)
+	userGroups := ctxutil.UserGroups(requestCtx)
+	role := ctxutil.Role(requestCtx)
+
+	logFields := []any{
+		"operation", "update_memory",
+		"caller_id", callerID,
+		"role", role,
+		"can_write", canWrite,
+		"permission_reason", permissionReason,
+		"entry_id", entryID,
+	}
+	if userEmail != "" {
+		logFields = append(logFields, "user_email", userEmail)
+	}
+	if len(userGroups) > 0 {
+		logFields = append(logFields, "user_groups", userGroups)
+	}
+
+	if !canWrite {
+		log.Warnw("update_memory BLOCKED: insufficient permissions", logFields...)
+		return fmt.Errorf("⛔ Insufficient permissions. Only authorized users can update information in the knowledge base. Reason: %s", permissionReason)
+	}
+
+	log.Infow("update_memory permission granted, proceeding with update", logFields...)
+
+	err := s.baseService.UpdateMemory(ctx, appName, userID, entryID, newContent)
+	if err != nil {
+		log.Errorw("Failed to update memory",
+			append(logFields, "error", err)...)
+		return fmt.Errorf("error updating memory: %w", err)
+	}
+
+	log.Infow("update_memory completed successfully", logFields...)
+	return nil
+}
+
+// DeleteMemory wraps DeleteMemory with permission checking (write operation)
+func (s *PermissionMemoryService) DeleteMemory(ctx context.Context, appName, userID string, entryID int) error {
+	log := logger.Get()
+
+	requestCtx := s.resolvePermissionContext(ctx)
+	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(requestCtx)
+
+	callerID := ctxutil.CallerID(requestCtx)
+	userEmail := ctxutil.UserEmail(requestCtx)
+	userGroups := ctxutil.UserGroups(requestCtx)
+	role := ctxutil.Role(requestCtx)
+
+	logFields := []any{
+		"operation", "delete_memory",
+		"caller_id", callerID,
+		"role", role,
+		"can_write", canWrite,
+		"permission_reason", permissionReason,
+		"entry_id", entryID,
+	}
+	if userEmail != "" {
+		logFields = append(logFields, "user_email", userEmail)
+	}
+	if len(userGroups) > 0 {
+		logFields = append(logFields, "user_groups", userGroups)
+	}
+
+	if !canWrite {
+		log.Warnw("delete_memory BLOCKED: insufficient permissions", logFields...)
+		return fmt.Errorf("⛔ Insufficient permissions. Only authorized users can delete information from the knowledge base. Reason: %s", permissionReason)
+	}
+
+	log.Infow("delete_memory permission granted, proceeding with delete", logFields...)
+
+	err := s.baseService.DeleteMemory(ctx, appName, userID, entryID)
+	if err != nil {
+		log.Errorw("Failed to delete memory",
+			append(logFields, "error", err)...)
+		return fmt.Errorf("error deleting memory: %w", err)
+	}
+
+	log.Infow("delete_memory completed successfully", logFields...)
+	return nil
 }

@@ -4,7 +4,7 @@ go 1.24.9
 
 require (
 	github.com/a2aproject/a2a-go v0.3.3
-	github.com/achetronic/adk-utils-go v0.1.3
+	github.com/achetronic/adk-utils-go v0.2.0
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/git-hulk/langfuse-go v0.1.0
@@ -82,4 +82,4 @@ require (
 )
 
 // Use local fork with input_schema.type fix for Anthropic API
-replace github.com/achetronic/adk-utils-go => github.com/achetronic/adk-utils-go v0.1.3
+replace github.com/achetronic/adk-utils-go => github.com/achetronic/adk-utils-go v0.2.0

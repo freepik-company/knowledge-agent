@@ -6,8 +6,8 @@ cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdB
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
 github.com/a2aproject/a2a-go v0.3.3 h1:NqGDw2c8hCSW3/9MakeeRpw5yCZUUmW2Y/yINV15GwQ=
 github.com/a2aproject/a2a-go v0.3.3/go.mod h1:8C0O6lsfR7zWFEqVZz/+zWCoxe8gSWpknEpqm/Vgj3E=
-github.com/achetronic/adk-utils-go v0.1.3 h1:FQ7YjBXE8W+MtJ1/Qh6xhs+mKreqQF/5WjvfNYPokRI=
-github.com/achetronic/adk-utils-go v0.1.3/go.mod h1:g5we8wx2FXgWyNPyvpy4nVMwV1Ja7dNrB4iRGZLmpOE=
+github.com/achetronic/adk-utils-go v0.2.0 h1:w/JOY/n6cEdTuF+Td3wELhr29vBKVzeqTzGqPK0+LnQ=
+github.com/achetronic/adk-utils-go v0.2.0/go.mod h1:HyXTRn92N+IBGcYI5Rt00BozUW5YLvz2p0bw4dJqBwM=
 github.com/anthropics/anthropic-sdk-go v1.19.0 h1:mO6E+ffSzLRvR/YUH9KJC0uGw0uV8GjISIuzem//3KE=
 github.com/anthropics/anthropic-sdk-go v1.19.0/go.mod h1:WTz31rIUHUHqai2UslPpw5CwXrQP3geYBioRV4WOLvE=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
