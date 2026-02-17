@@ -870,47 +870,30 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 			// Process event content
 			if event.Content != nil {
-				log.Debugw("Processing event content",
-					"parts_count", len(event.Content.Parts),
-					"role", event.Content.Role,
-				)
-
 				// Start generation if we have token usage (indicates LLM call)
 				if usageTokens != nil && currentGeneration == nil {
 					currentGeneration = setup.trace.StartGeneration(a.config.Anthropic.Model, setup.instruction)
 					generationOutput = "" // Reset for new generation
 				}
 
-				for i, part := range event.Content.Parts {
-					// Log what we found in this part for debugging
-					hasFunctionCall := part.FunctionCall != nil
-					hasFunctionResponse := part.FunctionResponse != nil
-
-					// Log at INFO level when we detect function events (helps diagnose missing tool traces)
-					if hasFunctionCall || hasFunctionResponse {
-						funcName := ""
-						funcID := ""
-						if hasFunctionCall {
-							funcName = part.FunctionCall.Name
-							funcID = part.FunctionCall.ID
-						}
-						if hasFunctionResponse {
-							funcName = part.FunctionResponse.Name
-							funcID = part.FunctionResponse.ID
-						}
-						log.Infow("ADK function event detected",
-							"index", i,
-							"is_call", hasFunctionCall,
-							"is_response", hasFunctionResponse,
-							"function_name", funcName,
-							"function_id", funcID,
-							"trace_id", setup.trace.TraceID,
-						)
+				// Check if this event contains tool calls (FunctionCall).
+				// Text in events with tool calls is "thinking out loud" (e.g., "Let me search..."),
+				// not the actual answer. Only accumulate text from pure-text events (the final response).
+				eventHasToolCall := false
+				for _, part := range event.Content.Parts {
+					if part.FunctionCall != nil {
+						eventHasToolCall = true
+						break
 					}
+				}
 
-					// Text content
+				for _, part := range event.Content.Parts {
+					// Text content: only accumulate for the response if no tool call in this event
 					if part.Text != "" {
-						responseText += part.Text
+						if !eventHasToolCall {
+							responseText += part.Text
+						}
+						// Always track for Langfuse generation output
 						if currentGeneration != nil {
 							generationOutput += part.Text
 						}
