@@ -42,15 +42,24 @@ func (ss *SessionSyncer) SyncThreadMessages(ctx context.Context, sess session.Se
 		return nil
 	}
 
+	// Always track the current message's timestamp (the one triggering this request).
+	// The runner will add it to the session, so we mark it as "seen" to prevent
+	// re-syncing on the next call.
+	currentTS := getStringFromMap(messages[len(messages)-1], "ts")
+	defer func() {
+		if currentTS != "" {
+			if err := sess.State().Set("last_synced_ts", currentTS); err != nil {
+				log.Warnw("Failed to update last_synced_ts", "error", err)
+			}
+		}
+	}()
+
 	// Exclude the last message (the current one triggering this request)
 	// The runner will add it automatically via runner.Run()
-	messagesToSync := messages
-	if len(messagesToSync) > 1 {
-		messagesToSync = messagesToSync[:len(messagesToSync)-1]
-	} else {
-		// Only one message = the current one, nothing to sync
+	if len(messages) <= 1 {
 		return nil
 	}
+	messagesToSync := messages[:len(messages)-1]
 
 	// Get last synced timestamp from session state
 	var lastSyncedTS string
@@ -91,14 +100,6 @@ func (ss *SessionSyncer) SyncThreadMessages(ctx context.Context, sess session.Se
 
 		if err := ss.sessionService.AppendEvent(ctx, sess, event); err != nil {
 			return fmt.Errorf("failed to append synced event: %w", err)
-		}
-	}
-
-	// Update last_synced_ts to the timestamp of the last synced message
-	lastMsg := newMessages[len(newMessages)-1]
-	if ts := getStringFromMap(lastMsg, "ts"); ts != "" {
-		if err := sess.State().Set("last_synced_ts", ts); err != nil {
-			log.Warnw("Failed to update last_synced_ts", "error", err)
 		}
 	}
 
