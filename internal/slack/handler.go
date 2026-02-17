@@ -681,7 +681,6 @@ func stripBotMention(text string) string {
 	return strings.TrimSpace(cleanText)
 }
 
-// findLastBotMentionIndex finds the index of the last message that mentions the bot
 // getMapKeys returns the keys of a map for logging purposes
 func getMapKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))

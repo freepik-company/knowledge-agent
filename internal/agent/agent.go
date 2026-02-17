@@ -496,6 +496,47 @@ func (a *Agent) GetKeycloakClient() *keycloak.Client {
 	return a.keycloakClient
 }
 
+// buildInstruction creates the user instruction for the agent.
+// Shared between Query() and QueryStream() to avoid duplication.
+func (a *Agent) buildInstruction(req QueryRequest, isIngest, hasImages bool, contextStr, preSearchResults string) string {
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+
+	// Build user context line
+	userContext := ""
+	if req.UserRealName != "" {
+		userContext = fmt.Sprintf("\n**User**: %s (@%s)", req.UserRealName, req.UserName)
+	} else if req.UserName != "" {
+		userContext = fmt.Sprintf("\n**User**: @%s", req.UserName)
+	}
+
+	if isIngest {
+		return fmt.Sprintf(`Ingest this conversation thread into the knowledge base.
+
+**Date**: %s%s
+**Thread**: %s | **Channel**: %s | **Messages**: %d
+
+%s
+
+Analyze, extract valuable information, save with save_to_memory, and summarize what you saved.`,
+			currentDate, userContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
+	}
+
+	// Standard query (with or without images)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Date**: %s%s\n", currentDate, userContext)
+
+	if preSearchResults != "" {
+		fmt.Fprintf(&sb, "\n**Memory** (pre-searched):\n%s\n", preSearchResults)
+	}
+
+	if hasImages {
+		sb.WriteString("\n[Image attached]\n")
+	}
+
+	fmt.Fprintf(&sb, "\n%s", req.Query)
+	return sb.String()
+}
+
 // preSearchMemory executes search_memory programmatically before the LLM loop.
 // This ensures the agent always has relevant memory context before deciding what to do.
 // NOTE: Uses memoryService directly (not permission-wrapped) because reads
@@ -710,67 +751,8 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
 	}
 
-	// Get current date for temporal context
-	currentDate := time.Now().Format("Monday, January 2, 2006")
-
-	// Build permission context for LLM if permissions are configured
-	permissionContext := ""
-	if !isEmpty {
-		permissionContext = fmt.Sprintf("\n**Current Request Context**:\n- Caller ID: %s\n- Slack User ID: %s\n- Can Save to Memory: %t\n", callerID, slackUserID, canSave)
-	}
-
-	// Build user greeting if name available
-	userGreeting := ""
-	if req.UserRealName != "" {
-		userGreeting = fmt.Sprintf("\n**User**: %s (Slack: @%s)\n", req.UserRealName, req.UserName)
-	} else if req.UserName != "" {
-		userGreeting = fmt.Sprintf("\n**User**: @%s\n", req.UserName)
-	}
-
-	// Create instruction for the agent
-	var instruction string
-	if isIngest {
-		// Ingest instruction: focus on extracting and saving knowledge
-		instruction = fmt.Sprintf(`You are receiving a conversation thread to ingest into the knowledge base.
-
-**Current Date**: %s%s
-
-Thread Information:
-- Thread ID: %s
-- Channel: %s
-- Number of messages: %d
-
-Here is the complete conversation thread:
-
-%s
-
-Your task:
-1. Analyze this conversation carefully
-2. Identify all important information, decisions, solutions, or insights
-3. Use the save_to_memory tool to store each piece of valuable information
-4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
-5. After saving everything, provide a summary of what you saved
-
-Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
-	} else if hasImages {
-		// Image query: context + image indicator + question
-		instruction = fmt.Sprintf(`**Current Date**: %s%s%s
-
-**Memory Search Results** (pre-searched):
-%s
-
-The user has shared an image with this message.
-
-%s`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
-	} else {
-		// Standard query: context + pre-search + question
-		instruction = fmt.Sprintf(`**Current Date**: %s%s%s
-
-**Memory Search Results** (pre-searched):
-%s
-
-%s`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
-	}
+	// Build instruction for the agent
+	instruction := a.buildInstruction(req, isIngest, hasImages, contextStr, preSearchResults)
 
 	// Create user message with images if available
 	userMsg := a.buildContentWithImages(instruction, req.Messages)
@@ -1236,95 +1218,8 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
 	}
 
-	// Build instruction (same logic as Query)
-	currentDate := time.Now().Format("Monday, January 2, 2006")
-
-	permissionContext := ""
-	if !isEmpty {
-		permissionContext = fmt.Sprintf("\n**Current Request Context**:\n- Caller ID: %s\n- Slack User ID: %s\n- Can Save to Memory: %t\n", callerID, slackUserID, canSave)
-	}
-
-	userGreeting := ""
-	if req.UserRealName != "" {
-		userGreeting = fmt.Sprintf("\n**User**: %s (Slack: @%s)\n", req.UserRealName, req.UserName)
-	} else if req.UserName != "" {
-		userGreeting = fmt.Sprintf("\n**User**: @%s\n", req.UserName)
-	}
-
-	var instruction string
-	if isIngest {
-		instruction = fmt.Sprintf(`You are receiving a conversation thread to ingest into the knowledge base.
-
-**Current Date**: %s%s
-
-Thread Information:
-- Thread ID: %s
-- Channel: %s
-- Number of messages: %d
-
-Here is the complete conversation thread:
-
-%s
-
-Your task:
-1. Analyze this conversation carefully
-2. Identify all important information, decisions, solutions, or insights
-3. Use the save_to_memory tool to store each piece of valuable information
-4. When saving, include the date if the conversation contains temporal references (e.g., "this week", "today", "last week")
-5. After saving everything, provide a summary of what you saved
-
-Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
-	} else if hasImages {
-		// Note: thread context comes from session events, not the prompt
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
-
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
-%s
-
-User Message: %s
-
-**IMPORTANT**: There is an image attached to this message. Please:
-1. ANALYZE the image focusing on technical/business content:
-   - Architecture diagrams: Identify components, services, databases, connections, data flows
-   - Error screenshots: Extract error messages, stack traces, error codes, affected systems
-   - Infrastructure diagrams: Note servers, networks, IPs, ports, deployment configurations
-   - Code/Config screenshots: Capture code snippets, configurations, command outputs
-   - Workflow diagrams: Document process steps, decision points, actors
-   - Documentation: Extract key technical concepts, APIs, specifications
-
-2. Consider the memory search results and conversation history when formulating your response
-
-3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
-   - Clear description of what the image shows
-   - ALL visible text, labels, error messages, component names
-   - Technical relationships and connections
-   - Context provided by the user
-
-4. If you need more specific information, you can search_memory again with different terms
-
-5. Always respond in the same language the user is using
-
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
-	} else {
-		// Standard query instruction
-		// Thread context comes from session events (multi-turn), not injected in the prompt
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
-
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
-%s
-
-Question: %s
-
-Based on the memory search results above and the conversation history, provide your answer.
-If you need more specific information, you can search_memory again with different terms.
-If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
-
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
-	}
+	// Build instruction (shared with Query)
+	instruction := a.buildInstruction(req, isIngest, hasImages, contextStr, preSearchResults)
 
 	// Build content with images
 	userMsg := a.buildContentWithImages(instruction, req.Messages)
