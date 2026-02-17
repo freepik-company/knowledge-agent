@@ -753,56 +753,23 @@ Your task:
 
 Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
 	} else if hasImages {
-		// Special instruction when images are present
-		// Note: thread context comes from session events, not the prompt
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
+		// Image query: context + image indicator + question
+		instruction = fmt.Sprintf(`**Current Date**: %s%s%s
 
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
+**Memory Search Results** (pre-searched):
 %s
 
-User Message: %s
+The user has shared an image with this message.
 
-**IMPORTANT**: There is an image attached to this message. Please:
-1. ANALYZE the image focusing on technical/business content:
-   - Architecture diagrams: Identify components, services, databases, connections, data flows
-   - Error screenshots: Extract error messages, stack traces, error codes, affected systems
-   - Infrastructure diagrams: Note servers, networks, IPs, ports, deployment configurations
-   - Code/Config screenshots: Capture code snippets, configurations, command outputs
-   - Workflow diagrams: Document process steps, decision points, actors
-   - Documentation: Extract key technical concepts, APIs, specifications
-
-2. Consider the memory search results and conversation history when formulating your response
-
-3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
-   - Clear description of what the image shows
-   - ALL visible text, labels, error messages, component names
-   - Technical relationships and connections
-   - Context provided by the user
-
-4. If you need more specific information, you can search_memory again with different terms
-
-5. Always respond in the same language the user is using
-
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
+%s`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	} else {
-		// Standard query instruction
-		// Thread context comes from session events (multi-turn), not injected in the prompt
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
+		// Standard query: context + pre-search + question
+		instruction = fmt.Sprintf(`**Current Date**: %s%s%s
 
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
+**Memory Search Results** (pre-searched):
 %s
 
-Question: %s
-
-Based on the memory search results above and the conversation history, provide your answer.
-If you need more specific information, you can search_memory again with different terms.
-If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
-
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
+%s`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	}
 
 	// Create user message with images if available
