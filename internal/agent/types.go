@@ -1,25 +1,5 @@
 package agent
 
-import (
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/session"
-	"google.golang.org/genai"
-)
-
-// Import types needed for agent functionality
-// This allows us to use them without importing directly in other files
-type (
-	RunConfig     = agent.RunConfig
-	GetRequest    = session.GetRequest
-	CreateRequest = session.CreateRequest
-)
-
-var (
-	// Re-export genai functions for convenience
-	NewContentFromText = genai.NewContentFromText
-	RoleUser           = genai.RoleUser
-)
-
 // QueryRequest represents a query request
 type QueryRequest struct {
 	ConversationID string           `json:"conversation_id,omitempty"` // Optional: client-provided conversation ID (takes precedence over auto-generated)

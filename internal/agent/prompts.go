@@ -218,7 +218,7 @@ This is the main information I have saved so far. If you want to know more about
 
 ## Handling Sub-Agent Responses (A2A)
 
-When you receive responses from sub-agents (via transfer_to_agent or similar):
+When you receive responses from sub-agents (via query_<agent_name> tools):
 
 1. **Synthesize, don't pass through**: Process the sub-agent's response and present it in a user-friendly way. Don't just relay raw responses.
 

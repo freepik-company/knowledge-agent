@@ -623,51 +623,59 @@ func (a *Agent) preSearchMemory(ctx context.Context, query, userID string) strin
 	return resultsText
 }
 
-// Query handles question answering and thread ingestion using the knowledge base.
-// When req.Intent is "ingest", it processes threads for knowledge extraction.
-// Otherwise (default), it handles question answering.
-func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
+// querySetup holds the common state prepared for both Query and QueryStream.
+type querySetup struct {
+	isIngest    bool
+	callerID    string
+	slackUserID string
+	sessionID   string
+	userID      string
+	instruction string
+	userMsg     *genai.Content
+	trace       *observability.QueryTrace
+	ctx         context.Context
+	startTime   time.Time
+}
+
+// prepareQuery performs common setup for Query and QueryStream.
+// It resolves identifiers, creates the Langfuse trace, manages the session,
+// syncs thread messages, compacts if needed, and builds the user instruction.
+func (a *Agent) prepareQuery(ctx context.Context, req QueryRequest, streaming bool) (*querySetup, error) {
 	log := logger.Get()
 	startTime := time.Now()
 
-	// Determine if this is an ingest request
 	isIngest := req.Intent == "ingest"
-
-	// Extract caller information from context
 	callerID := ctxutil.CallerID(ctx)
 	slackUserID := ctxutil.SlackUserID(ctx)
 
-	// Resolve session ID for Langfuse grouping (client-provided or auto-generated from thread context)
+	// Resolve session ID
 	sessionID := resolveSessionID(req.ConversationID, req.ChannelID, req.ThreadTS)
-	// For ingestion, add prefix to distinguish from query sessions
 	if isIngest && req.ConversationID == "" {
 		sessionID = "ingest-" + sessionID
 	}
 
-	// Start Langfuse trace with session ID for grouping in Sessions view
-	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Query, sessionID, map[string]any{
+	// Start Langfuse trace
+	traceMetadata := map[string]any{
 		"caller_id":      callerID,
 		"slack_user_id":  slackUserID,
 		"channel_id":     req.ChannelID,
 		"thread_ts":      req.ThreadTS,
 		"user_name":      req.UserName,
 		"user_real_name": req.UserRealName,
-		"user_email":     req.UserEmail, // For Langfuse UserID (preferred over user_name)
+		"user_email":     req.UserEmail,
 		"session_id":     sessionID,
 		"intent":         req.Intent,
-	})
-	defer func() {
-		// Finalize trace at the end
-		trace.End(true, "")
-	}()
-
-	// Add QueryTrace to context early so pre-search and other operations can use it
+	}
+	if streaming {
+		traceMetadata["streaming"] = true
+	}
+	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Query, sessionID, traceMetadata)
 	ctx = observability.ContextWithQueryTrace(ctx, trace)
 
 	// Update context holder for permission checks
 	a.contextHolder.SetContext(ctx)
 
-	// Check if user has save permissions and log it
+	// Log request details
 	canSave, permissionReason := a.permissionChecker.CanSaveToMemory(ctx)
 	isEmpty := a.permissionChecker.IsEmpty()
 
@@ -675,6 +683,9 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		"caller_id", callerID,
 		"query", req.Query,
 		"channel_id", req.ChannelID,
+	}
+	if streaming {
+		logFields = append(logFields, "streaming", true)
 	}
 	if isIngest {
 		logFields = append(logFields, "intent", "ingest", "message_count", len(req.Messages))
@@ -688,106 +699,138 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	if !isEmpty {
 		logFields = append(logFields, "can_save_to_memory", canSave, "permission_reason", permissionReason)
 	}
-
 	if isIngest {
 		log.Infow("Processing ingest request", logFields...)
 	} else {
 		log.Infow("Processing query", logFields...)
 	}
 
-	// Record query metrics (also used for ingest)
-	defer func() {
-		if isIngest {
-			observability.GetMetrics().RecordIngest(time.Since(startTime), nil)
-		} else {
-			observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
-		}
-	}()
-
-	// Determine user_id based on knowledge_scope configuration
+	// Resolve user ID
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
 
-	// Get or create session (preserves existing session for multi-turn)
+	// Get or create session
 	sessionResult, err := a.sessionManager.GetOrCreate(ctx, appName, userID, sessionID)
 	if err != nil {
 		log.Errorw("Failed to get or create session", "error", err, "session_id", sessionID)
+		trace.End(false, fmt.Sprintf("Session error: %v", err))
 		return nil, fmt.Errorf("session error: %w", err)
 	}
 
-	// Sync thread messages as session events (skip for ingest - they are one-shot)
+	// Sync thread messages as session events (skip for ingest)
 	if !isIngest && len(req.Messages) > 0 {
 		if err := a.sessionSyncer.SyncThreadMessages(ctx, sessionResult.Session, req.Messages); err != nil {
 			log.Warnw("Failed to sync thread messages to session", "error", err, "session_id", sessionID)
 		}
 	}
 
-	// Compact session if context is too large (proactive, before runner)
+	// Compact session proactively (skip for ingest)
 	if !isIngest {
 		if err := a.sessionCompactor.CompactIfNeeded(ctx, appName, userID, sessionID); err != nil {
 			log.Warnw("Session compaction failed", "error", err, "session_id", sessionID)
 		}
 	}
 
-	// Build context from current thread if available
+	// Build thread context and detect images
 	var contextStr string
 	hasImages := false
 	if len(req.Messages) > 0 {
-		// For ingest: use full thread context in prompt
-		// For queries: context comes from session events, only build for ingest
 		if isIngest {
 			contextStr = a.buildThreadContextFromMessages(req.Messages)
 		}
-		// Check if there are images in the last message
 		lastMsg := req.Messages[len(req.Messages)-1]
 		if images, ok := lastMsg["images"].([]any); ok && len(images) > 0 {
 			hasImages = true
 		}
 	}
 
-	// Pre-search memory: execute search_memory BEFORE the LLM loop for queries only
-	// Skip pre-search for ingest requests as they focus on saving, not retrieving
+	// Pre-search memory (skip for ingest)
 	var preSearchResults string
 	if !isIngest {
 		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
 	}
 
-	// Build instruction for the agent
+	// Build instruction and user message
 	instruction := a.buildInstruction(req, isIngest, hasImages, contextStr, preSearchResults)
-
-	// Create user message with images if available
 	userMsg := a.buildContentWithImages(instruction, req.Messages)
 
-	// Log content structure for debugging
-	log.Debugw("Content structure",
-		"parts_count", len(userMsg.Parts),
-	)
-	for i, part := range userMsg.Parts {
-		if part.Text != "" {
-			log.Debugw("Content part", "index", i, "type", "text", "length", len(part.Text))
-		} else if part.InlineData != nil {
-			log.Debugw("Content part", "index", i, "type", "image", "mime", part.InlineData.MIMEType, "bytes", len(part.InlineData.Data))
-		}
-	}
-
-	// Run agent to answer the question
-	var responseText string     // Accumulates full response for final answer
-	var generationOutput string // Tracks current generation's output only
-	var currentGeneration *traces.Observation
-	toolStartTimes := make(map[string]time.Time) // Track tool call start times for metrics
-
-	if isIngest {
-		log.Infow("Running agent for ingest", "user_id", userID, "session_id", sessionID)
-	} else {
-		log.Infow("Running agent for query", "user_id", userID, "session_id", sessionID)
-	}
-
-	// Add user email and session ID to context for identity propagation to sub-agents
+	// Add identity to context for sub-agent propagation
 	if req.UserEmail != "" {
 		ctx = context.WithValue(ctx, ctxutil.UserEmailKey, req.UserEmail)
 	}
 	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
 
+	return &querySetup{
+		isIngest:    isIngest,
+		callerID:    callerID,
+		slackUserID: slackUserID,
+		sessionID:   sessionID,
+		userID:      userID,
+		instruction: instruction,
+		userMsg:     userMsg,
+		trace:       trace,
+		ctx:         ctx,
+		startTime:   startTime,
+	}, nil
+}
+
+// logTraceSummary logs the Langfuse trace summary (shared between Query and QueryStream).
+func (a *Agent) logTraceSummary(setup *querySetup, eventCount int, responseLen int) {
+	log := logger.Get()
+
+	promptTokens, completionTokens, totalTokens := setup.trace.GetAccumulatedTokens()
+	totalCost := setup.trace.CalculateTotalCost(
+		a.config.Anthropic.Model,
+		a.config.Langfuse.InputCostPer1M,
+		a.config.Langfuse.OutputCostPer1M,
+	)
+	traceSummary := setup.trace.GetSummary()
+
+	log.Infow("Query trace summary",
+		"trace_id", setup.trace.TraceID,
+		"prompt_tokens", promptTokens,
+		"completion_tokens", completionTokens,
+		"total_tokens", totalTokens,
+		"total_cost_usd", fmt.Sprintf("$%.6f", totalCost),
+		"tool_calls_count", traceSummary["tool_calls_count"],
+		"generations_count", traceSummary["generations_count"],
+	)
+
+	log.Infow("Query completed successfully",
+		"caller_id", setup.callerID,
+		"total_events", eventCount,
+		"response_length", responseLen,
+	)
+}
+
+// Query handles question answering and thread ingestion using the knowledge base.
+func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, error) {
+	log := logger.Get()
+
+	setup, err := a.prepareQuery(ctx, req, false)
+	if err != nil {
+		return nil, err
+	}
+	ctx = setup.ctx
+
+	defer func() {
+		setup.trace.End(true, "")
+	}()
+	defer func() {
+		if setup.isIngest {
+			observability.GetMetrics().RecordIngest(time.Since(setup.startTime), nil)
+		} else {
+			observability.GetMetrics().RecordQuery(time.Since(setup.startTime), nil)
+		}
+	}()
+
+	// Run agent
+	var responseText string
+	var generationOutput string
+	var currentGeneration *traces.Observation
+	toolStartTimes := make(map[string]time.Time)
 	eventCount := 0
+
+	log.Infow("Running agent", "user_id", setup.userID, "session_id", setup.sessionID, "ingest", setup.isIngest)
 
 	// Retry loop for handling corrupted sessions
 	maxRetries := 1 // Retry once if session is corrupted
@@ -795,7 +838,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 		var runnerErr error
 		shouldRetry := false
 
-		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
+		for event, err := range a.runner.Run(ctx, setup.userID, setup.sessionID, setup.userMsg, agent.RunConfig{}) {
 			if err != nil {
 				runnerErr = err
 				break
@@ -821,7 +864,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 					"error_code", event.ErrorCode,
 					"error_message", event.ErrorMessage,
 				)
-				trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
+				setup.trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
 				return nil, fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
 			}
 
@@ -834,7 +877,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 
 				// Start generation if we have token usage (indicates LLM call)
 				if usageTokens != nil && currentGeneration == nil {
-					currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
+					currentGeneration = setup.trace.StartGeneration(a.config.Anthropic.Model, setup.instruction)
 					generationOutput = "" // Reset for new generation
 				}
 
@@ -861,29 +904,13 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 							"is_response", hasFunctionResponse,
 							"function_name", funcName,
 							"function_id", funcID,
-							"trace_id", trace.TraceID,
+							"trace_id", setup.trace.TraceID,
 						)
 					}
 
-					log.Debugw("Processing part",
-						"index", i,
-						"has_text", part.Text != "",
-						"has_function_call", hasFunctionCall,
-						"has_function_response", hasFunctionResponse,
-					)
-
 					// Text content
 					if part.Text != "" {
-						log.Debugw("Text part",
-							"index", i,
-							"length", len(part.Text),
-							"preview", truncateString(part.Text, 100),
-						)
-
-						// Collect response text for final answer
 						responseText += part.Text
-
-						// Track this generation's output separately
 						if currentGeneration != nil {
 							generationOutput += part.Text
 						}
@@ -893,7 +920,6 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 					if part.FunctionCall != nil {
 						toolID := part.FunctionCall.ID
 						toolName := part.FunctionCall.Name
-						// Use toolID as key for tracking, fallback to toolName if empty
 						trackKey := toolID
 						if trackKey == "" {
 							trackKey = toolName
@@ -904,426 +930,11 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 							"tool", toolName,
 							"tool_id", toolID,
 							"args_count", len(part.FunctionCall.Args),
-							"trace_id", trace.TraceID,
 						)
-
-						// Track tool call in Langfuse
-						trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
+						setup.trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
 					}
 
 					// Tool response
-					if part.FunctionResponse != nil {
-						toolID := part.FunctionResponse.ID
-						toolName := part.FunctionResponse.Name
-						// Use toolID as key for tracking, fallback to toolName if empty
-						trackKey := toolID
-						if trackKey == "" {
-							trackKey = toolName
-						}
-
-						// Check if we have a start time (from FunctionCall event)
-						// If not, the ADK executed the tool internally without sending us FunctionCall event
-						var duration time.Duration
-						hadStartTime := false
-						if startTime, ok := toolStartTimes[trackKey]; ok {
-							duration = time.Since(startTime)
-							delete(toolStartTimes, trackKey)
-							hadStartTime = true
-						}
-
-						// If we didn't have a start time, we need to create the tool call entry in Langfuse
-						// This happens when ADK processes tools internally without yielding FunctionCall events
-						if !hadStartTime {
-							// Start and immediately end the tool call to record it in Langfuse
-							trace.StartToolCall(toolID, toolName, nil)
-						}
-
-						// Determine if tool call was successful
-						success := !containsError(part.FunctionResponse.Response)
-
-						log.Infow("Tool call completed",
-							"tool", toolName,
-							"tool_id", toolID,
-							"duration_ms", duration.Milliseconds(),
-							"success", success,
-							"has_response", part.FunctionResponse.Response != nil,
-							"had_start_event", hadStartTime,
-						)
-
-						// Record tool metrics
-						observability.GetMetrics().RecordToolCall(toolName, duration, success)
-
-						// Log detailed response for A2A debugging
-						if toolName == "transfer_to_agent" {
-							log.Debugw("transfer_to_agent response details",
-								"response", part.FunctionResponse.Response,
-							)
-						}
-
-						// End tool call in Langfuse
-						trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
-					}
-				}
-
-				// End generation if we have token usage
-				if usageTokens != nil && currentGeneration != nil {
-					promptTokens := int(usageTokens.PromptTokenCount)
-					completionTokens := int(usageTokens.CandidatesTokenCount)
-
-					// Pass only this generation's output, not accumulated text
-					trace.EndGeneration(
-						currentGeneration,
-						generationOutput,
-						promptTokens,
-						completionTokens,
-					)
-
-					currentGeneration = nil // Reset for next generation
-					generationOutput = ""   // Reset output tracker
-				}
-			}
-		}
-
-		// Check if we got an error from the runner
-		if runnerErr != nil {
-			// Check if it's an orphaned tool call error (session corruption)
-			if isOrphanedToolCallError(runnerErr) {
-				log.Warnw("Detected orphaned tool call error (session corruption)",
-					"error", runnerErr,
-					"session_id", sessionID,
-					"attempt", attempt,
-				)
-
-				// Record session repair in Langfuse trace
-				trace.RecordSessionRepair(sessionID, attempt)
-
-				// Delete the corrupted session so next attempt starts fresh
-				if err := deleteCorruptedSession(ctx, a.sessionService, appName, userID, sessionID); err != nil {
-					log.Errorw("Failed to delete corrupted session",
-						"error", err,
-						"session_id", sessionID,
-					)
-				}
-
-				if attempt < maxRetries {
-					log.Infow("Retrying query after session repair",
-						"session_id", sessionID,
-						"attempt", attempt+1,
-					)
-					shouldRetry = true
-					responseText = ""
-					eventCount = 0
-				}
-			}
-
-			// Check if it's a context overflow error
-			if !shouldRetry && isContextOverflowError(runnerErr) {
-				log.Warnw("Detected context overflow, compacting session",
-					"error", runnerErr,
-					"session_id", sessionID,
-					"attempt", attempt,
-				)
-
-				if err := a.sessionCompactor.Compact(ctx, appName, userID, sessionID); err != nil {
-					log.Errorw("Failed to compact session after overflow",
-						"error", err,
-						"session_id", sessionID,
-					)
-				} else if attempt < maxRetries {
-					log.Infow("Retrying query after session compaction",
-						"session_id", sessionID,
-						"attempt", attempt+1,
-					)
-					shouldRetry = true
-					responseText = ""
-					eventCount = 0
-				}
-			}
-
-			if !shouldRetry {
-				trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
-				return nil, fmt.Errorf("agent error: %w", runnerErr)
-			}
-		}
-
-		// Break out of retry loop if no error or not retrying
-		if !shouldRetry {
-			break
-		}
-	}
-
-	// Calculate total cost and log summary
-	promptTokens, completionTokens, totalTokens := trace.GetAccumulatedTokens()
-	totalCost := trace.CalculateTotalCost(
-		a.config.Anthropic.Model,
-		a.config.Langfuse.InputCostPer1M,
-		a.config.Langfuse.OutputCostPer1M,
-	)
-	traceSummary := trace.GetSummary()
-
-	traceSummaryFields := []any{
-		"trace_id", trace.TraceID,
-		"prompt_tokens", promptTokens,
-		"completion_tokens", completionTokens,
-		"total_tokens", totalTokens,
-		"total_cost_usd", fmt.Sprintf("$%.6f", totalCost),
-		"tool_calls_count", traceSummary["tool_calls_count"],
-		"generations_count", traceSummary["generations_count"],
-	}
-	if req.UserName != "" {
-		traceSummaryFields = append(traceSummaryFields, "user_name", req.UserName)
-	}
-	log.Infow("Query trace summary", traceSummaryFields...)
-
-	completionLogFields := []any{
-		"caller_id", callerID,
-		"total_events", eventCount,
-		"response_length", len(responseText),
-	}
-	if req.UserName != "" {
-		completionLogFields = append(completionLogFields, "user_name", req.UserName)
-	}
-	if slackUserID != "" {
-		completionLogFields = append(completionLogFields, "slack_user_id", slackUserID)
-	}
-	log.Infow("Query completed successfully", completionLogFields...)
-
-	// End Langfuse trace
-	trace.End(true, responseText)
-
-	return &QueryResponse{
-		Success: true,
-		Answer:  responseText,
-	}, nil
-}
-
-// QueryStream handles streaming query responses via SSE.
-// It uses a callback-based approach: onEvent is called for each SSE event.
-// The setup logic mirrors Query() but emits streaming events instead of accumulating a response.
-func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(StreamEvent)) error {
-	log := logger.Get()
-	startTime := time.Now()
-
-	// Determine if this is an ingest request
-	isIngest := req.Intent == "ingest"
-
-	// Extract caller information from context
-	callerID := ctxutil.CallerID(ctx)
-	slackUserID := ctxutil.SlackUserID(ctx)
-
-	// Resolve session ID
-	sessionID := resolveSessionID(req.ConversationID, req.ChannelID, req.ThreadTS)
-	if isIngest && req.ConversationID == "" {
-		sessionID = "ingest-" + sessionID
-	}
-
-	// Start Langfuse trace
-	trace := a.langfuseTracer.StartQueryTrace(ctx, req.Query, sessionID, map[string]any{
-		"caller_id":      callerID,
-		"slack_user_id":  slackUserID,
-		"channel_id":     req.ChannelID,
-		"thread_ts":      req.ThreadTS,
-		"user_name":      req.UserName,
-		"user_real_name": req.UserRealName,
-		"user_email":     req.UserEmail,
-		"session_id":     sessionID,
-		"intent":         req.Intent,
-		"streaming":      true,
-	})
-	defer func() {
-		trace.End(true, "")
-	}()
-
-	ctx = observability.ContextWithQueryTrace(ctx, trace)
-
-	// Update context holder for permission checks
-	a.contextHolder.SetContext(ctx)
-
-	// Check permissions
-	canSave, permissionReason := a.permissionChecker.CanSaveToMemory(ctx)
-	isEmpty := a.permissionChecker.IsEmpty()
-
-	logFields := []any{
-		"caller_id", callerID,
-		"query", req.Query,
-		"channel_id", req.ChannelID,
-		"streaming", true,
-	}
-	if isIngest {
-		logFields = append(logFields, "intent", "ingest", "message_count", len(req.Messages))
-	}
-	if req.UserName != "" {
-		logFields = append(logFields, "user_name", req.UserName)
-	}
-	if slackUserID != "" {
-		logFields = append(logFields, "slack_user_id", slackUserID)
-	}
-	if !isEmpty {
-		logFields = append(logFields, "can_save_to_memory", canSave, "permission_reason", permissionReason)
-	}
-	log.Infow("Processing stream query", logFields...)
-
-	// Record metrics
-	defer func() {
-		if isIngest {
-			observability.GetMetrics().RecordIngest(time.Since(startTime), nil)
-		} else {
-			observability.GetMetrics().RecordQuery(time.Since(startTime), nil)
-		}
-	}()
-
-	// Resolve user ID
-	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
-
-	// Get or create session (preserves existing session for multi-turn)
-	sessionResult, err := a.sessionManager.GetOrCreate(ctx, appName, userID, sessionID)
-	if err != nil {
-		log.Errorw("Failed to get or create session", "error", err, "session_id", sessionID)
-		onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": "Session error"}})
-		return fmt.Errorf("session error: %w", err)
-	}
-
-	// Sync thread messages as session events (skip for ingest)
-	if !isIngest && len(req.Messages) > 0 {
-		if err := a.sessionSyncer.SyncThreadMessages(ctx, sessionResult.Session, req.Messages); err != nil {
-			log.Warnw("Failed to sync thread messages to session", "error", err, "session_id", sessionID)
-		}
-	}
-
-	// Compact session if context is too large (proactive)
-	if !isIngest {
-		if err := a.sessionCompactor.CompactIfNeeded(ctx, appName, userID, sessionID); err != nil {
-			log.Warnw("Session compaction failed", "error", err, "session_id", sessionID)
-		}
-	}
-
-	// Build thread context
-	var contextStr string
-	hasImages := false
-	if len(req.Messages) > 0 {
-		// For ingest: use full thread context in prompt
-		// For queries: context comes from session events
-		if isIngest {
-			contextStr = a.buildThreadContextFromMessages(req.Messages)
-		}
-		lastMsg := req.Messages[len(req.Messages)-1]
-		if images, ok := lastMsg["images"].([]any); ok && len(images) > 0 {
-			hasImages = true
-		}
-	}
-
-	// Pre-search memory (skip for ingest)
-	var preSearchResults string
-	if !isIngest {
-		preSearchResults = a.preSearchMemory(ctx, req.Query, userID)
-	}
-
-	// Build instruction (shared with Query)
-	instruction := a.buildInstruction(req, isIngest, hasImages, contextStr, preSearchResults)
-
-	// Build content with images
-	userMsg := a.buildContentWithImages(instruction, req.Messages)
-
-	// Add identity context
-	if req.UserEmail != "" {
-		ctx = context.WithValue(ctx, ctxutil.UserEmailKey, req.UserEmail)
-	}
-	ctx = context.WithValue(ctx, ctxutil.SessionIDKey, sessionID)
-
-	// Emit session_id event
-	onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
-
-	// Run agent with streaming
-	var responseText string
-	var generationOutput string
-	var currentGeneration *traces.Observation
-	toolStartTimes := make(map[string]time.Time)
-	eventCount := 0
-
-	log.Infow("Running agent for stream query", "user_id", userID, "session_id", sessionID)
-
-	// Retry loop for corrupted sessions
-	maxRetries := 1
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		var runnerErr error
-		shouldRetry := false
-
-		for event, err := range a.runner.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{
-			StreamingMode: agent.StreamingModeSSE,
-		}) {
-			// Check for client disconnect
-			if ctx.Err() != nil {
-				log.Infow("Client disconnected during stream", "session_id", sessionID)
-				return ctx.Err()
-			}
-
-			if err != nil {
-				runnerErr = err
-				break
-			}
-
-			eventCount++
-
-			var usageTokens *genai.GenerateContentResponseUsageMetadata
-			if event.UsageMetadata != nil {
-				usageTokens = event.UsageMetadata
-			}
-
-			if event.ErrorCode != "" {
-				log.Errorw("Event error during stream query",
-					"error_code", event.ErrorCode,
-					"error_message", event.ErrorMessage,
-				)
-				onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage)}})
-				trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
-				return fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
-			}
-
-			if event.Content != nil {
-				// Start generation tracking for Langfuse
-				if usageTokens != nil && currentGeneration == nil {
-					currentGeneration = trace.StartGeneration(a.config.Anthropic.Model, instruction)
-					generationOutput = ""
-				}
-
-				for _, part := range event.Content.Parts {
-					// Text content → emit as SSE chunk (only for partial/streaming events)
-					// The ADK runner emits both partial deltas and a final aggregated event
-					// with the complete text. We only stream the deltas to avoid duplication.
-					if part.Text != "" {
-						if event.Partial {
-							// Streaming delta: emit to client and accumulate
-							responseText += part.Text
-							if currentGeneration != nil {
-								generationOutput += part.Text
-							}
-							onEvent(StreamEvent{EventType: "content_delta", Data: map[string]any{"text": part.Text}})
-						}
-						// Skip aggregated (non-partial) text events - already accumulated via deltas
-					}
-
-					// Tool call tracking (Langfuse + SSE)
-					if part.FunctionCall != nil {
-						toolID := part.FunctionCall.ID
-						toolName := part.FunctionCall.Name
-						trackKey := toolID
-						if trackKey == "" {
-							trackKey = toolName
-						}
-						toolStartTimes[trackKey] = time.Now()
-
-						log.Infow("Tool call started (stream)",
-							"tool", toolName,
-							"tool_id", toolID,
-						)
-						trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
-
-						// Emit tool_start and tool_input SSE events
-						onEvent(StreamEvent{EventType: "tool_start", Data: map[string]any{"tool_id": toolID, "tool_name": toolName}})
-						onEvent(StreamEvent{EventType: "tool_input", Data: map[string]any{"tool_id": toolID, "tool_name": toolName, "args": part.FunctionCall.Args}})
-					}
-
-					// Tool response tracking (Langfuse + SSE)
 					if part.FunctionResponse != nil {
 						toolID := part.FunctionResponse.ID
 						toolName := part.FunctionResponse.Name
@@ -1341,7 +952,217 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 						}
 
 						if !hadStartTime {
-							trace.StartToolCall(toolID, toolName, nil)
+							setup.trace.StartToolCall(toolID, toolName, nil)
+						}
+
+						success := !containsError(part.FunctionResponse.Response)
+
+						log.Infow("Tool call completed",
+							"tool", toolName,
+							"tool_id", toolID,
+							"duration_ms", duration.Milliseconds(),
+							"success", success,
+						)
+
+						observability.GetMetrics().RecordToolCall(toolName, duration, success)
+						setup.trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
+					}
+				}
+
+				// End generation if we have token usage
+				if usageTokens != nil && currentGeneration != nil {
+					promptTokens := int(usageTokens.PromptTokenCount)
+					completionTokens := int(usageTokens.CandidatesTokenCount)
+					setup.trace.EndGeneration(currentGeneration, generationOutput, promptTokens, completionTokens)
+					currentGeneration = nil
+					generationOutput = ""
+				}
+			}
+		}
+
+		// Handle runner errors
+		if runnerErr != nil {
+			if isOrphanedToolCallError(runnerErr) {
+				log.Warnw("Detected orphaned tool call error",
+					"error", runnerErr,
+					"session_id", setup.sessionID,
+					"attempt", attempt,
+				)
+				setup.trace.RecordSessionRepair(setup.sessionID, attempt)
+
+				if err := deleteCorruptedSession(ctx, a.sessionService, appName, setup.userID, setup.sessionID); err != nil {
+					log.Errorw("Failed to delete corrupted session", "error", err, "session_id", setup.sessionID)
+				}
+
+				if attempt < maxRetries {
+					log.Infow("Retrying after session repair", "session_id", setup.sessionID, "attempt", attempt+1)
+					shouldRetry = true
+					responseText = ""
+					eventCount = 0
+				}
+			}
+
+			if !shouldRetry && isContextOverflowError(runnerErr) {
+				log.Warnw("Detected context overflow, compacting session",
+					"error", runnerErr,
+					"session_id", setup.sessionID,
+					"attempt", attempt,
+				)
+
+				if err := a.sessionCompactor.Compact(ctx, appName, setup.userID, setup.sessionID); err != nil {
+					log.Errorw("Failed to compact session after overflow", "error", err, "session_id", setup.sessionID)
+				} else if attempt < maxRetries {
+					log.Infow("Retrying after session compaction", "session_id", setup.sessionID, "attempt", attempt+1)
+					shouldRetry = true
+					responseText = ""
+					eventCount = 0
+				}
+			}
+
+			if !shouldRetry {
+				setup.trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
+				return nil, fmt.Errorf("agent error: %w", runnerErr)
+			}
+		}
+
+		// Break out of retry loop if no error or not retrying
+		if !shouldRetry {
+			break
+		}
+	}
+
+	a.logTraceSummary(setup, eventCount, len(responseText))
+	setup.trace.End(true, responseText)
+
+	return &QueryResponse{
+		Success: true,
+		Answer:  responseText,
+	}, nil
+}
+
+// QueryStream handles streaming query responses via SSE.
+// It uses a callback-based approach: onEvent is called for each SSE event.
+func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(StreamEvent)) error {
+	log := logger.Get()
+
+	setup, err := a.prepareQuery(ctx, req, true)
+	if err != nil {
+		onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": "Session error"}})
+		return err
+	}
+	ctx = setup.ctx
+
+	defer func() {
+		setup.trace.End(true, "")
+	}()
+	defer func() {
+		if setup.isIngest {
+			observability.GetMetrics().RecordIngest(time.Since(setup.startTime), nil)
+		} else {
+			observability.GetMetrics().RecordQuery(time.Since(setup.startTime), nil)
+		}
+	}()
+
+	// Emit session_id event
+	onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": setup.sessionID}})
+
+	// Run agent with streaming
+	var responseText string
+	var generationOutput string
+	var currentGeneration *traces.Observation
+	toolStartTimes := make(map[string]time.Time)
+	eventCount := 0
+
+	log.Infow("Running agent (stream)", "user_id", setup.userID, "session_id", setup.sessionID, "ingest", setup.isIngest)
+
+	// Retry loop for corrupted sessions
+	maxRetries := 1
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		var runnerErr error
+		shouldRetry := false
+
+		for event, err := range a.runner.Run(ctx, setup.userID, setup.sessionID, setup.userMsg, agent.RunConfig{
+			StreamingMode: agent.StreamingModeSSE,
+		}) {
+			if ctx.Err() != nil {
+				log.Infow("Client disconnected during stream", "session_id", setup.sessionID)
+				return ctx.Err()
+			}
+
+			if err != nil {
+				runnerErr = err
+				break
+			}
+
+			eventCount++
+
+			var usageTokens *genai.GenerateContentResponseUsageMetadata
+			if event.UsageMetadata != nil {
+				usageTokens = event.UsageMetadata
+			}
+
+			if event.ErrorCode != "" {
+				log.Errorw("Event error during stream",
+					"error_code", event.ErrorCode,
+					"error_message", event.ErrorMessage,
+				)
+				onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage)}})
+				setup.trace.End(false, fmt.Sprintf("Agent error: %s - %s", event.ErrorCode, event.ErrorMessage))
+				return fmt.Errorf("agent error: %s - %s", event.ErrorCode, event.ErrorMessage)
+			}
+
+			if event.Content != nil {
+				if usageTokens != nil && currentGeneration == nil {
+					currentGeneration = setup.trace.StartGeneration(a.config.Anthropic.Model, setup.instruction)
+					generationOutput = ""
+				}
+
+				for _, part := range event.Content.Parts {
+					// Only stream partial deltas to avoid duplication with aggregated events
+					if part.Text != "" && event.Partial {
+						responseText += part.Text
+						if currentGeneration != nil {
+							generationOutput += part.Text
+						}
+						onEvent(StreamEvent{EventType: "content_delta", Data: map[string]any{"text": part.Text}})
+					}
+
+					// Tool call
+					if part.FunctionCall != nil {
+						toolID := part.FunctionCall.ID
+						toolName := part.FunctionCall.Name
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+						toolStartTimes[trackKey] = time.Now()
+
+						log.Infow("Tool call started (stream)", "tool", toolName, "tool_id", toolID)
+						setup.trace.StartToolCall(toolID, toolName, part.FunctionCall.Args)
+
+						onEvent(StreamEvent{EventType: "tool_start", Data: map[string]any{"tool_id": toolID, "tool_name": toolName}})
+						onEvent(StreamEvent{EventType: "tool_input", Data: map[string]any{"tool_id": toolID, "tool_name": toolName, "args": part.FunctionCall.Args}})
+					}
+
+					// Tool response
+					if part.FunctionResponse != nil {
+						toolID := part.FunctionResponse.ID
+						toolName := part.FunctionResponse.Name
+						trackKey := toolID
+						if trackKey == "" {
+							trackKey = toolName
+						}
+
+						var duration time.Duration
+						hadStartTime := false
+						if st, ok := toolStartTimes[trackKey]; ok {
+							duration = time.Since(st)
+							delete(toolStartTimes, trackKey)
+							hadStartTime = true
+						}
+
+						if !hadStartTime {
+							setup.trace.StartToolCall(toolID, toolName, nil)
 						}
 
 						isError := containsError(part.FunctionResponse.Response)
@@ -1354,9 +1175,8 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 						)
 
 						observability.GetMetrics().RecordToolCall(toolName, duration, !isError)
-						trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
+						setup.trace.EndToolCall(toolID, toolName, part.FunctionResponse.Response, nil)
 
-						// Emit tool_result SSE event
 						onEvent(StreamEvent{EventType: "tool_result", Data: map[string]any{
 							"tool_id":   toolID,
 							"tool_name": toolName,
@@ -1367,11 +1187,10 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 					}
 				}
 
-				// End generation tracking
 				if usageTokens != nil && currentGeneration != nil {
 					promptTokens := int(usageTokens.PromptTokenCount)
 					completionTokens := int(usageTokens.CandidatesTokenCount)
-					trace.EndGeneration(currentGeneration, generationOutput, promptTokens, completionTokens)
+					setup.trace.EndGeneration(currentGeneration, generationOutput, promptTokens, completionTokens)
 					currentGeneration = nil
 					generationOutput = ""
 				}
@@ -1383,46 +1202,45 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 			if isOrphanedToolCallError(runnerErr) {
 				log.Warnw("Detected orphaned tool call error (stream)",
 					"error", runnerErr,
-					"session_id", sessionID,
+					"session_id", setup.sessionID,
 					"attempt", attempt,
 				)
-				trace.RecordSessionRepair(sessionID, attempt)
+				setup.trace.RecordSessionRepair(setup.sessionID, attempt)
 
-				if err := deleteCorruptedSession(ctx, a.sessionService, appName, userID, sessionID); err != nil {
-					log.Errorw("Failed to delete corrupted session", "error", err, "session_id", sessionID)
+				if err := deleteCorruptedSession(ctx, a.sessionService, appName, setup.userID, setup.sessionID); err != nil {
+					log.Errorw("Failed to delete corrupted session", "error", err, "session_id", setup.sessionID)
 				}
 
 				if attempt < maxRetries {
-					log.Infow("Retrying stream query after session repair", "session_id", sessionID, "attempt", attempt+1)
+					log.Infow("Retrying stream after session repair", "session_id", setup.sessionID, "attempt", attempt+1)
 					shouldRetry = true
 					responseText = ""
 					eventCount = 0
-					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
+					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": setup.sessionID}})
 				}
 			}
 
-			// Check if it's a context overflow error
 			if !shouldRetry && isContextOverflowError(runnerErr) {
 				log.Warnw("Detected context overflow in stream, compacting session",
 					"error", runnerErr,
-					"session_id", sessionID,
+					"session_id", setup.sessionID,
 					"attempt", attempt,
 				)
 
-				if err := a.sessionCompactor.Compact(ctx, appName, userID, sessionID); err != nil {
-					log.Errorw("Failed to compact session after overflow", "error", err, "session_id", sessionID)
+				if err := a.sessionCompactor.Compact(ctx, appName, setup.userID, setup.sessionID); err != nil {
+					log.Errorw("Failed to compact session after overflow", "error", err, "session_id", setup.sessionID)
 				} else if attempt < maxRetries {
-					log.Infow("Retrying stream query after session compaction", "session_id", sessionID, "attempt", attempt+1)
+					log.Infow("Retrying stream after session compaction", "session_id", setup.sessionID, "attempt", attempt+1)
 					shouldRetry = true
 					responseText = ""
 					eventCount = 0
-					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
+					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": setup.sessionID}})
 				}
 			}
 
 			if !shouldRetry {
 				onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": "Internal server error"}})
-				trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
+				setup.trace.End(false, fmt.Sprintf("Runner error: %v", runnerErr))
 				return fmt.Errorf("agent error: %w", runnerErr)
 			}
 		}
@@ -1432,36 +1250,10 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 		}
 	}
 
-	// Log trace summary
-	promptTokens, completionTokens, totalTokens := trace.GetAccumulatedTokens()
-	totalCost := trace.CalculateTotalCost(
-		a.config.Anthropic.Model,
-		a.config.Langfuse.InputCostPer1M,
-		a.config.Langfuse.OutputCostPer1M,
-	)
-	traceSummary := trace.GetSummary()
+	a.logTraceSummary(setup, eventCount, len(responseText))
+	setup.trace.End(true, responseText)
 
-	log.Infow("Stream query trace summary",
-		"trace_id", trace.TraceID,
-		"prompt_tokens", promptTokens,
-		"completion_tokens", completionTokens,
-		"total_tokens", totalTokens,
-		"total_cost_usd", fmt.Sprintf("$%.6f", totalCost),
-		"tool_calls_count", traceSummary["tool_calls_count"],
-		"generations_count", traceSummary["generations_count"],
-	)
-
-	log.Infow("Stream query completed successfully",
-		"caller_id", callerID,
-		"total_events", eventCount,
-		"response_length", len(responseText),
-	)
-
-	// End trace
-	trace.End(true, responseText)
-
-	// Emit end event
-	onEvent(StreamEvent{EventType: "end", Data: map[string]any{"session_id": sessionID}})
+	onEvent(StreamEvent{EventType: "end", Data: map[string]any{"session_id": setup.sessionID}})
 
 	return nil
 }
