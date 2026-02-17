@@ -441,13 +441,14 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	)
 
 	queryRequest := map[string]any{
-		"query":          message,
-		"thread_ts":      threadTS,
-		"channel_id":     event.Channel,
-		"messages":       messageData,
-		"user_name":      userName,     // @username for display
-		"user_real_name": userRealName, // Real name for personalization
-		"user_email":     userEmail,    // Email for Keycloak identity propagation
+		"query":           message,
+		"thread_ts":       threadTS,
+		"channel_id":      event.Channel,
+		"messages":        messageData,
+		"user_name":       userName,     // @username for display
+		"user_real_name":  userRealName, // Real name for personalization
+		"user_email":      userEmail,    // Email for Keycloak identity propagation
+		"filter_thinking": true,         // Exclude intermediate "thinking" text from Slack responses
 	}
 
 	// 4. Send to Knowledge Agent

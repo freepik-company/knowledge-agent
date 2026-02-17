@@ -7,10 +7,11 @@ type QueryRequest struct {
 	Intent         string           `json:"intent,omitempty"` // "query" (default) or "ingest" - determines behavior
 	ThreadTS       string           `json:"thread_ts,omitempty"`
 	ChannelID      string           `json:"channel_id,omitempty"`
-	Messages       []map[string]any `json:"messages,omitempty"`       // Current thread context
-	UserName       string           `json:"user_name,omitempty"`      // Slack @username
-	UserRealName   string           `json:"user_real_name,omitempty"` // User's real name
-	UserEmail      string           `json:"user_email,omitempty"`     // User's email (requires users:read.email scope)
+	Messages       []map[string]any `json:"messages,omitempty"`        // Current thread context
+	UserName       string           `json:"user_name,omitempty"`       // Slack @username
+	UserRealName   string           `json:"user_real_name,omitempty"`  // User's real name
+	UserEmail      string           `json:"user_email,omitempty"`      // User's email (requires users:read.email scope)
+	FilterThinking bool             `json:"filter_thinking,omitempty"` // When true, intermediate "thinking" text between tool calls is excluded from the response
 }
 
 // QueryResponse represents a query response

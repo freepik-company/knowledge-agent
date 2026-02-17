@@ -890,7 +890,7 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 				for _, part := range event.Content.Parts {
 					// Text content: only accumulate for the response if no tool call in this event
 					if part.Text != "" {
-						if !eventHasToolCall {
+						if !req.FilterThinking || !eventHasToolCall {
 							responseText += part.Text
 						}
 						// Always track for Langfuse generation output
