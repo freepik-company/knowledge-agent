@@ -237,13 +237,13 @@ func (c *Client) FetchThreadMessages(channelID, threadTS string) ([]Message, err
 			}
 
 			// Extract text from Block Kit blocks (workflow forms, rich messages)
-		if len(msg.Blocks.BlockSet) > 0 {
-			if blockText := extractBlockText(msg.Blocks); blockText != "" {
-				textParts = append(textParts, blockText)
+			if len(msg.Blocks.BlockSet) > 0 {
+				if blockText := extractBlockText(msg.Blocks); blockText != "" {
+					textParts = append(textParts, blockText)
+				}
 			}
-		}
 
-		text := strings.Join(textParts, "\n")
+			text := strings.Join(textParts, "\n")
 
 			// Determine user identifier (handle bot messages)
 			user := msg.User

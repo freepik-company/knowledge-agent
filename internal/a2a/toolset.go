@@ -141,7 +141,6 @@ func NewA2AToolset(ctx context.Context, cfg *config.A2AConfig, keycloakClient *k
 		"self_name", cfg.SelfName,
 		"sub_agents_count", len(cfg.SubAgents),
 		"polling", cfg.Polling,
-		"query_extractor_enabled", cfg.QueryExtractor.Enabled,
 		"keycloak_enabled", keycloakClient != nil && keycloakClient.IsEnabled(),
 	)
 
@@ -390,7 +389,6 @@ func createA2ASubAgentTool(ctx context.Context, cfg config.A2ASubAgentConfig, a2
 		"endpoint", cfg.Endpoint,
 		"auth_type", cfg.Auth.Type,
 		"polling", a2aCfg.Polling,
-		"query_extractor_enabled", a2aCfg.QueryExtractor.Enabled,
 		"keycloak_enabled", keycloakClient != nil && keycloakClient.IsEnabled(),
 	)
 
@@ -466,18 +464,6 @@ func createA2ASubAgentTool(ctx context.Context, cfg config.A2ASubAgentConfig, a2
 	factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
 		NewIdentityInterceptor(cfg.Name, keycloakClient),
 	))
-
-	// Add query extractor interceptor if enabled
-	if a2aCfg.QueryExtractor.Enabled {
-		log.Debugw("Adding query extractor interceptor for sub-agent tool",
-			"agent", cfg.Name,
-			"model", a2aCfg.QueryExtractor.Model,
-			"has_card_description", card.Description != "",
-		)
-		factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(
-			NewQueryExtractorInterceptor(cfg.Name, card.Description, a2aCfg.QueryExtractor),
-		))
-	}
 
 	// Always add logging interceptor for debugging A2A calls
 	factoryOpts = append(factoryOpts, a2aclient.WithInterceptors(&loggingInterceptor{
@@ -667,4 +653,12 @@ func (ts *A2AToolset) Close() error {
 
 	log.Debug("A2A toolset closed successfully")
 	return nil
+}
+
+// truncateString truncates a string to maxLen and adds "..." if truncated
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

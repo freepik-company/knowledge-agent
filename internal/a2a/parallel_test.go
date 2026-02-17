@@ -164,7 +164,6 @@ func TestParallelToolCreation(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -237,7 +236,6 @@ func TestParallelToolNotCreatedWithSingleAgent(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -378,7 +376,6 @@ func TestParallelExecution(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)

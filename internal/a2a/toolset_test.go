@@ -94,9 +94,6 @@ func TestNewA2AToolset_WithMockAgent(t *testing.T) {
 				Timeout: 30,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{
-			Enabled: false, // Disable to avoid needing Anthropic API key
-		},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -391,7 +388,6 @@ func TestSubAgentHandlerInvocation(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -486,7 +482,6 @@ func TestNewA2AToolset_RESTProtocol(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -592,7 +587,6 @@ func TestNewA2AToolset_MixedProtocols(t *testing.T) {
 				Timeout:  5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)
@@ -670,7 +664,6 @@ func TestNewA2AToolset_DefaultProtocol(t *testing.T) {
 				Timeout: 5,
 			},
 		},
-		QueryExtractor: config.A2AQueryExtractorConfig{Enabled: false},
 	}
 
 	toolset, err := NewA2AToolset(context.Background(), cfg, nil)

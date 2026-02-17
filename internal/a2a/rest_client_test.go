@@ -370,11 +370,11 @@ func TestRESTClient_Query_BodyFormat(t *testing.T) {
 // TestParseQueryResponse_KnownFormats tests parsing of known response formats
 func TestParseQueryResponse_KnownFormats(t *testing.T) {
 	tests := []struct {
-		name           string
-		body           string
-		expectSuccess  bool
-		expectAnswer   string
-		expectError    string
+		name          string
+		body          string
+		expectSuccess bool
+		expectAnswer  string
+		expectError   string
 	}{
 		{
 			name:          "simple format with answer",

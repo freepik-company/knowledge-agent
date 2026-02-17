@@ -251,9 +251,9 @@ func TestExtractBlockText(t *testing.T) {
 			contains: []string{"Submitted by John"},
 		},
 		{
-			name:  "Empty blocks",
+			name:   "Empty blocks",
 			blocks: slack.Blocks{BlockSet: []slack.Block{}},
-			empty: true,
+			empty:  true,
 		},
 		{
 			name: "Mixed block types (workflow form pattern)",

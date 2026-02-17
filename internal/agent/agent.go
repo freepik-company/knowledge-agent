@@ -10,7 +10,6 @@ import (
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/memory"
 	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
@@ -135,8 +134,9 @@ type Agent struct {
 	permissionChecker *MemoryPermissionChecker
 	promptManager     *PromptManager
 	langfuseTracer    *observability.LangfuseTracer
-	responseCleaner   *ResponseCleaner
-	contextSummarizer *ContextSummarizer
+	sessionManager    *SessionManager
+	sessionSyncer     *SessionSyncer
+	sessionCompactor  *SessionCompactor
 	keycloakClient    *keycloak.Client // nil if Keycloak is disabled
 	a2aToolset        *a2a.A2AToolset  // nil if A2A is disabled
 }
@@ -318,20 +318,14 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("failed to create langfuse tracer: %w", err)
 	}
 
-	// 10. Initialize response cleaner (uses Haiku to clean agent narration)
-	responseCleaner := NewResponseCleaner(cfg)
-	if cfg.ResponseCleaner.Enabled {
-		log.Infow("Response cleaner enabled", "model", cfg.ResponseCleaner.Model)
-	}
-
-	// 10b. Initialize context summarizer (uses Haiku to compress long contexts)
-	contextSummarizer := NewContextSummarizer(cfg)
-	if cfg.ContextSummarizer.Enabled {
-		log.Infow("Context summarizer enabled",
-			"model", cfg.ContextSummarizer.Model,
-			"token_threshold", cfg.ContextSummarizer.TokenThreshold,
-		)
-	}
+	// 10. Initialize session manager, syncer, and compactor
+	sessionManager := NewSessionManager(sessionService)
+	sessionSyncer := NewSessionSyncer(sessionService)
+	sessionCompactor := NewSessionCompactor(cfg, sessionService)
+	log.Infow("Session management initialized",
+		"compact_threshold", cfg.Session.CompactThreshold,
+		"compact_keep_turns", cfg.Session.CompactKeepTurns,
+	)
 
 	// 11. Create ADK agent with system prompt and toolsets
 	log.Info("Creating LLM agent with permission-enforced tools")
@@ -389,8 +383,9 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		permissionChecker: permChecker,
 		promptManager:     promptManager,
 		langfuseTracer:    langfuseTracer,
-		responseCleaner:   responseCleaner,
-		contextSummarizer: contextSummarizer,
+		sessionManager:    sessionManager,
+		sessionSyncer:     sessionSyncer,
+		sessionCompactor:  sessionCompactor,
 		keycloakClient:    keycloakClient,
 		a2aToolset:        a2aToolset,
 	}, nil
@@ -671,35 +666,40 @@ func (a *Agent) Query(ctx context.Context, req QueryRequest) (*QueryResponse, er
 	// Determine user_id based on knowledge_scope configuration
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
 
-	// Create new session
-	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
+	// Get or create session (preserves existing session for multi-turn)
+	sessionResult, err := a.sessionManager.GetOrCreate(ctx, appName, userID, sessionID)
 	if err != nil {
-		log.Warnw("Failed to create session (may already exist)", "error", err)
+		log.Errorw("Failed to get or create session", "error", err, "session_id", sessionID)
+		return nil, fmt.Errorf("session error: %w", err)
+	}
+
+	// Sync thread messages as session events (skip for ingest - they are one-shot)
+	if !isIngest && len(req.Messages) > 0 {
+		if err := a.sessionSyncer.SyncThreadMessages(ctx, sessionResult.Session, req.Messages); err != nil {
+			log.Warnw("Failed to sync thread messages to session", "error", err, "session_id", sessionID)
+		}
+	}
+
+	// Compact session if context is too large (proactive, before runner)
+	if !isIngest {
+		if err := a.sessionCompactor.CompactIfNeeded(ctx, appName, userID, sessionID); err != nil {
+			log.Warnw("Session compaction failed", "error", err, "session_id", sessionID)
+		}
 	}
 
 	// Build context from current thread if available
 	var contextStr string
 	hasImages := false
 	if len(req.Messages) > 0 {
-		contextStr = a.buildThreadContextFromMessages(req.Messages)
+		// For ingest: use full thread context in prompt
+		// For queries: context comes from session events, only build for ingest
+		if isIngest {
+			contextStr = a.buildThreadContextFromMessages(req.Messages)
+		}
 		// Check if there are images in the last message
 		lastMsg := req.Messages[len(req.Messages)-1]
 		if images, ok := lastMsg["images"].([]any); ok && len(images) > 0 {
 			hasImages = true
-		}
-	}
-
-	// Summarize context if it exceeds token threshold (skip for ingest to preserve full context)
-	if !isIngest && a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
-		summarizedContext, err := a.contextSummarizer.Summarize(ctx, contextStr)
-		if err != nil {
-			log.Warnw("Context summarization failed, using original", "error", err)
-		} else {
-			contextStr = summarizedContext
 		}
 	}
 
@@ -754,14 +754,12 @@ Your task:
 Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
 	} else if hasImages {
 		// Special instruction when images are present
+		// Note: thread context comes from session events, not the prompt
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
 
 **Current Date**: %s%s%s
 
 **Memory Search Results** (already searched for you):
-%s
-
-Current Thread Context:
 %s
 
 User Message: %s
@@ -775,7 +773,7 @@ User Message: %s
    - Workflow diagrams: Document process steps, decision points, actors
    - Documentation: Extract key technical concepts, APIs, specifications
 
-2. Consider the memory search results above when formulating your response
+2. Consider the memory search results and conversation history when formulating your response
 
 3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
    - Clear description of what the image shows
@@ -787,26 +785,10 @@ User Message: %s
 
 5. Always respond in the same language the user is using
 
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
-	} else if contextStr != "" {
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
-
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
-%s
-
-Current Thread Context:
-%s
-
-Question: %s
-
-Based on the memory search results above and the thread context, provide your answer.
-If you need more specific information, you can search_memory again with different terms.
-If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
-
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	} else {
+		// Standard query instruction
+		// Thread context comes from session events (multi-turn), not injected in the prompt
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
 **Current Date**: %s%s%s
@@ -816,7 +798,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 Question: %s
 
-Based on the memory search results above, provide your answer.
+Based on the memory search results above and the conversation history, provide your answer.
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
@@ -1072,17 +1054,38 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 						"error", err,
 						"session_id", sessionID,
 					)
-					// Continue anyway - we'll still retry
 				}
 
-				// Should we retry?
 				if attempt < maxRetries {
 					log.Infow("Retrying query after session repair",
 						"session_id", sessionID,
 						"attempt", attempt+1,
 					)
 					shouldRetry = true
-					// Reset response for retry
+					responseText = ""
+					eventCount = 0
+				}
+			}
+
+			// Check if it's a context overflow error
+			if !shouldRetry && isContextOverflowError(runnerErr) {
+				log.Warnw("Detected context overflow, compacting session",
+					"error", runnerErr,
+					"session_id", sessionID,
+					"attempt", attempt,
+				)
+
+				if err := a.sessionCompactor.Compact(ctx, appName, userID, sessionID); err != nil {
+					log.Errorw("Failed to compact session after overflow",
+						"error", err,
+						"session_id", sessionID,
+					)
+				} else if attempt < maxRetries {
+					log.Infow("Retrying query after session compaction",
+						"session_id", sessionID,
+						"attempt", attempt+1,
+					)
+					shouldRetry = true
 					responseText = ""
 					eventCount = 0
 				}
@@ -1139,20 +1142,9 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 	// End Langfuse trace
 	trace.End(true, responseText)
 
-	// Clean response if enabled (removes agent narration, keeps substantive content)
-	finalResponse := responseText
-	if a.responseCleaner != nil {
-		cleanedResponse, err := a.responseCleaner.Clean(ctx, responseText)
-		if err != nil {
-			log.Warnw("Response cleaning failed, using original", "error", err)
-		} else {
-			finalResponse = cleanedResponse
-		}
-	}
-
 	return &QueryResponse{
 		Success: true,
-		Answer:  finalResponse,
+		Answer:  responseText,
 	}, nil
 }
 
@@ -1234,34 +1226,40 @@ func (a *Agent) QueryStream(ctx context.Context, req QueryRequest, onEvent func(
 	// Resolve user ID
 	userID := resolveUserID(a.config.RAG.KnowledgeScope, req.ChannelID, slackUserID)
 
-	// Create session
-	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
+	// Get or create session (preserves existing session for multi-turn)
+	sessionResult, err := a.sessionManager.GetOrCreate(ctx, appName, userID, sessionID)
 	if err != nil {
-		log.Warnw("Failed to create session (may already exist)", "error", err)
+		log.Errorw("Failed to get or create session", "error", err, "session_id", sessionID)
+		onEvent(StreamEvent{EventType: "error", Data: map[string]any{"message": "Session error"}})
+		return fmt.Errorf("session error: %w", err)
+	}
+
+	// Sync thread messages as session events (skip for ingest)
+	if !isIngest && len(req.Messages) > 0 {
+		if err := a.sessionSyncer.SyncThreadMessages(ctx, sessionResult.Session, req.Messages); err != nil {
+			log.Warnw("Failed to sync thread messages to session", "error", err, "session_id", sessionID)
+		}
+	}
+
+	// Compact session if context is too large (proactive)
+	if !isIngest {
+		if err := a.sessionCompactor.CompactIfNeeded(ctx, appName, userID, sessionID); err != nil {
+			log.Warnw("Session compaction failed", "error", err, "session_id", sessionID)
+		}
 	}
 
 	// Build thread context
 	var contextStr string
 	hasImages := false
 	if len(req.Messages) > 0 {
-		contextStr = a.buildThreadContextFromMessages(req.Messages)
+		// For ingest: use full thread context in prompt
+		// For queries: context comes from session events
+		if isIngest {
+			contextStr = a.buildThreadContextFromMessages(req.Messages)
+		}
 		lastMsg := req.Messages[len(req.Messages)-1]
 		if images, ok := lastMsg["images"].([]any); ok && len(images) > 0 {
 			hasImages = true
-		}
-	}
-
-	// Summarize context if needed (skip for ingest)
-	if !isIngest && a.contextSummarizer != nil && a.contextSummarizer.ShouldSummarize(contextStr) {
-		summarizedContext, err := a.contextSummarizer.Summarize(ctx, contextStr)
-		if err != nil {
-			log.Warnw("Context summarization failed, using original", "error", err)
-		} else {
-			contextStr = summarizedContext
 		}
 	}
 
@@ -1310,14 +1308,12 @@ Your task:
 
 Please begin the ingestion now.`, currentDate, permissionContext, req.ThreadTS, req.ChannelID, len(req.Messages), contextStr)
 	} else if hasImages {
+		// Note: thread context comes from session events, not the prompt
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant. The user has shared an image with this message in a technical/business context.
 
 **Current Date**: %s%s%s
 
 **Memory Search Results** (already searched for you):
-%s
-
-Current Thread Context:
 %s
 
 User Message: %s
@@ -1331,7 +1327,7 @@ User Message: %s
    - Workflow diagrams: Document process steps, decision points, actors
    - Documentation: Extract key technical concepts, APIs, specifications
 
-2. Consider the memory search results above when formulating your response
+2. Consider the memory search results and conversation history when formulating your response
 
 3. If the user is documenting something (e.g., "This is our architecture", "This error is blocking us"), use save_to_memory to store:
    - Clear description of what the image shows
@@ -1343,26 +1339,10 @@ User Message: %s
 
 5. Always respond in the same language the user is using
 
-Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
-	} else if contextStr != "" {
-		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
-
-**Current Date**: %s%s%s
-
-**Memory Search Results** (already searched for you):
-%s
-
-Current Thread Context:
-%s
-
-Question: %s
-
-Based on the memory search results above and the thread context, provide your answer.
-If you need more specific information, you can search_memory again with different terms.
-If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
-
-Please provide your answer now.`, currentDate, permissionContext, userGreeting, preSearchResults, contextStr, req.Query)
+Please analyze the image and provide your response now.`, currentDate, permissionContext, userGreeting, preSearchResults, req.Query)
 	} else {
+		// Standard query instruction
+		// Thread context comes from session events (multi-turn), not injected in the prompt
 		instruction = fmt.Sprintf(`You are a Knowledge Assistant helping to answer a question.
 
 **Current Date**: %s%s%s
@@ -1372,7 +1352,7 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 
 Question: %s
 
-Based on the memory search results above, provide your answer.
+Based on the memory search results above and the conversation history, provide your answer.
 If you need more specific information, you can search_memory again with different terms.
 If you need to call a specialized sub-agent for tasks like searching logs, do so directly.
 
@@ -1555,7 +1535,25 @@ Please provide your answer now.`, currentDate, permissionContext, userGreeting, 
 					shouldRetry = true
 					responseText = ""
 					eventCount = 0
-					// Emit new session_id for retry
+					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
+				}
+			}
+
+			// Check if it's a context overflow error
+			if !shouldRetry && isContextOverflowError(runnerErr) {
+				log.Warnw("Detected context overflow in stream, compacting session",
+					"error", runnerErr,
+					"session_id", sessionID,
+					"attempt", attempt,
+				)
+
+				if err := a.sessionCompactor.Compact(ctx, appName, userID, sessionID); err != nil {
+					log.Errorw("Failed to compact session after overflow", "error", err, "session_id", sessionID)
+				} else if attempt < maxRetries {
+					log.Infow("Retrying stream query after session compaction", "session_id", sessionID, "attempt", attempt+1)
+					shouldRetry = true
+					responseText = ""
+					eventCount = 0
 					onEvent(StreamEvent{EventType: "session_id", Data: map[string]any{"session_id": sessionID}})
 				}
 			}
