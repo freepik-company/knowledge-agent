@@ -99,10 +99,10 @@ make dev
          ┌─────────────────────┴─────────────────────┐
          │                                           │
     Port 8080                                   Port 8081
-  (Slack Bridge)                            (Unified Server)
+  (Slack Bridge)                            (Agent Server)
          │                                           │
-    Slack Events                            /api/query (auth)
-    Socket/Webhook                         /api/query/stream (SSE)
+    Slack Events                            /agent/run (auth, ADK)
+    Socket/Webhook                         /agent/run_sse (SSE, ADK)
                                            /a2a/invoke (auth)
                                            /.well-known/agent-card.json
                                            /health, /metrics
@@ -120,7 +120,7 @@ make dev
 
 **Unified Server Design:**
 - **Port 8080**: Slack Bridge (events, webhooks)
-- **Port 8081**: Unified HTTP API with authentication, rate limiting, and A2A protocol
+- **Port 8081**: Agent Server with ADK REST handler, authentication, rate limiting, and A2A protocol
 
 ## Commands
 
@@ -237,10 +237,10 @@ API_KEYS='{"ka_secret_abc123":{"caller_id":"root-agent","role":"write"},"ka_secr
 Requests authenticated by an upstream API Gateway can pass a JWT token. Email and groups are extracted for permission checks.
 
 ```bash
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
-  -d '{"query":"How do we deploy?"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"How do we deploy?"}]}}'
 ```
 
 **Authentication Modes**:
@@ -254,10 +254,10 @@ curl -X POST http://localhost:8081/api/query \
 **Example A2A Usage**:
 ```bash
 # External service accessing agent (use the API key secret)
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_secret_abc123" \
-  -d '{"query":"How do we deploy?"}'
+  -d '{"appName":"knowledge-agent","userId":"external","newMessage":{"role":"user","parts":[{"text":"How do we deploy?"}]}}'
 ```
 
 See `docs/A2A_TOOLS.md` for complete integration guide and `docs/SECURITY_GUIDE.md` for detailed security configuration.

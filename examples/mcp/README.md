@@ -24,15 +24,15 @@ cp examples/mcp/config-filesystem.yaml config.yaml
 make dev
 
 # Test queries
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What files are in the workspace?"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"What files are in the workspace?"}]}}'
 
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"query": "Read hello.txt and tell me what it says"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"Read hello.txt and tell me what it says"}]}}'
 ```
 
 ### 2. GitHub Integration
@@ -55,9 +55,10 @@ cp examples/mcp/config-github.yaml config.yaml
 make dev
 
 # Test queries
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "X-API-Key: your-api-key" \
-  -d '{"query": "List my GitHub repositories"}'
+  -H "Content-Type: application/json" \
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"List my GitHub repositories"}]}}'
 ```
 
 ### 3. Multiple MCP Servers

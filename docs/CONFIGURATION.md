@@ -62,9 +62,8 @@ Runs only the Knowledge Agent service (port 8081).
 **Exposes**:
 - `GET /health` - Health check
 - `GET /metrics` - Metrics
-- `POST /api/query` - Query endpoint
-- `POST /api/query/stream` - Streaming query endpoint (SSE)
-- `POST /api/ingest-thread` - Ingestion endpoint
+- `POST /agent/run` - ADK blocking execution
+- `POST /agent/run_sse` - ADK SSE streaming execution
 
 #### 3. Slack Bridge Mode
 
@@ -785,8 +784,8 @@ The agent card (`/.well-known/agent-card.json`) is always public to allow agent 
 
 ```
 Port 8081 (Unified Server)
-├── /api/query           (authenticated)
-├── /api/query/stream    (authenticated, SSE)
+├── /agent/run           (authenticated, ADK)
+├── /agent/run_sse       (authenticated, ADK SSE)
 ├── /api/ingest-thread   (authenticated)
 ├── /a2a/invoke          (authenticated)
 ├── /.well-known/agent-card.json (public)
@@ -1579,104 +1578,47 @@ SLACK_BRIDGE_API_KEY=ka_slackbridge
 
 ### API Endpoints
 
-#### POST /api/query
+Knowledge Agent uses the **ADK (Agent Development Kit) standard REST protocol**. See [API Reference](API_REFERENCE.md) for complete documentation.
 
-Query the knowledge base and get AI-powered responses.
+#### POST /agent/run
 
-**Authentication**: Required (if `api_keys` is configured)
+Execute the agent with a blocking JSON response.
 
-**Request Example**:
-```bash
-curl -X POST http://localhost:8081/api/query \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: ka_rootagent" \
-  -d '{
-    "query": "How do we handle production deployments?",
-    "channel_id": "external",
-    "thread_ts": "optional-thread-id",
-    "messages": [
-      {
-        "user": "U123",
-        "text": "Previous context message",
-        "ts": "1234567890.123456"
-      }
-    ]
-  }'
-```
-
-**Request Fields**:
-- `query` (required): The user's question or message
-- `channel_id` (optional): Channel identifier (use "external" for non-Slack sources)
-- `thread_ts` (optional): Thread identifier for grouping related queries
-- `messages` (optional): Previous conversation context
-
-**Response**:
-```json
-{
-  "success": true,
-  "answer": "Based on the knowledge base, our deployment process involves...",
-  "conversation_id": "query-external-1234567890"
-}
-```
-
-#### POST /api/query/stream
-
-Streaming version of `/api/query` using Server-Sent Events (SSE). Same request body, returns real-time text chunks.
-
-**Authentication**: Required (same as `/api/query` — supports `X-API-Key`, `Authorization: Bearer`, or `X-Internal-Token`)
+**Authentication**: Required (supports `X-API-Key`, `Authorization: Bearer`, or `X-Internal-Token`)
 
 **Request Example**:
 ```bash
-curl -N -X POST http://localhost:8081/api/query/stream \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "query": "How do we handle production deployments?"
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "How do we handle production deployments?"}]
+    }
   }'
 ```
 
-**Response** (SSE stream):
-```
-data: {"type":"start","messageId":"uuid"}
-data: {"type":"chunk","content":"Based on the knowledge base..."}
-data: {"type":"chunk","content":" our deployment process involves..."}
-data: {"type":"end","status":"ok"}
-```
+#### POST /agent/run_sse
 
-See [API Reference](API_REFERENCE.md#post-apiquerystream) for full SSE event schema.
-
-#### POST /api/ingest-thread
-
-Save conversation threads to the knowledge base.
-
-**Authentication**: Required (if `api_keys` is configured)
+Streaming version of `/agent/run` using SSE (ADK standard format).
 
 **Request Example**:
 ```bash
-curl -X POST http://localhost:8081/api/ingest-thread \
+curl -N -X POST http://localhost:8081/agent/run_sse \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "thread_ts": "1234567890.123456",
-    "channel_id": "external",
-    "messages": [
-      {
-        "user": "U123",
-        "text": "We should document our new deployment process",
-        "ts": "1234567890.123456",
-        "type": "message"
-      }
-    ]
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "How do we handle production deployments?"}]
+    },
+    "streaming": true
   }'
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "message": "Thread ingested successfully",
-  "conversation_id": "ingest-external-1234567890"
-}
 ```
 
 ### Security Best Practices
@@ -1702,97 +1644,22 @@ curl -X POST http://localhost:8081/api/ingest-thread \
 
 ### Client Examples
 
-#### Python Client
+See [API Reference](API_REFERENCE.md#examples) for complete Python and bash client examples using the ADK format.
 
-```python
-import requests
+#### Quick Example (bash)
 
-class KnowledgeAgentClient:
-    def __init__(self, base_url, api_key):
-        self.base_url = base_url
-        self.api_key = api_key
-
-    def query(self, question, channel_id="external", context=None):
-        """Query the knowledge base"""
-        url = f"{self.base_url}/api/query"
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-Key": self.api_key
-        }
-        payload = {
-            "query": question,
-            "channel_id": channel_id
-        }
-        if context:
-            payload["messages"] = context
-
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-# Usage
-client = KnowledgeAgentClient(
-    base_url="http://localhost:8081",
-    api_key="ka_rootagent"
-)
-
-result = client.query("What is our deployment process?")
-print(result["answer"])
-```
-
-#### Go Client
-
-```go
-package main
-
-import (
-    "bytes"
-    "encoding/json"
-    "fmt"
-    "net/http"
-)
-
-type KnowledgeAgentClient struct {
-    baseURL string
-    apiKey  string
-    client  *http.Client
-}
-
-func NewClient(baseURL, apiKey string) *KnowledgeAgentClient {
-    return &KnowledgeAgentClient{
-        baseURL: baseURL,
-        apiKey:  apiKey,
-        client:  &http.Client{},
+```bash
+curl -X POST http://localhost:8081/agent/run \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ka_rootagent" \
+  -d '{
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "What is our deployment process?"}]
     }
-}
-
-func (c *KnowledgeAgentClient) Query(question, channelID string) (map[string]interface{}, error) {
-    payload := map[string]interface{}{
-        "query":      question,
-        "channel_id": channelID,
-    }
-
-    body, _ := json.Marshal(payload)
-    req, _ := http.NewRequest("POST", c.baseURL+"/api/query", bytes.NewBuffer(body))
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("X-API-Key", c.apiKey)
-
-    resp, err := c.client.Do(req)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-
-    var result map[string]interface{}
-    json.NewDecoder(resp.Body).Decode(&result)
-    return result, nil
-}
-
-func main() {
-    client := NewClient("http://localhost:8081", "ka_rootagent")
-    result, _ := client.Query("What is our deployment process?", "external")
-    fmt.Println(result["answer"])
-}
+  }'
 ```
 
 ### Integration with ADK-Based Agents

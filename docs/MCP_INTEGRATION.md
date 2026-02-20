@@ -637,9 +637,10 @@ make dev
 
 5. **Test Query:**
 ```bash
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "X-API-Key: your-key" \
-  -d '{"query": "List files in the workspace"}'
+  -H "Content-Type: application/json" \
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"List files in the workspace"}]}}'
 ```
 
 ### Verification

@@ -75,10 +75,10 @@ permissions:
 
 **Example request**:
 ```bash
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -d '{"query": "What is our deployment process?"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"What is our deployment process?"}]}}'
 ```
 
 ### 3. External A2A Authentication (External Services → Agent)
@@ -224,7 +224,7 @@ slack:
 
 ### A2A Endpoint (/a2a/invoke)
 
-The `/a2a/invoke` and `/api/query/stream` endpoints follow the same authentication flow as `/api/query`.
+The `/a2a/invoke`, `/agent/run`, and `/agent/run_sse` endpoints all follow the same authentication flow.
 The agent card at `/.well-known/agent-card.json` is always public (no auth) for agent discovery.
 
 ## Security Modes

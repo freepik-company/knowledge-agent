@@ -9,8 +9,9 @@ Complete REST API documentation for Knowledge Agent.
 - [Endpoints](#endpoints)
   - [Health Check](#get-health)
   - [Metrics](#get-metrics)
-  - [Query](#post-apiquery)
-  - [Query Stream (SSE)](#post-apiquerystream)
+  - [Agent Run (Blocking)](#post-agentrun)
+  - [Agent Run SSE (Streaming)](#post-agentrun_sse)
+  - [A2A Protocol](#a2a-protocol-endpoints)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
 - [Examples](#examples)
@@ -19,12 +20,12 @@ Complete REST API documentation for Knowledge Agent.
 
 ## Overview
 
-Knowledge Agent exposes APIs on two ports:
+Knowledge Agent uses the **ADK (Agent Development Kit) standard REST protocol** for agent execution. Any ADK-compatible client can connect without custom adapters.
 
-### Port 8081 - Custom HTTP API
+### Port 8081 - Agent Server
 
-- **Public endpoints** (no authentication): `/health`, `/metrics`, `/.well-known/agent-card.json`
-- **Protected endpoints** (authentication required): `/api/query`, `/api/query/stream`, `/a2a/invoke`
+- **Public endpoints** (no authentication): `/health`, `/ready`, `/live`, `/metrics`, `/.well-known/agent-card.json`
+- **Protected endpoints** (authentication required): `/agent/run`, `/agent/run_sse`, `/a2a/invoke`
 
 **Base URL**: `http://localhost:8081` (default)
 
@@ -36,7 +37,7 @@ Knowledge Agent exposes APIs on two ports:
 
 Protected endpoints require authentication via one of these methods:
 
-### 1. Internal Token (Slack Bridge → Agent)
+### 1. Internal Token (Slack Bridge -> Agent)
 
 For trusted internal services.
 
@@ -55,7 +56,7 @@ For requests authenticated via an upstream API Gateway or identity provider.
 
 **Header**: `Authorization: Bearer <jwt-token>`
 
-The JWT is parsed (not cryptographically validated — assumes upstream validation) to extract:
+The JWT is parsed (not cryptographically validated -- assumes upstream validation) to extract:
 - **Email**: Used as caller ID and for permission checks (`allowed_emails`)
 - **Groups**: Used for group-based permission checks (`allowed_groups`)
 
@@ -76,10 +77,10 @@ For external agents or services.
 
 **Configuration**:
 ```bash
-API_KEYS='{"ka_rootagent":"root-agent","ka_analytics":"analytics-agent"}'
+API_KEYS='{"ka_rootagent":{"caller_id":"root-agent","role":"write"}}'
 ```
 
-**Caller ID**: Mapped value from `API_KEYS` (e.g., `root-agent`)
+**Caller ID**: Mapped `caller_id` from `API_KEYS` (e.g., `root-agent`)
 
 ### 4. Slack Signature (Legacy)
 
@@ -97,7 +98,7 @@ If neither `INTERNAL_AUTH_TOKEN` nor `API_KEYS` is configured, authentication is
 
 **Caller ID**: `unauthenticated`
 
-⚠️ **Not recommended for production**
+**Warning**: Not recommended for production.
 
 ---
 
@@ -135,31 +136,6 @@ Prometheus metrics endpoint in text exposition format.
 
 **Format**: Prometheus text format
 
-**Example response**:
-```
-# HELP knowledge_agent_queries_total Total number of queries processed
-# TYPE knowledge_agent_queries_total counter
-knowledge_agent_queries_total 1234
-
-# HELP knowledge_agent_query_errors_total Total number of query errors
-# TYPE knowledge_agent_query_errors_total counter
-knowledge_agent_query_errors_total 34
-
-# HELP knowledge_agent_query_latency_seconds Query latency in seconds
-# TYPE knowledge_agent_query_latency_seconds histogram
-knowledge_agent_query_latency_seconds_bucket{le="0.005"} 120
-knowledge_agent_query_latency_seconds_bucket{le="0.01"} 450
-...
-
-# HELP knowledge_agent_tool_calls_total Total tool calls by tool name and status
-# TYPE knowledge_agent_tool_calls_total counter
-knowledge_agent_tool_calls_total{tool_name="search_memory",status="success"} 567
-
-# HELP knowledge_agent_a2a_calls_total Total A2A calls by sub-agent and status
-# TYPE knowledge_agent_a2a_calls_total counter
-knowledge_agent_a2a_calls_total{sub_agent="logs_agent",status="success"} 89
-```
-
 **Example**:
 ```bash
 curl http://localhost:8081/metrics
@@ -169,9 +145,9 @@ curl http://localhost:8081/metrics
 
 ---
 
-### POST /api/query
+### POST /agent/run
 
-Query the knowledge base with natural language questions or ingest threads for knowledge extraction.
+Execute the agent with a blocking JSON response. Uses the **ADK standard RunAgentRequest** format.
 
 **Authentication**: Required
 
@@ -185,34 +161,20 @@ Query the knowledge base with natural language questions or ingest threads for k
 | `X-Internal-Token` | Conditional | Internal authentication token |
 | `Authorization` | Conditional | JWT Bearer token (`Bearer <token>`) |
 | `X-API-Key` | Conditional | API key for A2A access |
-| `X-Slack-User-Id` | Optional | Slack user ID for permissions |
 
 #### Request Body
 
 ```json
 {
-  "query": "What is our deployment process?",
-  "intent": "query",
-  "channel_id": "C01ABC123",
-  "thread_ts": "1234567890.123456",
-  "messages": [
-    {
-      "user": "U01USER123",
-      "text": "How do we deploy?",
-      "ts": "1234567890.123456",
-      "type": "message"
-    }
-  ],
-  "user_name": "john",
-  "user_real_name": "John Doe",
-  "slack_user_id": "U01USER123",
-  "images": [
-    {
-      "name": "diagram.png",
-      "mime_type": "image/png",
-      "data": "base64-encoded-image-data"
-    }
-  ]
+  "appName": "knowledge-agent",
+  "userId": "user@example.com",
+  "sessionId": "session-abc123",
+  "newMessage": {
+    "role": "user",
+    "parts": [
+      {"text": "What is our deployment process?"}
+    ]
+  }
 }
 ```
 
@@ -220,69 +182,36 @@ Query the knowledge base with natural language questions or ingest threads for k
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `query` | string | **Yes** | User's question or instruction |
-| `intent` | string | No | `"query"` (default) or `"ingest"` - determines behavior |
-| `conversation_id` | string | No | Custom conversation ID for conversation continuity. If not provided, auto-generated based on channel/thread context |
-| `channel_id` | string | No | Slack channel ID (for context) |
-| `thread_ts` | string | No | Thread timestamp (for threading) |
-| `messages` | array | No | Thread context messages |
-| `user_name` | string | No | Slack username (e.g., "john") |
-| `user_real_name` | string | No | Real name (e.g., "John Doe") |
-| `slack_user_id` | string | No | Slack user ID (for permissions) |
-| `images` | array | No | Base64-encoded images for multimodal analysis |
+| `appName` | string | No | Application name (default: `knowledge-agent`) |
+| `userId` | string | No | User identifier for session and memory scoping. Auto-resolved from auth context if not provided |
+| `sessionId` | string | No | Session identifier for conversation continuity. Auto-generated if not provided |
+| `newMessage` | object | **Yes** | The user message in ADK Content format |
+| `newMessage.role` | string | **Yes** | Must be `"user"` |
+| `newMessage.parts` | array | **Yes** | Array of content parts |
+| `streaming` | boolean | No | Set to `true` for SSE streaming (use `/agent/run_sse` instead) |
 
-#### Intent Modes
+#### Content Parts
 
-| Intent | Behavior |
-|--------|----------|
-| `query` (default) | Queries the knowledge base, performs pre-search, returns answers |
-| `ingest` | Analyzes thread messages and saves valuable information to memory |
+Text part:
+```json
+{"text": "Your question here"}
+```
 
-**Messages array schema**:
+Image part (inline data):
 ```json
 {
-  "user": "string",        // Slack user ID
-  "text": "string",        // Message text
-  "ts": "string",          // Timestamp
-  "type": "string",        // Message type (usually "message")
-  "images": [...]          // Optional: attached images
+  "inlineData": {
+    "mimeType": "image/png",
+    "data": "base64-encoded-image-data"
+  }
 }
 ```
 
-**Images array schema**:
-```json
-{
-  "name": "string",        // Filename
-  "mime_type": "string",   // MIME type (e.g., "image/png")
-  "data": "string"         // Base64-encoded image data
-}
-```
+#### Response
 
-#### Response Body
+The response follows the ADK standard format. The agent's text response is contained within the `content` field of the response.
 
-**Success** (`200 OK`):
-```json
-{
-  "success": true,
-  "answer": "Our deployment process involves...",
-  "memories_used": 3,
-  "tool_calls": [
-    {
-      "tool": "search_memory",
-      "args": {
-        "query": "deployment process"
-      }
-    }
-  ]
-}
-```
-
-**Error** (`400 Bad Request`):
-```json
-{
-  "error": "query is required"
-}
-```
+**Success** (`200 OK`): ADK RunAgentResponse with the agent's answer.
 
 **Error** (`401 Unauthorized`):
 ```json
@@ -305,186 +234,112 @@ Query the knowledge base with natural language questions or ingest threads for k
 }
 ```
 
-#### Response Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | boolean | Whether query succeeded |
-| `answer` | string | Agent's response (if success) |
-| `message` | string | Error message (if not success) |
-| `memories_used` | integer | Number of memories searched (optional) |
-| `tool_calls` | array | Tools invoked by agent (optional) |
-
 #### Examples
 
 **Minimal query**:
 ```bash
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "query": "What is our deployment process?"
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "What is our deployment process?"}]
+    }
   }'
 ```
 
-**Query with thread context**:
+**Query with session continuity**:
 ```bash
-curl -X POST http://localhost:8081/api/query \
-  -H "Content-Type: application/json" \
-  -H "X-Internal-Token: your-token" \
-  -H "X-Slack-User-Id: U01USER123" \
-  -d '{
-    "query": "How do we deploy to staging?",
-    "channel_id": "C01ABC123",
-    "thread_ts": "1234567890.123456",
-    "user_name": "john",
-    "user_real_name": "John Doe",
-    "messages": [
-      {
-        "user": "U01USER123",
-        "text": "I need help with deployment",
-        "ts": "1234567890.123456",
-        "type": "message"
-      }
-    ]
-  }'
-```
-
-**Query with image**:
-```bash
-# First, encode image to base64
-IMAGE_DATA=$(base64 -i screenshot.png)
-
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
-  -d "{
-    \"query\": \"What error is shown in this screenshot?\",
-    \"images\": [
-      {
-        \"name\": \"screenshot.png\",
-        \"mime_type\": \"image/png\",
-        \"data\": \"$IMAGE_DATA\"
-      }
-    ]
-  }"
+  -d '{
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "sessionId": "my-session-123",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "Tell me more about the rollback procedure"}]
+    }
+  }'
+```
+
+**Query with JWT authentication**:
+```bash
+curl -X POST http://localhost:8081/agent/run \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
+  -d '{
+    "appName": "knowledge-agent",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "How do we deploy to staging?"}]
+    }
+  }'
 ```
 
 ---
 
-### POST /api/query/stream
+### POST /agent/run_sse
 
-Streaming version of `/api/query` using Server-Sent Events (SSE). Returns the agent's response in real-time as text chunks.
+Streaming version of `/agent/run` using **Server-Sent Events (SSE)**. Returns the agent's response in real-time using the ADK standard SSE format.
 
-**Authentication**: Required (same as `/api/query`)
+**Authentication**: Required (same as `/agent/run`)
 
 **Rate Limit**: 10 requests/second per IP, burst of 20
 
-#### Request Headers
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `Content-Type` | Yes | Must be `application/json` |
-| `X-Internal-Token` | Conditional | Internal authentication token |
-| `Authorization` | Conditional | JWT Bearer token (`Bearer <token>`) |
-| `X-API-Key` | Conditional | API key for A2A access |
-
 #### Request Body
 
-Same schema as [`POST /api/query`](#post-apiquery). All fields are identical.
+Same schema as [`POST /agent/run`](#post-agentrun). Set `streaming: true` in the body.
+
+```json
+{
+  "appName": "knowledge-agent",
+  "userId": "test-user",
+  "newMessage": {
+    "role": "user",
+    "parts": [{"text": "What is our deployment process?"}]
+  },
+  "streaming": true
+}
+```
 
 #### Response
 
 **Content-Type**: `text/event-stream`
 
-**Headers**:
-| Header | Value | Description |
-|--------|-------|-------------|
-| `Content-Type` | `text/event-stream` | SSE stream |
-| `Cache-Control` | `no-cache` | Disable caching |
-| `Connection` | `keep-alive` | Keep connection open |
-| `X-Accel-Buffering` | `no` | Disable proxy buffering (nginx) |
-
-#### SSE Event Format
-
-Each event is a JSON object on a `data:` line:
-
-**Start event** (first, always):
-```
-data: {"type":"start","messageId":"<uuid>"}
-```
-
-**Chunk events** (one or more):
-```
-data: {"type":"chunk","content":"partial text..."}
-```
-
-**End event** (last, on success):
-```
-data: {"type":"end","status":"ok"}
-```
-
-**Error event** (on failure):
-```
-data: {"type":"error","message":"description of the error"}
-```
-
-#### SSE Event Schema
-
-| Field | Type | Present In | Description |
-|-------|------|------------|-------------|
-| `type` | string | All | Event type: `start`, `chunk`, `end`, `error` |
-| `messageId` | string | `start` | Unique message ID (UUID) |
-| `content` | string | `chunk` | Text delta (partial response) |
-| `status` | string | `end` | Completion status (`ok`) |
-| `message` | string | `error` | Error description |
+The SSE stream follows the ADK standard format. Events are sent as `data:` lines with JSON payloads containing the agent's incremental response.
 
 #### Examples
 
-**Basic streaming query**:
+**Streaming query**:
 ```bash
-curl -N -X POST http://localhost:8081/api/query/stream \
+curl -N -X POST http://localhost:8081/agent/run_sse \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ka_rootagent" \
   -d '{
-    "query": "What is our deployment process?"
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "What is our deployment process?"}]
+    },
+    "streaming": true
   }'
-```
-
-**Streaming with JWT Bearer authentication**:
-```bash
-curl -N -X POST http://localhost:8081/api/query/stream \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..." \
-  -d '{
-    "query": "What is our deployment process?"
-  }'
-```
-
-**Example output**:
-```
-data: {"type":"start","messageId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
-
-data: {"type":"chunk","content":"Our deployment"}
-
-data: {"type":"chunk","content":" process uses"}
-
-data: {"type":"chunk","content":" GitHub Actions..."}
-
-data: {"type":"end","status":"ok"}
 ```
 
 **Error responses** (before SSE stream starts):
 
-If the request fails validation before streaming begins, standard JSON error responses are returned (same as `/api/query`):
+If the request fails validation before streaming begins, standard HTTP error responses are returned:
 
 | Code | Condition |
 |------|-----------|
-| `400` | Missing `query` field or invalid JSON |
 | `401` | Authentication failed |
-| `405` | Wrong HTTP method (not POST) |
-| `413` | Request body too large |
 | `429` | Rate limit exceeded |
+| `500` | Internal server error (session, marshal, etc.) |
 
 ---
 
@@ -571,14 +426,6 @@ curl -X POST http://localhost:8081/a2a/invoke \
 
 All endpoints return JSON error responses with appropriate HTTP status codes.
 
-### Error Response Format
-
-```json
-{
-  "error": "Error message describing what went wrong"
-}
-```
-
 ### HTTP Status Codes
 
 | Code | Meaning | When Used |
@@ -586,45 +433,14 @@ All endpoints return JSON error responses with appropriate HTTP status codes.
 | `200` | OK | Request succeeded |
 | `400` | Bad Request | Invalid request body or missing required fields |
 | `401` | Unauthorized | Authentication failed or missing |
-| `405` | Method Not Allowed | Wrong HTTP method (e.g., GET on POST endpoint) |
 | `429` | Too Many Requests | Rate limit exceeded |
 | `500` | Internal Server Error | Unexpected server error |
-
-### Common Errors
-
-**Missing required field**:
-```json
-{
-  "error": "query is required"
-}
-```
-
-**Authentication failure**:
-```json
-{
-  "error": "Authentication required"
-}
-```
-
-**Invalid JSON**:
-```json
-{
-  "error": "Invalid request: invalid character 'x' looking for beginning of value"
-}
-```
-
-**Rate limit exceeded**:
-```json
-{
-  "error": "Rate limit exceeded. Please try again later."
-}
-```
 
 ---
 
 ## Rate Limiting
 
-Protected endpoints (`/api/query`, `/api/query/stream`) are rate-limited per IP address:
+Protected endpoints (`/agent/run`, `/agent/run_sse`, `/a2a/invoke`) are rate-limited per IP address:
 
 - **Rate**: 10 requests per second
 - **Burst**: 20 requests (token bucket)
@@ -642,17 +458,11 @@ Rate limiting respects `X-Forwarded-For` header when behind a proxy:
 - Takes **rightmost IP** (RFC 7239 compliant)
 - Ignores untrusted proxy IPs
 
-**Example**:
-```
-X-Forwarded-For: client-ip, proxy1-ip, proxy2-ip
-```
-→ Rate limited by `proxy2-ip` (most trusted)
-
 ---
 
 ## Examples
 
-### Complete Integration Example
+### Complete Integration Example (bash)
 
 ```bash
 #!/bin/bash
@@ -665,56 +475,44 @@ API_KEY="ka_rootagent"
 echo "Checking health..."
 curl -s "$AGENT_URL/health" | jq .
 
-# 2. Get metrics
-echo -e "\nFetching metrics..."
-curl -s "$AGENT_URL/metrics" | jq .
-
-# 3. Query knowledge base
+# 2. Blocking query
 echo -e "\nQuerying knowledge base..."
-curl -s -X POST "$AGENT_URL/api/query" \
+curl -s -X POST "$AGENT_URL/agent/run" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "query": "What is our deployment process?"
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "What is our deployment process?"}]
+    }
   }' | jq .
 
-# 4. Ingest thread (using intent: "ingest")
-echo -e "\nIngesting thread..."
-curl -s -X POST "$AGENT_URL/api/query" \
+# 3. Streaming query (SSE)
+echo -e "\nStreaming query..."
+curl -N -s -X POST "$AGENT_URL/agent/run_sse" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{
-    "query": "Ingest this thread",
-    "intent": "ingest",
-    "thread_ts": "1234567890.123456",
-    "channel_id": "C01ABC123",
-    "messages": [
-      {
-        "user": "U01USER123",
-        "text": "Our deployment uses GitHub Actions with automatic rollback",
-        "ts": "1234567890.123456",
-        "type": "message"
-      }
-    ]
-  }' | jq .
+    "appName": "knowledge-agent",
+    "userId": "test-user",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "What is our deployment process?"}]
+    },
+    "streaming": true
+  }'
 
 echo -e "\nDone!"
-
-# 5. Stream a query (SSE)
-echo -e "\nStreaming query..."
-curl -N -s -X POST "$AGENT_URL/api/query/stream" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
-  -d '{
-    "query": "What is our deployment process?"
-  }'
 ```
 
 ### Python Integration Example
 
 ```python
 import requests
-import base64
+import json as json_mod
+
 
 class KnowledgeAgentClient:
     def __init__(self, base_url: str, api_key: str):
@@ -726,34 +524,50 @@ class KnowledgeAgentClient:
         }
 
     def health(self) -> dict:
-        """Check agent health"""
+        """Check agent health."""
         resp = requests.get(f'{self.base_url}/health')
         resp.raise_for_status()
         return resp.json()
 
-    def metrics(self) -> dict:
-        """Get agent metrics"""
-        resp = requests.get(f'{self.base_url}/metrics')
-        resp.raise_for_status()
-        return resp.json()
+    def run(self, question: str, user_id: str = "api-user",
+            session_id: str | None = None) -> dict:
+        """Execute agent with blocking response (ADK /agent/run)."""
+        payload = {
+            'appName': 'knowledge-agent',
+            'userId': user_id,
+            'newMessage': {
+                'role': 'user',
+                'parts': [{'text': question}]
+            }
+        }
+        if session_id:
+            payload['sessionId'] = session_id
 
-    def query(self, question: str, **kwargs) -> dict:
-        """Query the knowledge base"""
-        payload = {'query': question, **kwargs}
         resp = requests.post(
-            f'{self.base_url}/api/query',
+            f'{self.base_url}/agent/run',
             headers=self.headers,
             json=payload
         )
         resp.raise_for_status()
         return resp.json()
 
-    def query_stream(self, question: str, **kwargs):
-        """Stream a query response via SSE"""
-        import json as json_mod
-        payload = {'query': question, **kwargs}
+    def run_stream(self, question: str, user_id: str = "api-user",
+                   session_id: str | None = None):
+        """Execute agent with SSE streaming (ADK /agent/run_sse)."""
+        payload = {
+            'appName': 'knowledge-agent',
+            'userId': user_id,
+            'newMessage': {
+                'role': 'user',
+                'parts': [{'text': question}]
+            },
+            'streaming': True
+        }
+        if session_id:
+            payload['sessionId'] = session_id
+
         with requests.post(
-            f'{self.base_url}/api/query/stream',
+            f'{self.base_url}/agent/run_sse',
             headers=self.headers,
             json=payload,
             stream=True
@@ -761,46 +575,8 @@ class KnowledgeAgentClient:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
                 if line and line.startswith('data: '):
-                    event = json_mod.loads(line[6:])
-                    yield event
+                    yield json_mod.loads(line[6:])
 
-    def query_with_image(self, question: str, image_path: str) -> dict:
-        """Query with an image attachment"""
-        with open(image_path, 'rb') as f:
-            image_data = base64.b64encode(f.read()).decode('utf-8')
-
-        payload = {
-            'query': question,
-            'images': [{
-                'name': image_path,
-                'mime_type': 'image/png',
-                'data': image_data
-            }]
-        }
-        resp = requests.post(
-            f'{self.base_url}/api/query',
-            headers=self.headers,
-            json=payload
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    def ingest_thread(self, thread_ts: str, channel_id: str, messages: list) -> dict:
-        """Ingest a thread into knowledge base using intent: ingest"""
-        payload = {
-            'query': 'Ingest this thread',
-            'intent': 'ingest',
-            'thread_ts': thread_ts,
-            'channel_id': channel_id,
-            'messages': messages
-        }
-        resp = requests.post(
-            f'{self.base_url}/api/query',
-            headers=self.headers,
-            json=payload
-        )
-        resp.raise_for_status()
-        return resp.json()
 
 # Usage
 if __name__ == '__main__':
@@ -812,24 +588,14 @@ if __name__ == '__main__':
     # Health check
     print("Health:", client.health())
 
-    # Query
-    result = client.query("What is our deployment process?")
-    print("Answer:", result['answer'])
-
-    # Query with image
-    result = client.query_with_image(
-        "What error is shown in this screenshot?",
-        "error-screenshot.png"
-    )
-    print("Analysis:", result['answer'])
+    # Blocking query
+    result = client.run("What is our deployment process?")
+    print("Result:", result)
 
     # Streaming query
     print("Streaming:")
-    for event in client.query_stream("What is our deployment process?"):
-        if event['type'] == 'chunk':
-            print(event['content'], end='', flush=True)
-        elif event['type'] == 'end':
-            print()  # newline after stream ends
+    for event in client.run_stream("What is our deployment process?"):
+        print(event)
 ```
 
 ---

@@ -22,8 +22,8 @@ Knowledge Agent supports A2A in two ways:
 │  ┌───────────────────────────────────────────────────┐   │
 │  │            Unified HTTP Server (Port 8081)        │   │
 │  │                                                   │   │
-│  │  /api/query        (authenticated)               │   │
-│  │  /api/ingest       (authenticated)               │   │
+│  │  /agent/run        (authenticated, ADK blocking)  │   │
+│  │  /agent/run_sse    (authenticated, ADK SSE)      │   │
 │  │  /a2a/invoke       (authenticated)               │   │
 │  │  /.well-known/agent-card.json  (public)          │   │
 │  │  /health, /metrics (public)                      │   │
@@ -191,7 +191,7 @@ a2a:
 **Field Reference:**
 - `api_path`: REST endpoint path (only for `protocol: rest`)
   - Default: `/query`
-  - Examples: `/api/query`, `/custom/endpoint`, `/v1/agent`
+  - Examples: `/custom/endpoint`, `/v1/agent`, `/api/query`
   - The endpoint will be: `{endpoint}{api_path}`
 ### How Sub-agents Work (A2AToolset)
 
@@ -303,11 +303,12 @@ A2A calls include headers to prevent infinite loops between agents:
 
 ```bash
 # This should return 508 Loop Detected
-curl -X POST http://localhost:8081/api/query \
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
   -H "X-Call-Chain: knowledge-agent" \
   -H "X-Call-Depth: 1" \
-  -d '{"query": "test"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"test"}]}}'
 ```
 
 ## Security

@@ -69,8 +69,8 @@ Knowledge Agent is a unified binary that can run in three modes:
 │    │  └─ /.well-known/agent-card.json (A2A discovery)              │      │
 │    ├────────────────────────────────────────────────────────────────┤      │
 │    │  PROTECTED ENDPOINTS (Auth + Rate Limit + Loop Prevention)     │      │
-│    │  ├─ /api/query               (question answering & ingestion)  │      │
-│    │  ├─ /api/query/stream        (SSE streaming responses)         │      │
+│    │  ├─ /agent/run               (ADK blocking execution)          │      │
+│    │  ├─ /agent/run_sse           (ADK SSE streaming)               │      │
 │    │  └─ /a2a/invoke              (A2A JSON-RPC)                    │      │
 │    └────────────────────────────────────────────────────────────────┘      │
 │                                    │                                        │
@@ -157,7 +157,7 @@ This diagram shows the complete flow of a Slack message from user to response.
   │                   │◄────────────────────│    in thread        │                    │
   │                   │                     │                     │                    │
   │                   │                     │                     │                    │
-  │                   │                     │ POST /api/query     │                    │
+  │                   │                     │ POST /agent/run     │                    │
   │                   │                     │ X-Internal-Token    │                    │
   │                   │                     │ X-Slack-User-Id     │                    │
   │                   │                     ├────────────────────►│                    │
@@ -169,7 +169,8 @@ This diagram shows the complete flow of a Slack message from user to response.
   │                   │                     │                     │                    │
   │                   │                     │                     │ 10. Parse request  │
   │                   │                     │                     │                    │
-  │                   │                     │                     │ Query(ctx, req)    │
+  │                   │                     │                     │ ADK Middleware +   │
+  │                   │                     │                     │ Runner             │
   │                   │                     │                     ├───────────────────►│
   │                   │                     │                     │                    │
   │                   │                     │                     │         11. Create/resume session
@@ -203,7 +204,7 @@ This diagram shows the complete flow of a Slack message from user to response.
   │                   │                     │                     │             └──────┬──────┘
   │                   │                     │                     │                    │
   │                   │                     │                     │◄───────────────────┤
-  │                   │                     │                     │   QueryResponse    │
+  │                   │                     │                     │   ADK Response      │
   │                   │                     │                     │                    │
   │                   │                     │◄────────────────────┤                    │
   │                   │                     │   JSON Response     │                    │
@@ -379,8 +380,8 @@ sendToAgent()       → Forward to Agent Server with context
 | `/health`, `/ready`, `/live` | Public | Health checks |
 | `/metrics` | Public | Prometheus metrics |
 | `/.well-known/agent-card.json` | Public | A2A agent discovery |
-| `/api/query` | Protected | Query knowledge base or ingest threads (via `intent` field) |
-| `/api/query/stream` | Protected | Streaming version of `/api/query` via SSE |
+| `/agent/run` | Protected | ADK blocking agent execution |
+| `/agent/run_sse` | Protected | ADK SSE streaming agent execution |
 | `/a2a/invoke` | Protected | A2A JSON-RPC endpoint |
 
 ### 3. ADK Agent (`internal/agent/agent.go`)
@@ -394,10 +395,11 @@ sendToAgent()       → Forward to Agent Server with context
 
 **Components:**
 ```
-llmAgent        → LLM configuration and tools
-runner          → ADK runner for orchestration
+llmAgent        → LLM configuration, tools, and callbacks
+restHandler     → ADK REST handler (/agent/run, /agent/run_sse)
 sessionService  → Redis session management
 memoryService   → PostgreSQL memory with embeddings
+callbacks       → Before/After Model and Tool callbacks (Langfuse, Prometheus)
 ```
 
 ### 4. Authentication Middleware (`internal/server/middleware.go`)

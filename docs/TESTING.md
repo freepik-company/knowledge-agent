@@ -18,9 +18,15 @@ This document describes the testing strategy and how to run tests for the Knowle
 knowledge-agent/
 ├── internal/
 │   ├── agent/
-│   │   └── agent_test.go        # Unit tests for agent package
+│   │   ├── presearch_test.go    # Pre-search memory unit tests
+│   │   └── session_test.go      # Session management tests
 │   ├── config/
 │   │   └── config_test.go       # Unit tests for config
+│   ├── server/
+│   │   ├── adk_middleware_test.go # ADK middleware helper tests
+│   │   ├── agent_server_test.go  # Server and health endpoint tests
+│   │   ├── middleware_test.go    # Auth middleware tests
+│   │   └── ratelimit_test.go    # Rate limiter tests
 │   ├── slack/
 │   │   ├── formatter_test.go    # Unit tests for Slack formatter
 │   │   └── verification_test.go # Unit tests for Slack verification

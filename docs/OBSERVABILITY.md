@@ -190,29 +190,39 @@ Every tool invocation is tracked as a TOOL observation:
 
 ### Architecture
 
+Tracing uses ADK callbacks registered on the LLM agent (see `internal/agent/callbacks.go`):
+
 ```
-ADK Runner Events
+ADK Pre-processing Middleware (internal/server/adk_middleware.go)
   ↓
-1. event.UsageMetadata detected → StartGeneration()
+1. Start Langfuse trace → inject into request context
   ↓
-2. part.FunctionCall detected → StartToolCall()
+ADK Callbacks (internal/agent/callbacks.go)
   ↓
-3. part.FunctionResponse detected → EndToolCall()
+2. beforeModelCallback → StartGeneration()
   ↓
-4. Next event with UsageMetadata → EndGeneration()
+3. afterModelCallback → EndGeneration() with token usage
   ↓
-5. All events processed → trace.End()
+4. beforeToolCallback → StartToolCall() + record start time
+  ↓
+5. afterToolCallback → EndToolCall() + Prometheus RecordToolCall()
+  ↓
+ADK Pre-processing Middleware (defer)
+  ↓
+6. LogTraceSummary() → log tokens, costs, counts
+  ↓
+7. trace.End() → triggers batch submission
   ↓
 git-hulk SDK → Batch processor → Langfuse API
 ```
 
 **Key Implementation Points:**
-- Generations start when `UsageMetadata` is detected
-- Generations end when next `UsageMetadata` arrives
-- Tool calls tracked immediately on function call/response
+- Trace lifecycle managed by `ADKPreProcessMiddleware` (start on request, end on defer)
+- Model callbacks track each LLM generation with token counts
+- Tool callbacks track each tool call with duration and success/failure
+- Prometheus metrics recorded in `afterToolCallback`
 - Tokens accumulated across multiple generations
-- Costs calculated once at trace end
-- `trace.End()` triggers batch submission
+- Costs calculated once at trace end via `LogTraceSummary`
 
 ### Cost Tracking
 

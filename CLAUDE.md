@@ -27,8 +27,8 @@ Knowledge Agent is an intelligent AI assistant that helps teams capture and retr
                           │
         ┌─────────────────┴─────────────────┐
    Port 8081 (Agent)                   Port 8080 (Slack)
-   /api/query (auth)                   /slack/events
-   /api/query/stream (SSE, auth)       Socket mode listener
+   /agent/run (auth, ADK blocking)    /slack/events
+   /agent/run_sse (auth, ADK SSE)     Socket mode listener
    /a2a/invoke (auth)
    /.well-known/agent-card (public)
    /health, /metrics, /ready, /live
@@ -103,18 +103,17 @@ This allows:
 
 ### ADK Integration (`internal/agent/agent.go`)
 
-Uses `adk-utils-go` library (third-party, not official Google ADK):
+Uses `adk-utils-go` library (third-party) + official Google ADK (`google.golang.org/adk`):
 ```go
 sessionService := sessionredis.NewRedisSessionService(...)  // Redis sessions
 memoryService := memorypostgres.NewPostgresMemoryService(...) // PostgreSQL+pgvector
 llmModel := genaianthropic.New(...)  // Anthropic Claude
 memoryToolset := memorytools.NewToolset(...)  // search_memory, save_to_memory
-runner := runner.New(...)  // ADK runner orchestrates agent execution
+llmAgent := llmagent.New(...)  // LLM agent with callbacks
+restHandler := adkrest.NewHandler(...)  // ADK REST handler (/run, /run_sse)
 ```
 
-**Request ID patterns:**
-- Query: `query-{channel_id}-{timestamp}` - unique per interaction
-- Ingest: `ingest-{channel_id}-{thread_ts}` - unique per thread
+The ADK REST handler serves `/agent/run` (blocking) and `/agent/run_sse` (SSE streaming) using the standard ADK protocol. An `ADKPreProcessMiddleware` wraps the handler to inject Langfuse tracing, pre-search memory, session compaction, and date/user context.
 
 ### Agent System Prompt (`internal/agent/prompts.go`)
 
@@ -279,8 +278,8 @@ Key file: `internal/observability/langfuse.go`
 ### Event Flow
 ```
 Slack Event → /slack/events (8080) → Verify signature → Fetch thread context
-    → POST /api/query (8081) → ADK Runner → Claude decides actions
-    → Execute tools → Return response → Post to Slack
+    → POST /agent/run (8081) → ADK Pre-processing Middleware → ADK Runner
+    → Claude decides actions → Execute tools → Return response → Post to Slack
 ```
 
 ### Key Components
@@ -288,18 +287,22 @@ Slack Event → /slack/events (8080) → Verify signature → Fetch thread conte
 - `internal/slack/client.go` - Slack API, thread fetching, image download
 - `internal/slack/socket_handler.go` - Socket mode implementation
 
-### Message Context Structure
-```go
-type QueryRequest struct {
-    Query       string           `json:"query"`
-    ThreadTS    string           `json:"thread_ts"`
-    ChannelID   string           `json:"channel_id"`
-    Messages    []map[string]any `json:"messages"`
-    SlackUserID string           `json:"slack_user_id"`
-    UserName    string           `json:"user_name"`
-    UserRealName string          `json:"user_real_name"`
+### ADK Request Format
+
+The Slack bridge sends requests using the ADK standard `RunAgentRequest` format:
+```json
+{
+  "appName": "knowledge-agent",
+  "userId": "resolved-user-id",
+  "sessionId": "channel-thread-based-id",
+  "newMessage": {
+    "role": "user",
+    "parts": [{"text": "user message with thread context"}]
+  }
 }
 ```
+
+See `internal/slack/adk_bridge.go` for the Slack-to-ADK conversion helpers.
 
 ## Testing Without Slack
 
@@ -307,17 +310,17 @@ type QueryRequest struct {
 # Terminal 1
 make docker-up && make dev-agent
 
-# Terminal 2 - Standard query
-curl -X POST http://localhost:8081/api/query \
+# Terminal 2 - Blocking query (ADK format)
+curl -X POST http://localhost:8081/agent/run \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{"query": "What is our deployment process?"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"What is our deployment process?"}]}}'
 
-# Terminal 2 - Streaming query (SSE)
-curl -N -X POST http://localhost:8081/api/query/stream \
+# Terminal 2 - Streaming query (ADK SSE)
+curl -N -X POST http://localhost:8081/agent/run_sse \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{"query": "What is our deployment process?"}'
+  -d '{"appName":"knowledge-agent","userId":"test","newMessage":{"role":"user","parts":[{"text":"What is our deployment process?"}]},"streaming":true}'
 ```
 
 ## Common Patterns
@@ -380,14 +383,17 @@ log:
 | File | Purpose |
 |------|---------|
 | `cmd/knowledge-agent/main.go` | Unified binary, `--mode` flag |
-| `internal/agent/agent.go` | Core agent, ADK initialization |
+| `internal/agent/agent.go` | Core agent, ADK initialization, RESTHandler |
+| `internal/agent/callbacks.go` | ADK model/tool callbacks for Langfuse and metrics |
 | `internal/agent/prompts.go` | **CRITICAL** System prompt |
+| `internal/server/adk_middleware.go` | ADK pre-processing (Langfuse, pre-search, sessions) |
+| `internal/server/agent_server.go` | HTTP routing and middleware chain |
+| `internal/server/middleware.go` | Authentication middleware |
 | `internal/slack/handler.go` | Slack event handling |
+| `internal/slack/adk_bridge.go` | Slack-to-ADK bridge helpers |
 | `internal/config/config.go` | Configuration structs |
 | `internal/mcp/factory.go` | MCP toolset creation |
-| `internal/server/middleware.go` | Authentication middleware |
 | `internal/a2a/toolset.go` | A2A toolset (query_<agent_name> tools) |
-| `internal/a2a/query_extractor.go` | Query extraction for sub-agents |
 
 ## Dependencies Note
 
