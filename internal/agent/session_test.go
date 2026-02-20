@@ -67,25 +67,25 @@ func TestResolveSessionID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveSessionID(tt.clientSessionID, tt.channelID, tt.threadTS)
+			got := ResolveSessionID(tt.clientSessionID, tt.channelID, tt.threadTS)
 
 			if tt.wantExact != "" {
 				if got != tt.wantExact {
-					t.Errorf("resolveSessionID() = %q, want exact %q", got, tt.wantExact)
+					t.Errorf("ResolveSessionID() = %q, want exact %q", got, tt.wantExact)
 				}
 			} else if tt.wantPrefix != "" {
 				if !strings.HasPrefix(got, tt.wantPrefix) {
-					t.Errorf("resolveSessionID() = %q, want prefix %q", got, tt.wantPrefix)
+					t.Errorf("ResolveSessionID() = %q, want prefix %q", got, tt.wantPrefix)
 				}
 				// Verify the suffix is a valid unix timestamp (numeric)
 				suffix := strings.TrimPrefix(got, tt.wantPrefix)
 				if suffix == "" {
-					t.Errorf("resolveSessionID() = %q, missing timestamp suffix after prefix %q", got, tt.wantPrefix)
+					t.Errorf("ResolveSessionID() = %q, missing timestamp suffix after prefix %q", got, tt.wantPrefix)
 				}
 				// Check that suffix contains only digits
 				for _, c := range suffix {
 					if c < '0' || c > '9' {
-						t.Errorf("resolveSessionID() = %q, suffix %q should be numeric", got, suffix)
+						t.Errorf("ResolveSessionID() = %q, suffix %q should be numeric", got, suffix)
 						break
 					}
 				}
@@ -96,16 +96,16 @@ func TestResolveSessionID(t *testing.T) {
 
 func TestResolveSessionID_Determinism(t *testing.T) {
 	// Client-provided session IDs should be deterministic
-	id1 := resolveSessionID("my-session", "C01ABC", "123.456")
-	id2 := resolveSessionID("my-session", "C01ABC", "123.456")
+	id1 := ResolveSessionID("my-session", "C01ABC", "123.456")
+	id2 := ResolveSessionID("my-session", "C01ABC", "123.456")
 
 	if id1 != id2 {
 		t.Errorf("Client-provided session ID should be deterministic: got %q and %q", id1, id2)
 	}
 
 	// Thread-based session IDs should be deterministic
-	id3 := resolveSessionID("", "C01ABC", "123.456")
-	id4 := resolveSessionID("", "C01ABC", "123.456")
+	id3 := ResolveSessionID("", "C01ABC", "123.456")
+	id4 := ResolveSessionID("", "C01ABC", "123.456")
 
 	if id3 != id4 {
 		t.Errorf("Thread-based session ID should be deterministic: got %q and %q", id3, id4)
@@ -117,13 +117,13 @@ func TestResolveSessionID_UniqueTimestamps(t *testing.T) {
 	// if called in quick succession. This is acceptable behavior but we test the format.
 
 	// Channel-only format
-	channelID := resolveSessionID("", "C01ABC", "")
+	channelID := ResolveSessionID("", "C01ABC", "")
 	if !strings.HasPrefix(channelID, "channel-C01ABC-") {
 		t.Errorf("Channel-only session ID format incorrect: %q", channelID)
 	}
 
 	// API-only format
-	apiID := resolveSessionID("", "", "")
+	apiID := ResolveSessionID("", "", "")
 	if !strings.HasPrefix(apiID, "api-") {
 		t.Errorf("API-only session ID format incorrect: %q", apiID)
 	}

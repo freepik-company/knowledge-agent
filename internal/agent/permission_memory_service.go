@@ -15,10 +15,12 @@ import (
 // PermissionMemoryService wraps a memory service to enforce save permissions.
 // It implements memorytypes.ExtendedMemoryService so the toolset can detect
 // update_memory and delete_memory capabilities via type assertion.
+//
+// Permission context is obtained from the method's context.Context parameter,
+// which ADK propagates from the HTTP request context through the runner.
 type PermissionMemoryService struct {
 	baseService       memorytypes.ExtendedMemoryService
 	permissionChecker *MemoryPermissionChecker
-	contextHolder     *contextHolder
 }
 
 // NewPermissionMemoryService creates a memory service wrapper with permission checking.
@@ -26,12 +28,10 @@ type PermissionMemoryService struct {
 func NewPermissionMemoryService(
 	baseService memorytypes.ExtendedMemoryService,
 	permissionChecker *MemoryPermissionChecker,
-	contextHolder *contextHolder,
 ) memorytypes.ExtendedMemoryService {
 	return &PermissionMemoryService{
 		baseService:       baseService,
 		permissionChecker: permissionChecker,
-		contextHolder:     contextHolder,
 	}
 }
 
@@ -39,21 +39,15 @@ func NewPermissionMemoryService(
 func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.Session) error {
 	log := logger.Get()
 
-	// Determine the best context to use for permission checking
-	// Priority:
-	// 1. Method context (ctx) if it has permission values (propagated by ADK)
-	// 2. contextHolder context (set by request handler)
-	// 3. Method context as fallback
-	requestCtx := s.resolvePermissionContext(ctx)
-
-	// Check permissions FIRST before allowing save
-	canSave, permissionReason := s.permissionChecker.CanSaveToMemory(requestCtx)
+	// Check permissions using the method context, which ADK propagates
+	// from the HTTP request context through the runner and tool callbacks.
+	canSave, permissionReason := s.permissionChecker.CanSaveToMemory(ctx)
 
 	// Extract caller information for logging
-	callerID := ctxutil.CallerID(requestCtx)
-	userEmail := ctxutil.UserEmail(requestCtx)
-	userGroups := ctxutil.UserGroups(requestCtx)
-	role := ctxutil.Role(requestCtx)
+	callerID := ctxutil.CallerID(ctx)
+	userEmail := ctxutil.UserEmail(ctx)
+	userGroups := ctxutil.UserGroups(ctx)
+	role := ctxutil.Role(ctx)
 
 	logFields := []any{
 		"operation", "save_to_memory",
@@ -93,34 +87,6 @@ func (s *PermissionMemoryService) AddSession(ctx context.Context, sess session.S
 	return nil
 }
 
-// resolvePermissionContext determines the best context to use for permission checking.
-// This handles the race condition where concurrent requests might overwrite contextHolder.
-func (s *PermissionMemoryService) resolvePermissionContext(methodCtx context.Context) context.Context {
-	// Check if method context already has the required permission values
-	// This happens when ADK properly propagates the context
-	if hasPermissionValues(methodCtx) {
-		return methodCtx
-	}
-
-	// Fall back to contextHolder (set by request handler before calling runner)
-	// This is needed because ADK may not propagate context values
-	holderCtx := s.contextHolder.GetContext()
-	if holderCtx != nil && hasPermissionValues(holderCtx) {
-		return holderCtx
-	}
-
-	// Last resort: use method context even without values
-	// This will result in "unknown" caller_id and default role
-	return methodCtx
-}
-
-// hasPermissionValues checks if a context has the required permission values set
-func hasPermissionValues(ctx context.Context) bool {
-	// Check if caller_id is set and not the default "unknown"
-	callerID := ctxutil.CallerID(ctx)
-	return callerID != "" && callerID != "unknown"
-}
-
 // Search passes through to base service (no permission check needed for reads)
 func (s *PermissionMemoryService) Search(ctx context.Context, req *memory.SearchRequest) (*memory.SearchResponse, error) {
 	return s.baseService.Search(ctx, req)
@@ -135,13 +101,12 @@ func (s *PermissionMemoryService) SearchWithID(ctx context.Context, req *memory.
 func (s *PermissionMemoryService) UpdateMemory(ctx context.Context, appName, userID string, entryID int, newContent string) error {
 	log := logger.Get()
 
-	requestCtx := s.resolvePermissionContext(ctx)
-	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(requestCtx)
+	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(ctx)
 
-	callerID := ctxutil.CallerID(requestCtx)
-	userEmail := ctxutil.UserEmail(requestCtx)
-	userGroups := ctxutil.UserGroups(requestCtx)
-	role := ctxutil.Role(requestCtx)
+	callerID := ctxutil.CallerID(ctx)
+	userEmail := ctxutil.UserEmail(ctx)
+	userGroups := ctxutil.UserGroups(ctx)
+	role := ctxutil.Role(ctx)
 
 	logFields := []any{
 		"operation", "update_memory",
@@ -180,13 +145,12 @@ func (s *PermissionMemoryService) UpdateMemory(ctx context.Context, appName, use
 func (s *PermissionMemoryService) DeleteMemory(ctx context.Context, appName, userID string, entryID int) error {
 	log := logger.Get()
 
-	requestCtx := s.resolvePermissionContext(ctx)
-	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(requestCtx)
+	canWrite, permissionReason := s.permissionChecker.CanSaveToMemory(ctx)
 
-	callerID := ctxutil.CallerID(requestCtx)
-	userEmail := ctxutil.UserEmail(requestCtx)
-	userGroups := ctxutil.UserGroups(requestCtx)
-	role := ctxutil.Role(requestCtx)
+	callerID := ctxutil.CallerID(ctx)
+	userEmail := ctxutil.UserEmail(ctx)
+	userGroups := ctxutil.UserGroups(ctx)
+	role := ctxutil.Role(ctx)
 
 	logFields := []any{
 		"operation", "delete_memory",

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack/slackevents"
+	"knowledge-agent/internal/agent"
 	"knowledge-agent/internal/config"
 	"knowledge-agent/internal/logger"
 	"knowledge-agent/internal/observability"
@@ -440,26 +441,35 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		"resolved", len(userNames),
 	)
 
-	queryRequest := map[string]any{
-		"query":           message,
-		"thread_ts":       threadTS,
-		"channel_id":      event.Channel,
-		"messages":        messageData,
-		"user_name":       userName,     // @username for display
-		"user_real_name":  userRealName, // Real name for personalization
-		"user_email":      userEmail,    // Email for Keycloak identity propagation
-		"filter_thinking": true,         // Exclude intermediate "thinking" text from Slack responses
+	// 4. Build ADK request
+	// Resolve session ID: thread context → channel fallback → API-only
+	sessionID := resolveSlackSessionID(event.Channel, threadTS)
+
+	// Resolve user ID using knowledge scope config
+	userID := resolveSlackUserID(h.config.RAG.KnowledgeScope, event.Channel, event.User)
+
+	// Build user message text with context
+	userMessageText := buildSlackUserMessage(message, userName, userRealName, messageData)
+
+	// Build ADK newMessage with text (and images if present)
+	newMessage := buildADKContent(userMessageText, messageData)
+
+	adkRequest := map[string]any{
+		"appName":    agent.AppName,
+		"userId":     userID,
+		"sessionId":  sessionID,
+		"newMessage": newMessage,
 	}
 
-	// 4. Send to Knowledge Agent
 	forwardLogFields := []any{
 		"channel_id", event.Channel,
+		"session_id", sessionID,
 	}
 	if userName != "" {
 		forwardLogFields = append(forwardLogFields, "user_name", userName)
 	}
-	log.Debugw("Forwarding to Knowledge Agent", forwardLogFields...)
-	reqBody, err := json.Marshal(queryRequest)
+	log.Debugw("Forwarding to Knowledge Agent (ADK)", forwardLogFields...)
+	reqBody, err := json.Marshal(adkRequest)
 	if err != nil {
 		log.Errorw("Failed to marshal request", "error", err)
 		h.client.PostMessage(event.Channel, threadTS,
@@ -474,9 +484,9 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 		"size_kb", payloadSize/1024,
 	)
 
-	// Create request with context for proper timeout handling
+	// Create request to ADK /agent/run endpoint (blocking)
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/api/query", h.agentURL),
+		fmt.Sprintf("%s/agent/run", h.agentURL),
 		bytes.NewBuffer(reqBody))
 	if err != nil {
 		log.Errorw("Failed to create request", "error", err)
@@ -503,37 +513,31 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 	}
 
 	// Send request - context controls the timeout (5 min)
-	// Using shared httpClient to avoid TCP connection leaks
 	resp, err := h.httpClient.Do(req)
 
 	if err != nil {
-		// Log detailed technical error for debugging
 		log.Errorw("Failed to call Knowledge Agent",
 			"error", err,
 			"context_error", ctx.Err(),
 			"payload_kb", payloadSize/1024,
 		)
 		observability.RecordAgentForward(false)
-		// Send user-friendly error message (no technical details)
 		h.client.PostMessage(event.Channel, threadTS, FormatUserError(err, 0))
 		return
 	}
 	defer resp.Body.Close()
 
-	// Record successful forward (will record error later if status != 200)
 	if resp.StatusCode == http.StatusOK {
 		observability.RecordAgentForward(true)
 	} else {
 		observability.RecordAgentForward(false)
 	}
 
-	// Log response status
 	log.Debugw("Agent response received",
 		"status_code", resp.StatusCode,
 		"content_type", resp.Header.Get("Content-Type"),
 	)
 
-	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		body := make([]byte, 1024)
 		n, readErr := resp.Body.Read(body)
@@ -544,67 +548,25 @@ func (h *Handler) sendToAgent(ctx context.Context, event *slackevents.AppMention
 			"status_code", resp.StatusCode,
 			"body_preview", string(body[:n]),
 		)
-		// Send user-friendly error message based on status code
 		h.client.PostMessage(event.Channel, threadTS, FormatUserError(nil, resp.StatusCode))
 		return
 	}
 
-	// 4. Parse response
-	var agentResp map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
-		log.Errorw("Failed to decode agent response",
-			"error", err,
-			"status_code", resp.StatusCode,
-			"content_type", resp.Header.Get("Content-Type"),
-		)
+	// Parse ADK response - it's a JSON array of events
+	answer := extractAnswerFromADKResponse(resp.Body)
+	if answer == "" {
+		log.Errorw("Empty answer from ADK response", "channel_id", event.Channel)
 		h.client.PostMessage(event.Channel, threadTS,
-			":gear: Recibi una respuesta que no pude procesar. Por favor, intenta de nuevo.")
+			":thinking_face: No recibi una respuesta completa. Por favor, intenta de nuevo.")
 		return
 	}
 
-	// 5. Send answer back to Slack
-	success, ok := agentResp["success"].(bool)
-	if !ok {
-		log.Errorw("Invalid response format: missing or invalid 'success' field",
-			"response_keys", getMapKeys(agentResp),
-			"channel_id", event.Channel,
-		)
-		h.client.PostMessage(event.Channel, threadTS,
-			":gear: Recibi una respuesta que no pude procesar. Por favor, intenta de nuevo.")
-		return
-	}
-
-	if success {
-		answer, ok := agentResp["answer"].(string)
-		if !ok {
-			log.Errorw("Invalid response format: missing or invalid 'answer' field",
-				"response_keys", getMapKeys(agentResp),
-				"channel_id", event.Channel,
-			)
-			h.client.PostMessage(event.Channel, threadTS,
-				":thinking_face: No recibi una respuesta completa. Por favor, intenta de nuevo.")
-			return
-		}
-
-		// Format the answer for Slack (convert markdown)
-		formattedAnswer := FormatMessageForSlack(answer)
-
-		log.Infow("Agent responded successfully",
-			"channel_id", event.Channel,
-			"answer_length", len(answer),
-		)
-		h.client.PostMessage(event.Channel, threadTS, formattedAnswer)
-	} else {
-		errorMsg, ok := agentResp["message"].(string)
-		if !ok {
-			errorMsg = "Unknown error"
-		}
-		log.Warnw("Agent returned error", "error", errorMsg)
-
-		// Format error message
-		formattedError := FormatMessageForSlack(fmt.Sprintf("*Error:*\n%s", errorMsg))
-		h.client.PostMessage(event.Channel, threadTS, formattedError)
-	}
+	formattedAnswer := FormatMessageForSlack(answer)
+	log.Infow("Agent responded successfully",
+		"channel_id", event.Channel,
+		"answer_length", len(answer),
+	)
+	h.client.PostMessage(event.Channel, threadTS, formattedAnswer)
 }
 
 // shouldHandleDirectMessage determines if a MessageEvent should be handled as a DM

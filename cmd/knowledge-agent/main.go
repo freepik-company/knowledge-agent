@@ -125,8 +125,8 @@ func runAgentOnly(ctx context.Context, cfg *config.Config, done chan os.Signal) 
 			"port", cfg.Server.AgentPort,
 		)
 		log.Infow("Endpoints configured",
-			"ingest_thread", fmt.Sprintf("POST http://localhost%s/api/ingest-thread", addr),
-			"query", fmt.Sprintf("POST http://localhost%s/api/query", addr),
+			"agent_run", fmt.Sprintf("POST http://localhost%s/agent/run", addr),
+			"agent_run_sse", fmt.Sprintf("POST http://localhost%s/agent/run_sse", addr),
 		)
 		if cfg.A2A.Enabled {
 			log.Infow("A2A endpoints configured",
@@ -333,8 +333,8 @@ func runBothServices(ctx context.Context, cfg *config.Config, done chan os.Signa
 			"port", cfg.Server.AgentPort,
 		)
 		log.Infow("Endpoints configured",
-			"ingest_thread", fmt.Sprintf("POST http://localhost%s/api/ingest-thread", agentAddr),
-			"query", fmt.Sprintf("POST http://localhost%s/api/query", agentAddr),
+			"agent_run", fmt.Sprintf("POST http://localhost%s/agent/run", agentAddr),
+			"agent_run_sse", fmt.Sprintf("POST http://localhost%s/agent/run_sse", agentAddr),
 		)
 		if cfg.A2A.Enabled {
 			log.Infow("A2A endpoints configured",

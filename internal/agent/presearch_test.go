@@ -57,7 +57,7 @@ func preSearchMemoryWithSearcher(ctx context.Context, searcher memorySearcher, q
 	searchResp, err := searcher.Search(searchCtx, &memory.SearchRequest{
 		Query:   query,
 		UserID:  userID,
-		AppName: appName,
+		AppName: AppName,
 	})
 
 	if err != nil {
@@ -310,8 +310,8 @@ func TestPreSearchMemory_RequestParams(t *testing.T) {
 		t.Errorf("Search userID = %q, want %q", capturedReq.UserID, "user-456")
 	}
 
-	if capturedReq.AppName != appName {
-		t.Errorf("Search appName = %q, want %q", capturedReq.AppName, appName)
+	if capturedReq.AppName != AppName {
+		t.Errorf("Search AppName = %q, want %q", capturedReq.AppName, AppName)
 	}
 }
 

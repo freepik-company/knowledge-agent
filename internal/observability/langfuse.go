@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,7 +53,8 @@ func (t *LangfuseTracer) IsEnabled() bool {
 	return t.enabled
 }
 
-// QueryTrace tracks a complete query execution with ADK events
+// QueryTrace tracks a complete query execution with ADK events.
+// All methods are safe for concurrent use from ADK callbacks.
 type QueryTrace struct {
 	trace       *traces.Trace
 	tracer      *LangfuseTracer
@@ -61,10 +63,14 @@ type QueryTrace struct {
 	TraceID     string // Exported for external access
 	environment string // Environment for all spans (staging, production, etc.)
 
+	// mu protects all mutable fields below from concurrent ADK callback access.
+	mu sync.Mutex
+
 	// ADK event tracking
 	generations      []*traces.Observation
 	toolCalls        map[string]*traces.Observation // Map tool ID to observation (active calls)
 	toolCallsCount   int                            // Accumulated count of completed tool calls
+	toolStartTimes   map[string]time.Time           // Track tool call start times for duration calculation
 	eventCount       atomic.Int32                   // Thread-safe event counter
 	promptTokens     int
 	completionTokens int
@@ -126,8 +132,9 @@ func (t *LangfuseTracer) StartQueryTrace(ctx context.Context, query string, sess
 		metadata:    metadata,
 		TraceID:     trace.ID,
 		environment: t.config.Environment,
-		generations: make([]*traces.Observation, 0),
-		toolCalls:   make(map[string]*traces.Observation),
+		generations:    make([]*traces.Observation, 0),
+		toolCalls:      make(map[string]*traces.Observation),
+		toolStartTimes: make(map[string]time.Time),
 	}
 }
 
@@ -155,12 +162,15 @@ func (qt *QueryTrace) StartGeneration(modelName string, input any) *traces.Obser
 	generation.Input = input
 	generation.Environment = qt.environment
 
+	qt.mu.Lock()
 	qt.generations = append(qt.generations, generation)
+	genCount := len(qt.generations)
+	qt.mu.Unlock()
 
 	log.Debugw("Started LLM generation",
 		"trace_id", qt.TraceID,
 		"model", modelName,
-		"generation_number", len(qt.generations),
+		"generation_number", genCount,
 	)
 
 	return generation
@@ -184,9 +194,11 @@ func (qt *QueryTrace) EndGeneration(generation *traces.Observation, output any, 
 	}
 
 	// Accumulate tokens
+	qt.mu.Lock()
 	qt.promptTokens += promptTokens
 	qt.completionTokens += completionTokens
 	qt.totalTokens += (promptTokens + completionTokens)
+	qt.mu.Unlock()
 
 	generation.End()
 
@@ -226,7 +238,9 @@ func (qt *QueryTrace) StartToolCall(toolID, toolName string, args map[string]any
 	if key == "" {
 		key = toolName
 	}
+	qt.mu.Lock()
 	qt.toolCalls[key] = tool
+	qt.mu.Unlock()
 
 	log.Infow("Langfuse: Started tool call span",
 		"trace_id", qt.TraceID,
@@ -253,8 +267,10 @@ func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error
 		key = toolName
 	}
 
+	qt.mu.Lock()
 	tool, exists := qt.toolCalls[key]
 	if !exists {
+		qt.mu.Unlock()
 		log.Warnw("Tool call not found in trace",
 			"trace_id", qt.TraceID,
 			"tool_id", toolID,
@@ -263,7 +279,13 @@ func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error
 		return
 	}
 
-	// Set tool output
+	// Increment counter and remove from active map
+	qt.toolCallsCount++
+	delete(qt.toolCalls, key)
+	callCount := qt.toolCallsCount
+	qt.mu.Unlock()
+
+	// Set tool output (observation is no longer shared after removal from map)
 	tool.Output = output
 
 	if err != nil {
@@ -273,21 +295,18 @@ func (qt *QueryTrace) EndToolCall(toolID, toolName string, output any, err error
 
 	tool.End()
 
-	// Increment counter and remove from active map
-	qt.toolCallsCount++
-	delete(qt.toolCalls, key)
-
 	log.Infow("Langfuse: Completed tool call span",
 		"trace_id", qt.TraceID,
 		"tool_id", toolID,
 		"tool_name", toolName,
-		"total_tool_calls", qt.toolCallsCount,
+		"total_tool_calls", callCount,
 		"had_error", err != nil,
 	)
 }
 
 // CalculateTotalCost calculates the total cost based on token usage
 func (qt *QueryTrace) CalculateTotalCost(modelName string, inputCostPer1M float64, outputCostPer1M float64) float64 {
+	qt.mu.Lock()
 	inputCost := (float64(qt.promptTokens) / 1_000_000) * inputCostPer1M
 	outputCost := (float64(qt.completionTokens) / 1_000_000) * outputCostPer1M
 	totalCost := inputCost + outputCost
@@ -300,17 +319,22 @@ func (qt *QueryTrace) CalculateTotalCost(modelName string, inputCostPer1M float6
 	qt.metadata["prompt_tokens"] = qt.promptTokens
 	qt.metadata["completion_tokens"] = qt.completionTokens
 	qt.metadata["total_tokens"] = qt.totalTokens
+	qt.mu.Unlock()
 
 	return totalCost
 }
 
 // GetAccumulatedTokens returns accumulated token counts
 func (qt *QueryTrace) GetAccumulatedTokens() (promptTokens, completionTokens, totalTokens int) {
+	qt.mu.Lock()
+	defer qt.mu.Unlock()
 	return qt.promptTokens, qt.completionTokens, qt.totalTokens
 }
 
 // GetSummary returns a summary of the trace
 func (qt *QueryTrace) GetSummary() map[string]any {
+	qt.mu.Lock()
+	defer qt.mu.Unlock()
 	return map[string]any{
 		"generations_count": len(qt.generations),
 		"tool_calls_count":  qt.toolCallsCount,
@@ -340,8 +364,9 @@ func (qt *QueryTrace) End(success bool, answer string) {
 		qt.tracer.config.OutputCostPer1M,
 	)
 
-	// Set trace output
-	qt.trace.Output = map[string]any{
+	// Snapshot mutable fields under lock
+	qt.mu.Lock()
+	output := map[string]any{
 		"success":           success,
 		"answer":            answer,
 		"duration_ms":       time.Since(qt.startTime).Milliseconds(),
@@ -351,6 +376,10 @@ func (qt *QueryTrace) End(success bool, answer string) {
 		"generations_count": len(qt.generations),
 		"tool_calls_count":  len(qt.toolCalls),
 	}
+	qt.mu.Unlock()
+
+	// Set trace output
+	qt.trace.Output = output
 
 	// Set total cost
 	qt.trace.TotalCost = totalCost
@@ -570,6 +599,43 @@ func (qt *QueryTrace) RecordAuxiliaryGeneration(name, model string, input, outpu
 		"output_tokens", outputTokens,
 		"duration_ms", duration.Milliseconds(),
 	)
+}
+
+// GetLastActiveGeneration returns the most recently started generation that hasn't been ended yet.
+// Used by ADK callbacks to track which generation to close.
+func (qt *QueryTrace) GetLastActiveGeneration() *traces.Observation {
+	qt.mu.Lock()
+	defer qt.mu.Unlock()
+	if len(qt.generations) == 0 {
+		return nil
+	}
+	return qt.generations[len(qt.generations)-1]
+}
+
+// SetToolStartTime records when a tool call started for duration calculation.
+func (qt *QueryTrace) SetToolStartTime(toolID, toolName string, t time.Time) {
+	key := toolID
+	if key == "" {
+		key = toolName
+	}
+	qt.mu.Lock()
+	qt.toolStartTimes[key] = t
+	qt.mu.Unlock()
+}
+
+// GetToolStartTime returns the start time for a tool call, if recorded.
+func (qt *QueryTrace) GetToolStartTime(toolID, toolName string) (time.Time, bool) {
+	key := toolID
+	if key == "" {
+		key = toolName
+	}
+	qt.mu.Lock()
+	t, ok := qt.toolStartTimes[key]
+	if ok {
+		delete(qt.toolStartTimes, key)
+	}
+	qt.mu.Unlock()
+	return t, ok
 }
 
 // Flush flushes pending traces to Langfuse
