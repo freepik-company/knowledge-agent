@@ -74,13 +74,18 @@ func ADKPreProcessMiddleware(ag *agent.Agent) func(http.Handler) http.Handler {
 				sessionID = agent.ResolveSessionID("", "", "")
 			}
 
-			// Resolve user ID for memory operations
-			userID := adkReq.UserID
-			if userID == "" {
-				userID = agent.ResolveUserID(
-					ag.GetConfig().RAG.KnowledgeScope,
-					"", slackUserID,
-				)
+			// Resolve user ID for memory operations.
+			// When knowledge_scope is "shared", always use "shared-knowledge"
+			// regardless of client-provided userId (e.g., Agentgram sends "agentgram").
+			// For other scopes, use the client-provided userId or resolve from context.
+			var userID string
+			scope := ag.GetConfig().RAG.KnowledgeScope
+			if scope == "shared" {
+				userID = agent.ResolveUserID(scope, "", "")
+			} else if adkReq.UserID != "" {
+				userID = adkReq.UserID
+			} else {
+				userID = agent.ResolveUserID(scope, "", slackUserID)
 			}
 
 			// Start Langfuse trace
