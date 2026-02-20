@@ -62,10 +62,12 @@ func (a *Agent) afterModelCallback(ctx agent.CallbackContext, resp *model.LLMRes
 }
 
 // beforeToolCallback starts a Langfuse tool span and records the start time.
+// IMPORTANT: Must return (nil, nil) to allow tool.Run() to execute.
+// Returning a non-nil map short-circuits tool execution in ADK (base_flow.go:579).
 func (a *Agent) beforeToolCallback(ctx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
 	trace := observability.QueryTraceFromContext(ctx)
 	if trace == nil {
-		return args, nil
+		return nil, nil
 	}
 
 	toolName := t.Name()
@@ -79,7 +81,7 @@ func (a *Agent) beforeToolCallback(ctx tool.Context, t tool.Tool, args map[strin
 	// Store start time in trace metadata for duration calculation
 	trace.SetToolStartTime(toolID, toolName, time.Now())
 
-	return args, nil
+	return nil, nil
 }
 
 // afterToolCallback ends the Langfuse tool span and records Prometheus metrics.
