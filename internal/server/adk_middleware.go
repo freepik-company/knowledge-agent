@@ -139,13 +139,15 @@ func ADKPreProcessMiddleware(ag *agent.Agent) func(http.Handler) http.Handler {
 			currentDate := time.Now().Format("Monday, January 2, 2006")
 			adkReq.NewMessage = injectDateContext(&adkReq.NewMessage, currentDate, ctxutil.UserEmail(ctx))
 
-			// Ensure session ID and user ID are set
+			// Ensure session ID and user ID are set.
+			// Always override userID: the middleware resolves the correct value
+			// based on knowledge_scope (e.g., "shared-knowledge" for shared scope).
+			// Without this, the ADK runner would use the client-provided userId
+			// for memory tools, searching in the wrong namespace.
 			if adkReq.SessionID == "" {
 				adkReq.SessionID = sessionID
 			}
-			if adkReq.UserID == "" {
-				adkReq.UserID = userID
-			}
+			adkReq.UserID = userID
 			if adkReq.AppName == "" {
 				adkReq.AppName = agent.AppName
 			}
