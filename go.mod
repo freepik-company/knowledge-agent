@@ -83,6 +83,3 @@ require (
 	rsc.io/omap v1.2.0 // indirect
 	rsc.io/ordered v1.1.1 // indirect
 )
-
-// Use local fork with input_schema.type fix for Anthropic API
-replace github.com/achetronic/adk-utils-go => github.com/achetronic/adk-utils-go v0.2.0
