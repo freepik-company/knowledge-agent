@@ -1,10 +1,10 @@
 module knowledge-agent
 
-go 1.24.9
+go 1.25.5
 
 require (
 	github.com/a2aproject/a2a-go v0.3.3
-	github.com/achetronic/adk-utils-go v0.2.1
+	github.com/achetronic/adk-utils-go v0.9.1
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/git-hulk/langfuse-go v0.1.0
@@ -22,12 +22,14 @@ require (
 )
 
 require (
+	charm.land/catwalk v0.25.0 // indirect
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/awalterschulze/gographviz v2.0.3+incompatible // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/charmbracelet/x/etag v0.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

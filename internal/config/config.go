@@ -27,7 +27,8 @@ type Config struct {
 	Keycloak    KeycloakConfig          `yaml:"keycloak" mapstructure:"keycloak"` // Keycloak integration for user identity propagation to sub-agents
 	Session     SessionConfig           `yaml:"session" mapstructure:"session"`   // Session management (thread = session, compaction)
 	APIKeys     map[string]APIKeyConfig `yaml:"api_keys" mapstructure:"api_keys"` // API keys with caller_id and role for authentication
-	Tools       ToolsConfig             `yaml:"tools" mapstructure:"tools"`       // Tool-specific configuration
+	Tools        ToolsConfig             `yaml:"tools" mapstructure:"tools"`         // Tool-specific configuration
+	ContextGuard ContextGuardConfig      `yaml:"context_guard" mapstructure:"context_guard"` // Context window management
 }
 
 // ToolsConfig holds configuration for agent tools
@@ -175,6 +176,48 @@ type A2AAuthConfig struct {
 	Header   string `yaml:"header,omitempty" mapstructure:"header"`       // Header name for api_key auth (e.g., "X-API-Key")
 	KeyEnv   string `yaml:"key_env,omitempty" mapstructure:"key_env"`     // Environment variable containing API key
 	TokenEnv string `yaml:"token_env,omitempty" mapstructure:"token_env"` // Environment variable containing bearer token
+}
+
+// Context guard strategy constants
+const (
+	ContextGuardStrategyThreshold     = "threshold"
+	ContextGuardStrategySlidingWindow = "slidingWindow"
+	ContextWindowSizeModeAuto         = "auto"
+	ContextWindowSizeModeManual       = "manual"
+)
+
+// ContextGuardConfig holds configuration for context window management
+type ContextGuardConfig struct {
+	Enabled               *bool  `yaml:"enabled" mapstructure:"enabled"`
+	Strategy              string `yaml:"strategy" mapstructure:"strategy"`
+	ContextWindowSizeMode string `yaml:"context_window_size_mode" mapstructure:"context_window_size_mode"`
+	ContextWindow         int    `yaml:"context_window" mapstructure:"context_window"`
+	ThresholdMaxTokens    int    `yaml:"threshold_max_tokens" mapstructure:"threshold_max_tokens"`
+	SlidingWindowMaxTurns int    `yaml:"sliding_window_max_turns" mapstructure:"sliding_window_max_turns"`
+}
+
+// IsEnabled returns whether context guard is enabled (defaults to true when nil)
+func (c *ContextGuardConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// GetStrategy returns the compaction strategy (defaults to "threshold")
+func (c *ContextGuardConfig) GetStrategy() string {
+	if c.Strategy == "" {
+		return ContextGuardStrategyThreshold
+	}
+	return c.Strategy
+}
+
+// GetContextWindowSizeMode returns the context window size mode (defaults to "auto")
+func (c *ContextGuardConfig) GetContextWindowSizeMode() string {
+	if c.ContextWindowSizeMode == "" {
+		return ContextWindowSizeModeAuto
+	}
+	return c.ContextWindowSizeMode
 }
 
 // AnthropicConfig holds Anthropic API configuration

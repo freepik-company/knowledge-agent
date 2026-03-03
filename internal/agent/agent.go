@@ -11,11 +11,14 @@ import (
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/cmd/launcher"
 	"google.golang.org/adk/memory"
+	adkmodel "google.golang.org/adk/model"
+	"google.golang.org/adk/runner"
 	"google.golang.org/adk/server/adkrest"
 	"google.golang.org/adk/tool"
 
 	genaianthropic "github.com/achetronic/adk-utils-go/genai/anthropic"
 	memorypostgres "github.com/achetronic/adk-utils-go/memory/postgres"
+	"github.com/achetronic/adk-utils-go/plugin/contextguard"
 	sessionredis "github.com/achetronic/adk-utils-go/session/redis"
 	memorytools "github.com/achetronic/adk-utils-go/tools/memory"
 
@@ -388,10 +391,17 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 		sseWriteTimeout = time.Duration(cfg.Server.WriteTimeout) * time.Second
 	}
 
+	// 12b. Setup ContextGuard plugin (if enabled)
+	var pluginConfig runner.PluginConfig
+	if cfg.ContextGuard.IsEnabled() {
+		pluginConfig = setupContextGuard(cfg, llmModel)
+	}
+
 	launcherCfg := &launcher.Config{
 		SessionService: sessionService,
 		MemoryService:  memoryService,
 		AgentLoader:    agent.NewSingleLoader(llmAgent),
+		PluginConfig:   pluginConfig,
 	}
 	ag.restHandler = adkrest.NewHandler(launcherCfg, sseWriteTimeout)
 
@@ -620,4 +630,48 @@ func (a *Agent) PreSearchMemory(ctx context.Context, query, userID string) strin
 	}
 
 	return resultsText
+}
+
+// setupContextGuard configures the context guard plugin for automatic context compaction.
+func setupContextGuard(cfg *config.Config, llm adkmodel.LLM) runner.PluginConfig {
+	log := logger.Get()
+
+	strategy := cfg.ContextGuard.GetStrategy()
+	sizeMode := cfg.ContextGuard.GetContextWindowSizeMode()
+
+	log.Infow("Setting up context guard plugin",
+		"strategy", strategy,
+		"context_window_size_mode", sizeMode,
+	)
+
+	registry := contextguard.NewCrushRegistry()
+	guard := contextguard.New(registry)
+
+	var opts []contextguard.AgentOption
+
+	// Configure strategy
+	if strategy == config.ContextGuardStrategySlidingWindow {
+		maxTurns := cfg.ContextGuard.SlidingWindowMaxTurns
+		if maxTurns <= 0 {
+			maxTurns = 20
+		}
+		opts = append(opts, contextguard.WithSlidingWindow(maxTurns))
+		log.Infow("Context guard using sliding window strategy", "max_turns", maxTurns)
+	}
+
+	// Configure manual context window size
+	if sizeMode == config.ContextWindowSizeModeManual {
+		maxTokens := cfg.ContextGuard.ThresholdMaxTokens
+		if maxTokens <= 0 {
+			maxTokens = cfg.ContextGuard.ContextWindow
+		}
+		if maxTokens > 0 {
+			opts = append(opts, contextguard.WithMaxTokens(maxTokens))
+			log.Infow("Context guard using manual context window size", "max_tokens", maxTokens)
+		}
+	}
+
+	guard.Add(AppName, llm, opts...)
+
+	return guard.PluginConfig()
 }
