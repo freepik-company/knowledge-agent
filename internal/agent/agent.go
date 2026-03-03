@@ -182,10 +182,18 @@ func New(ctx context.Context, cfg *config.Config) (*Agent, error) {
 
 	// 3. Initialize Anthropic LLM client
 	log.Infow("Initializing Anthropic client", "model", cfg.Anthropic.Model)
-	llmModel := genaianthropic.New(genaianthropic.Config{
+	anthropicCfg := genaianthropic.Config{
 		APIKey:    cfg.Anthropic.APIKey,
 		ModelName: cfg.Anthropic.Model,
-	})
+	}
+	if len(cfg.Anthropic.ExtraHeaders) > 0 {
+		anthropicCfg.HTTPOptions.Headers = make(http.Header)
+		for k, v := range cfg.Anthropic.ExtraHeaders {
+			anthropicCfg.HTTPOptions.Headers.Set(k, v)
+		}
+		log.Infow("Anthropic extra headers configured", "count", len(cfg.Anthropic.ExtraHeaders))
+	}
+	llmModel := genaianthropic.New(anthropicCfg)
 
 	// 4. Initialize permission checker
 	permChecker := NewMemoryPermissionChecker(&cfg.Permissions)

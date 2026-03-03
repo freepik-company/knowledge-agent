@@ -222,8 +222,9 @@ func (c *ContextGuardConfig) GetContextWindowSizeMode() string {
 
 // AnthropicConfig holds Anthropic API configuration
 type AnthropicConfig struct {
-	APIKey string `yaml:"api_key" mapstructure:"api_key" envconfig:"ANTHROPIC_API_KEY" required:"true"`
-	Model  string `yaml:"model" mapstructure:"model" envconfig:"ANTHROPIC_MODEL" default:"claude-sonnet-4-5-20250929"`
+	APIKey       string            `yaml:"api_key" mapstructure:"api_key" envconfig:"ANTHROPIC_API_KEY" required:"true"`
+	Model        string            `yaml:"model" mapstructure:"model" envconfig:"ANTHROPIC_MODEL" default:"claude-sonnet-4-5-20250929"`
+	ExtraHeaders map[string]string `yaml:"extra_headers" mapstructure:"extra_headers"`
 }
 
 // SlackConfig holds Slack API configuration
