@@ -5,9 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 
 	"knowledge-agent/internal/logger"
+)
+
+const (
+	maxMessageChars = 500
+	maxContextChars = 4000
 )
 
 // resolveSlackSessionID determines the session ID for Slack context.
@@ -43,8 +50,16 @@ func resolveSlackUserID(scope, channelID, slackUserID string) string {
 }
 
 // buildSlackUserMessage builds the user message text with Slack context.
+// Includes thread context from previous messages when available.
 func buildSlackUserMessage(query, userName, userRealName string, messageData []map[string]any) string {
 	var sb strings.Builder
+
+	// Add thread context from previous messages
+	threadCtx := formatThreadContext(messageData)
+	if threadCtx != "" {
+		sb.WriteString(threadCtx)
+		sb.WriteString("\n")
+	}
 
 	// Add user context
 	if userRealName != "" {
@@ -57,6 +72,95 @@ func buildSlackUserMessage(query, userName, userRealName string, messageData []m
 	sb.WriteString(query)
 
 	return sb.String()
+}
+
+// formatThreadContext formats previous thread messages for LLM context.
+// Excludes the last message (the current user query). Returns empty string
+// if there are no previous messages.
+func formatThreadContext(messageData []map[string]any) string {
+	if len(messageData) <= 1 {
+		return ""
+	}
+
+	// Exclude the last message (current user query)
+	previous := messageData[:len(messageData)-1]
+
+	var sb strings.Builder
+	sb.WriteString("--- Thread Context ---\n")
+
+	totalChars := 0
+	// Build from most recent to oldest, then reverse to keep chronological order
+	var lines []string
+	for i := len(previous) - 1; i >= 0; i-- {
+		msg := previous[i]
+
+		user := getStringFromMap(msg, "user_name")
+		if user == "" {
+			user = getStringFromMap(msg, "user")
+		}
+		if user == "" {
+			user = "Unknown"
+		}
+
+		text := getStringFromMap(msg, "text")
+		if runes := []rune(text); len(runes) > maxMessageChars {
+			text = string(runes[:maxMessageChars]) + "..."
+		}
+
+		var line strings.Builder
+		fmt.Fprintf(&line, "[%d] %s: %s\n", i+1, user, text)
+
+		if ts := getStringFromMap(msg, "ts"); ts != "" {
+			fmt.Fprintf(&line, "   (time: %s)\n", formatSlackTimestamp(ts))
+		}
+
+		if images, ok := msg["images"].([]any); ok && len(images) > 0 {
+			fmt.Fprintf(&line, "   [%d image(s) attached]\n", len(images))
+		}
+
+		lineStr := line.String()
+		if totalChars+len(lineStr) > maxContextChars {
+			break
+		}
+		totalChars += len(lineStr)
+		lines = append(lines, lineStr)
+	}
+
+	// Reverse to chronological order
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+
+	for _, l := range lines {
+		sb.WriteString(l)
+	}
+
+	sb.WriteString("--- End Thread Context ---")
+	return sb.String()
+}
+
+// getStringFromMap safely extracts a string value from a map.
+func getStringFromMap(m map[string]any, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// formatSlackTimestamp converts a Slack timestamp (e.g. "1234567890.123456")
+// to a human-readable format like "2006-01-02 15:04:05 UTC".
+func formatSlackTimestamp(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	parts := strings.Split(ts, ".")
+	seconds, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return ts
+	}
+	return time.Unix(seconds, 0).UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
 // buildADKContent creates a genai.Content-compatible map for the ADK request.
