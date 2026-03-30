@@ -11,6 +11,7 @@ import (
 	"google.golang.org/adk/server/adka2a"
 	"google.golang.org/adk/session"
 
+	a2ainternal "knowledge-agent/internal/a2a"
 	"knowledge-agent/internal/logger"
 )
 
@@ -72,8 +73,18 @@ func NewA2AHandler(cfg A2AConfig) (*A2AHandler, error) {
 		},
 	})
 
-	// Create the request handler (no interceptors - auth is done by HTTP middleware)
-	reqHandler := a2asrv.NewHandler(executor)
+	// Create ownership-aware task store to prevent cross-user task access.
+	// The default in-memory store does not enforce ownership, so any authenticated
+	// user who knows a task UUID could read/cancel other users' tasks.
+	taskStore := a2ainternal.NewOwnershipAwareTaskStore()
+
+	// Create the request handler with:
+	// - UserInterceptor: bridges our HTTP auth middleware identity to CallContext.User
+	// - OwnershipAwareTaskStore: enforces task ownership on Get/Save
+	reqHandler := a2asrv.NewHandler(executor,
+		a2asrv.WithCallInterceptor(a2ainternal.NewUserInterceptor()),
+		a2asrv.WithTaskStore(taskStore),
+	)
 
 	// Create the JSONRPC HTTP handler
 	invokeHandler := a2asrv.NewJSONRPCHandler(reqHandler)
